@@ -1,0 +1,127 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\LabTest;
+use App\Models\TestCategory;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
+
+class LabTestController extends Controller
+{
+    public function index(Request $request)
+    {
+        $query = LabTest::with('category');
+
+        if ($request->has('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('code', 'like', "%{$search}%");
+            });
+        }
+
+        if ($request->has('category_id')) {
+            $query->where('category_id', $request->category_id);
+        }
+
+        if ($request->has('active_only')) {
+            $query->where('is_active', true);
+        }
+
+        $tests = $query->latest()->paginate(15);
+
+        return response()->json($tests);
+    }
+
+    public function store(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'code' => 'required|string|max:50|unique:lab_tests,code',
+            'description' => 'nullable|string',
+            'price' => 'required|numeric|min:0',
+            'unit' => 'nullable|string|max:50',
+            'reference_range' => 'nullable|string|max:255',
+            'preparation_instructions' => 'nullable|string',
+            'turnaround_time_hours' => 'required|integer|min:1',
+            'category_id' => 'required|exists:test_categories,id',
+            'is_active' => 'boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $test = LabTest::create($validator->validated());
+
+        return response()->json([
+            'message' => 'Lab test created successfully',
+            'test' => $test->load('category'),
+        ], 201);
+    }
+
+    public function show(LabTest $labTest)
+    {
+        $labTest->load('category');
+        return response()->json($labTest);
+    }
+
+    public function update(Request $request, LabTest $labTest)
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'code' => 'required|string|max:50|unique:lab_tests,code,' . $labTest->id,
+            'description' => 'nullable|string',
+            'price' => 'required|numeric|min:0',
+            'unit' => 'nullable|string|max:50',
+            'reference_range' => 'nullable|string|max:255',
+            'preparation_instructions' => 'nullable|string',
+            'turnaround_time_hours' => 'required|integer|min:1',
+            'category_id' => 'required|exists:test_categories,id',
+            'is_active' => 'boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $labTest->update($validator->validated());
+
+        return response()->json([
+            'message' => 'Lab test updated successfully',
+            'test' => $labTest->fresh()->load('category'),
+        ]);
+    }
+
+    public function destroy(LabTest $labTest)
+    {
+        if ($labTest->visitTests()->count() > 0) {
+            return response()->json([
+                'message' => 'Cannot delete test with existing orders',
+            ], 422);
+        }
+
+        $labTest->delete();
+
+        return response()->json([
+            'message' => 'Lab test deleted successfully',
+        ]);
+    }
+
+    public function categories()
+    {
+        $categories = TestCategory::withCount('labTests')
+            ->where('is_active', true)
+            ->get();
+
+        return response()->json($categories);
+    }
+} 

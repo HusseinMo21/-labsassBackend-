@@ -1,0 +1,2 @@
+<small class="badge badge-<?php echo e($colour); ?>"><?php echo e($text); ?></small>
+<?php /**PATH C:\Users\S7so1\Desktop\lab\backend\resources\views/vendor/scribe/components/badges/base.blade.php ENDPATH**/ ?>
