@@ -4,7 +4,22 @@
     <meta charset="utf-8">
     <title>Invoice {{ $invoice->invoice_number }}</title>
     <style>
-        body { font-family: Arial, sans-serif; font-size: 14px; color: #222; }
+        body { 
+            font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-serif; 
+            font-size: 14px; 
+            color: #222; 
+            direction: ltr;
+        }
+        .arabic-text {
+            font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-serif;
+            direction: rtl;
+            text-align: right;
+            unicode-bidi: bidi-override;
+            font-size: 16px;
+            font-weight: bold;
+            line-height: 1.4;
+            letter-spacing: 0.5px;
+        }
         .header { border-bottom: 2px solid #007bff; padding-bottom: 10px; margin-bottom: 20px; }
         .title { font-size: 2rem; font-weight: bold; color: #007bff; }
         .section { margin-bottom: 18px; }
@@ -12,6 +27,11 @@
         th, td { border: 1px solid #ddd; padding: 8px; }
         th { background: #f8faff; }
         .right { text-align: right; }
+        .arabic-cell {
+            direction: rtl;
+            text-align: right;
+            unicode-bidi: bidi-override;
+        }
     </style>
 </head>
 <body>
@@ -21,10 +41,30 @@
         <div>Date: {{ $invoice->invoice_date ? $invoice->invoice_date->format('Y-m-d') : '' }}</div>
     </div>
     <div class="section">
-        <b>Patient:</b> {{ $invoice->visit->patient->name ?? '-' }}<br>
-        <b>Phone:</b> {{ $invoice->visit->patient->phone ?? '-' }}<br>
-        <b>Visit #:</b> {{ $invoice->visit->visit_number ?? '-' }}
+        <div style="margin-bottom: 8px;">
+            <b>Patient:</b><br>
+            <span class="arabic-text" style="font-size: 16px; font-weight: bold; margin-right: 20px;">{{ $invoice->visit->patient->name ?? '-' }}</span>
+        </div>
+        <div style="margin-bottom: 8px;">
+            <b>Phone:</b> {{ $invoice->visit->patient->phone ?? '-' }}
+        </div>
+        <div style="margin-bottom: 8px;">
+            <b>Visit #:</b> {{ $invoice->visit->visit_number ?? '-' }}
+        </div>
     </div>
+    
+    @if($invoice->visit->patient->credentials)
+    <div class="section" style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #007bff;">
+        <h3 style="margin: 0 0 10px 0; color: #007bff; font-size: 16px;">🔐 Patient Portal Access</h3>
+        <div style="font-family: 'Courier New', monospace; background: #fff; padding: 10px; border-radius: 3px; border: 1px solid #ddd;">
+            <div><b>Username:</b> {{ $invoice->visit->patient->credentials->username }}</div>
+            <div><b>Password:</b> {{ $invoice->visit->patient->credentials->original_password }}</div>
+        </div>
+        <div style="margin-top: 8px; font-size: 12px; color: #666;">
+            Use these credentials to access your test results and reports online at our patient portal.
+        </div>
+    </div>
+    @endif
     <div class="section">
         <table>
             <tr>

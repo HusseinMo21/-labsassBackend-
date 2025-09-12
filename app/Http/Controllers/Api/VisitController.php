@@ -13,6 +13,93 @@ use Illuminate\Support\Facades\DB;
 
 class VisitController extends Controller
 {
+    public function index(Request $request)
+    {
+        $query = Visit::with(['patient', 'visitTests.labTest', 'invoice']);
+        
+        // Filter to only include visits with receipts if requested
+        if ($request->has('include_receipts') && $request->include_receipts === 'true') {
+            $query->whereNotNull('receipt_number');
+        }
+        
+        // Search functionality
+        if ($request->has('search') && !empty($request->search)) {
+            $searchTerm = $request->search;
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('receipt_number', 'like', "%{$searchTerm}%")
+                  ->orWhere('visit_number', 'like', "%{$searchTerm}%")
+                  ->orWhereHas('patient', function ($patientQuery) use ($searchTerm) {
+                      $patientQuery->where('name', 'like', "%{$searchTerm}%")
+                                  ->orWhere('phone', 'like', "%{$searchTerm}%");
+                  });
+            });
+        }
+        
+        // Filter by visit status if provided
+        if ($request->has('status')) {
+            $query->where('status', $request->status);
+        }
+        
+        // Filter by test status if provided (for role-based access)
+        if ($request->has('test_status')) {
+            $testStatuses = explode(',', $request->test_status);
+            $query->whereHas('visitTests', function ($q) use ($testStatuses) {
+                $q->whereIn('status', $testStatuses);
+            });
+        }
+        
+        // Filter by sample completion status if provided
+        if ($request->has('sample_completed') && $request->sample_completed === 'true') {
+            $query->whereHas('visitTests.sampleTracking', function ($q) {
+                $q->where('status', 'completed');
+            })->whereDoesntHave('visitTests.sampleTracking', function ($q) {
+                $q->where('status', '!=', 'completed');
+            });
+        }
+        
+        // Filter by date range if provided
+        if ($request->has('start_date')) {
+            $query->whereDate('visit_date', '>=', $request->start_date);
+        }
+        
+        if ($request->has('end_date')) {
+            $query->whereDate('visit_date', '<=', $request->end_date);
+        }
+        
+        // Pagination
+        $perPage = $request->get('per_page', 15);
+        $visits = $query->orderBy('created_at', 'desc')->paginate($perPage);
+        
+        return response()->json($visits);
+    }
+
+    public function store(Request $request)
+    {
+        return $this->createVisit($request);
+    }
+
+    public function show($id)
+    {
+        $visit = Visit::with(['patient', 'visitTests.labTest', 'invoice.payments'])
+            ->findOrFail($id);
+        
+        return response()->json($visit);
+    }
+
+    public function destroy($id)
+    {
+        $visit = Visit::findOrFail($id);
+        
+        // Check if visit can be deleted (e.g., not completed)
+        if ($visit->status === 'completed') {
+            return response()->json(['message' => 'Cannot delete completed visits'], 422);
+        }
+        
+        $visit->delete();
+        
+        return response()->json(['message' => 'Visit deleted successfully']);
+    }
+
     public function getDashboardStats()
     {
         $totalPatients = \App\Models\Patient::count();
@@ -53,8 +140,10 @@ class VisitController extends Controller
         $patients = Patient::where('name', 'LIKE', "%{$query}%")
             ->orWhere('phone', 'LIKE', "%{$query}%")
             ->orWhere('email', 'LIKE', "%{$query}%")
+            ->orWhere('national_id', 'LIKE', "%{$query}%")
+            ->orWhere('username', 'LIKE', "%{$query}%")
             ->limit(10)
-            ->get(['id', 'name', 'phone', 'email', 'date_of_birth']);
+            ->get(['id', 'name', 'phone', 'email', 'birth_date']);
 
         return response()->json(['patients' => $patients]);
     }
@@ -175,6 +264,7 @@ class VisitController extends Controller
             'result_value' => 'nullable|string',
             'result_status' => 'nullable|string',
             'result_notes' => 'nullable|string',
+            'status' => 'nullable|string|in:pending,under_review,completed',
         ]);
 
         $visitTest = VisitTest::where('visit_id', $visitId)
@@ -182,15 +272,45 @@ class VisitController extends Controller
             ->firstOrFail();
 
         $oldValues = $visitTest->getAttributes();
+        $user = auth()->user();
         
-        $visitTest->update([
+        // Role-based status validation
+        $newStatus = $request->status ?? $visitTest->status;
+        
+        if ($user->role === 'doctor') {
+            // Doctors can only set status to pending or under_review
+            if (!in_array($newStatus, ['pending', 'under_review'])) {
+                return response()->json([
+                    'message' => 'Doctors can only update status to pending or under_review'
+                ], 403);
+            }
+        } elseif ($user->role === 'admin') {
+            // Admins can set any status including completed
+            // No restrictions
+        } else {
+            // Other roles cannot update status
+            return response()->json([
+                'message' => 'You do not have permission to update test status'
+            ], 403);
+        }
+        
+        $updateData = [
             'result_value' => $request->result_value,
             'result_status' => $request->result_status,
             'result_notes' => $request->result_notes,
-            'status' => 'completed', // Mark as completed when results are added
             'performed_by' => auth()->id(),
             'performed_at' => now(),
-        ]);
+        ];
+        
+        // Only update status if provided and user has permission
+        if ($request->has('status')) {
+            $updateData['status'] = $newStatus;
+        }
+        
+        $visitTest->update($updateData);
+
+        // Check if all tests in this visit are completed
+        $this->checkAndCompleteVisit($visitId);
 
         // Check for critical values
         $criticalType = null;
@@ -229,24 +349,55 @@ class VisitController extends Controller
             'visit_tests.*.result_value' => 'nullable|string',
             'visit_tests.*.result_status' => 'nullable|string',
             'visit_tests.*.result_notes' => 'nullable|string',
+            'visit_tests.*.status' => 'nullable|string|in:pending,under_review,completed',
         ]);
 
         $visit = Visit::findOrFail($visitId);
+        $user = auth()->user();
         
         foreach ($request->visit_tests as $testData) {
             $visitTest = VisitTest::where('visit_id', $visitId)
                 ->where('id', $testData['id'])
                 ->firstOrFail();
 
-            $visitTest->update([
+            // Role-based status validation
+            $newStatus = $testData['status'] ?? $visitTest->status;
+            
+            if ($user->role === 'doctor') {
+                // Doctors can only set status to pending or under_review
+                if (!in_array($newStatus, ['pending', 'under_review'])) {
+                    return response()->json([
+                        'message' => 'Doctors can only update status to pending or under_review'
+                    ], 403);
+                }
+            } elseif ($user->role === 'admin') {
+                // Admins can set any status including completed
+                // No restrictions
+            } else {
+                // Other roles cannot update status
+                return response()->json([
+                    'message' => 'You do not have permission to update test status'
+                ], 403);
+            }
+
+            $updateData = [
                 'result_value' => $testData['result_value'] ?? null,
                 'result_status' => $testData['result_status'] ?? null,
                 'result_notes' => $testData['result_notes'] ?? null,
-                'status' => 'completed', // Mark as completed when results are added
                 'performed_by' => auth()->id(),
                 'performed_at' => now(),
-            ]);
+            ];
+            
+            // Only update status if provided and user has permission
+            if (isset($testData['status'])) {
+                $updateData['status'] = $newStatus;
+            }
+
+            $visitTest->update($updateData);
         }
+
+        // Check if all tests in this visit are completed
+        $this->checkAndCompleteVisit($visitId);
 
         return response()->json([
             'message' => 'Test results updated successfully',
@@ -288,5 +439,43 @@ class VisitController extends Controller
                 'test_id' => $visitTest->id,
             ]
         ]);
+    }
+
+    /**
+     * Manually mark a visit as completed
+     */
+    public function completeVisit($id)
+    {
+        $visit = Visit::findOrFail($id);
+        
+        $visit->update([
+            'status' => 'completed',
+            'completed_at' => now()
+        ]);
+        
+        return response()->json([
+            'message' => 'Visit marked as completed successfully',
+            'visit' => $visit->fresh()
+        ]);
+    }
+
+    /**
+     * Check if all tests in a visit are completed and mark visit as completed if so
+     */
+    private function checkAndCompleteVisit($visitId)
+    {
+        $visit = Visit::find($visitId);
+        if (!$visit) return;
+
+        // Check if all tests are completed
+        $totalTests = $visit->visitTests()->count();
+        $completedTests = $visit->visitTests()->where('status', 'completed')->count();
+
+        if ($totalTests > 0 && $totalTests === $completedTests) {
+            $visit->update([
+                'status' => 'completed',
+                'completed_at' => now()
+            ]);
+        }
     }
 } 

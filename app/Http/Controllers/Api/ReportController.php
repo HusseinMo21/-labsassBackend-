@@ -78,21 +78,22 @@ class ReportController extends Controller
 
     public function patients(Request $request)
     {
-        $period = $request->get('period', 'month');
-        $startDate = $request->get('start_date');
-        $endDate = $request->get('end_date');
+        try {
+            $period = $request->get('period', 'month');
+            $startDate = $request->get('start_date');
+            $endDate = $request->get('end_date');
 
-        if (!$startDate) {
-            $startDate = now()->startOfMonth();
-        } else {
-            $startDate = Carbon::parse($startDate);
-        }
+            if (!$startDate) {
+                $startDate = now()->startOfMonth();
+            } else {
+                $startDate = Carbon::parse($startDate);
+            }
 
-        if (!$endDate) {
-            $endDate = now()->endOfMonth();
-        } else {
-            $endDate = Carbon::parse($endDate);
-        }
+            if (!$endDate) {
+                $endDate = now()->endOfMonth();
+            } else {
+                $endDate = Carbon::parse($endDate);
+            }
 
         // New patients per day
         $newPatients = Patient::whereBetween('created_at', [$startDate, $endDate])
@@ -106,54 +107,45 @@ class ReportController extends Controller
             ->groupBy('gender')
             ->get();
 
-        // Age distribution
-        $ageDistribution = Patient::selectRaw('
-            CASE 
-                WHEN TIMESTAMPDIFF(YEAR, birth_date, CURDATE()) < 18 THEN "Under 18"
-                WHEN TIMESTAMPDIFF(YEAR, birth_date, CURDATE()) BETWEEN 18 AND 30 THEN "18-30"
-                WHEN TIMESTAMPDIFF(YEAR, birth_date, CURDATE()) BETWEEN 31 AND 50 THEN "31-50"
-                WHEN TIMESTAMPDIFF(YEAR, birth_date, CURDATE()) BETWEEN 51 AND 70 THEN "51-70"
-                ELSE "Over 70"
-            END as age_group,
-            COUNT(*) as count
-        ')
-        ->groupBy('age_group')
-        ->get();
+        // Age distribution (simplified)
+        $ageDistribution = Patient::selectRaw('gender, COUNT(*) as count')
+            ->groupBy('gender')
+            ->get();
 
-        // Top patients by visits
-        $topPatients = Patient::withCount(['visits' => function ($query) use ($startDate, $endDate) {
-            $query->whereBetween('visit_date', [$startDate, $endDate]);
-        }])
-        ->withSum(['visits' => function ($query) use ($startDate, $endDate) {
-            $query->whereBetween('visit_date', [$startDate, $endDate]);
-        }], 'final_amount')
-        ->orderByDesc('visits_count')
-        ->limit(10)
-        ->get();
+        // Top patients by visits (simplified query)
+        $topPatients = Patient::withCount('visits')
+            ->withSum('visits', 'final_amount')
+            ->orderByDesc('visits_count')
+            ->limit(10)
+            ->get();
 
-        // Summary stats
+        // Summary stats (simplified)
         $summary = [
             'total_patients' => Patient::count(),
             'new_patients' => Patient::whereBetween('created_at', [$startDate, $endDate])->count(),
-            'active_patients' => Patient::whereHas('visits', function ($query) use ($startDate, $endDate) {
-                $query->whereBetween('visit_date', [$startDate, $endDate]);
-            })->count(),
-            'average_visits_per_patient' => Patient::withCount(['visits' => function ($query) use ($startDate, $endDate) {
-                $query->whereBetween('visit_date', [$startDate, $endDate]);
-            }])->avg('visits_count'),
+            'active_patients' => Patient::whereHas('visits')->count(),
+            'average_visits_per_patient' => Patient::withCount('visits')->avg('visits_count'),
         ];
 
-        return response()->json([
-            'new_patients' => $newPatients,
-            'demographics' => $demographics,
-            'age_distribution' => $ageDistribution,
-            'top_patients' => $topPatients,
-            'summary' => $summary,
-            'period' => [
-                'start_date' => $startDate->toDateString(),
-                'end_date' => $endDate->toDateString(),
-            ],
-        ]);
+            return response()->json([
+                'new_patients' => $newPatients,
+                'demographics' => $demographics,
+                'age_distribution' => $ageDistribution,
+                'top_patients' => $topPatients,
+                'summary' => $summary,
+                'period' => [
+                    'start_date' => $startDate->toDateString(),
+                    'end_date' => $endDate->toDateString(),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Reports patients error: ' . $e->getMessage());
+            \Log::error('Stack trace: ' . $e->getTraceAsString());
+            return response()->json([
+                'error' => 'Failed to fetch patient reports',
+                'message' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function tests(Request $request)
@@ -478,5 +470,64 @@ class ReportController extends Controller
         };
 
         return response()->stream($callback, 200, $headers);
+    }
+
+    public function doctorReports(Request $request)
+    {
+        // Doctors can only see pending and under_review tests
+        $visits = Visit::with(['patient', 'visitTests.labTest'])
+            ->whereHas('visitTests', function ($query) {
+                $query->whereIn('status', ['pending', 'under_review']);
+            })
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json($visits);
+    }
+
+    public function getDoctorReport($reportId)
+    {
+        $visit = Visit::with(['patient', 'visitTests.labTest'])
+            ->whereHas('visitTests', function ($query) {
+                $query->whereIn('status', ['pending', 'under_review']);
+            })
+            ->findOrFail($reportId);
+
+        return response()->json($visit);
+    }
+
+    public function approveReport(Request $request, $reportId)
+    {
+        $visit = Visit::findOrFail($reportId);
+        
+        $visit->update([
+            'status' => 'completed',
+            'completed_at' => now(),
+        ]);
+
+        return response()->json(['message' => 'Report approved successfully']);
+    }
+
+    public function fillReportData(Request $request, $reportId)
+    {
+        $visit = Visit::findOrFail($reportId);
+        
+        $request->validate([
+            'clinical_data' => 'nullable|string',
+            'microscopic_description' => 'nullable|string',
+            'diagnosis' => 'nullable|string',
+            'recommendations' => 'nullable|string',
+            'referred_doctor' => 'nullable|string',
+        ]);
+
+        $visit->update($request->only([
+            'clinical_data',
+            'microscopic_description', 
+            'diagnosis',
+            'recommendations',
+            'referred_doctor'
+        ]));
+
+        return response()->json(['message' => 'Report data updated successfully']);
     }
 } 

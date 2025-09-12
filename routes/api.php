@@ -11,12 +11,12 @@ use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\InventoryController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\SampleTrackingController;
-use App\Http\Controllers\Api\CriticalValueController;
 use App\Http\Controllers\Api\NotificationController;
-use App\Http\Controllers\Api\AuditLogController;
-use App\Http\Controllers\Api\TestPanelController;
 use App\Http\Controllers\Api\CheckInController;
 use App\Http\Controllers\Api\UnpaidInvoicesController;
+use App\Http\Controllers\Api\DoctorController;
+use App\Http\Controllers\Api\OrganizationController;
+use App\Http\Controllers\Api\LabRequestController;
 
 /*
 |--------------------------------------------------------------------------
@@ -24,29 +24,35 @@ use App\Http\Controllers\Api\UnpaidInvoicesController;
 |--------------------------------------------------------------------------
 */
 
-// Public routes
+// Health check routes (no authentication required)
+Route::get('/health', [App\Http\Controllers\HealthCheckController::class, 'health']);
+Route::get('/health/detailed', [App\Http\Controllers\HealthCheckController::class, 'detailed']);
+
+// Public routes (no authentication required)
 Route::post('/auth/login', [AuthController::class, 'login']);
-Route::get('/tests/categories', [LabTestController::class, 'categories']);
-Route::get('/patients/search', [VisitController::class, 'searchPatients']);
-Route::get('/lab-tests', [VisitController::class, 'getLabTests']);
-Route::get('/visits', [VisitController::class, 'getVisits']);
-Route::get('/visits/{id}', [VisitController::class, 'getVisit']);
-Route::post('/visits', [VisitController::class, 'createVisit']);
-Route::get('/dashboard/stats', [VisitController::class, 'getDashboardStats']);
-// Make roles endpoint available to any authenticated user (or move to public for demo)
-Route::middleware('auth:web')->get('/users/roles', [UserController::class, 'getRoles']);
+Route::get('/auth/csrf-token', [AuthController::class, 'csrfToken']);
+Route::post('/auth/refresh', [AuthController::class, 'refresh']);
+
+// Public invoice PDF/preview routes (bypass default CORS middleware)
+Route::group(['prefix' => 'invoices', 'middleware' => []], function () {
+    Route::options('/{id}/download', [App\Http\Controllers\Api\InvoiceController::class, 'optionsInvoiceDownload']);
+    Route::get('/{id}/download', [App\Http\Controllers\Api\InvoiceController::class, 'downloadInvoicePdf']);
+    Route::get('/{id}/preview', [App\Http\Controllers\Api\InvoiceController::class, 'previewInvoiceHtml']);
+});
 
 // Temporary public routes for testing (remove after fixing authentication)
 Route::get('/test/sample-tracking/stats', [SampleTrackingController::class, 'getStats']);
 Route::get('/test/notifications/stats', [NotificationController::class, 'getStats']);
-Route::get('/test/audit-logs/stats', [AuditLogController::class, 'getStats']);
 
-// Public invoice PDF/preview routes
-Route::get('/invoices/{id}/download', [App\Http\Controllers\Api\InvoiceController::class, 'downloadInvoicePdf']);
-Route::get('/invoices/{id}/preview', [App\Http\Controllers\Api\InvoiceController::class, 'previewInvoiceHtml']);
+// Public invoice PDF/preview routes (bypass default CORS middleware)
+Route::group(['prefix' => 'invoices', 'middleware' => []], function () {
+    Route::options('/{id}/download', [App\Http\Controllers\Api\InvoiceController::class, 'optionsInvoiceDownload']);
+    Route::get('/{id}/download', [App\Http\Controllers\Api\InvoiceController::class, 'downloadInvoicePdf']);
+    Route::get('/{id}/preview', [App\Http\Controllers\Api\InvoiceController::class, 'previewInvoiceHtml']);
+});
 
-// Protected routes
-Route::middleware('auth:web')->group(function () {
+// Protected routes (authentication and CSRF protection required)
+Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
     // Auth routes
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/user', [AuthController::class, 'user']);
@@ -56,20 +62,46 @@ Route::middleware('auth:web')->group(function () {
     Route::get('/patients/{id}/full-history', [PatientController::class, 'fullHistory']);
     Route::get('/patients/{id}/reports', [PatientController::class, 'reportsList']);
     Route::get('/patients/{id}/payments', [PatientController::class, 'paymentsHistory']);
-    Route::get('/patients/{id}/print-reports', [PatientController::class, 'printAllReports']);
-    Route::get('/reports/{report_id}/print', [PatientController::class, 'printSingleReport']);
+    Route::middleware('pdf.cors')->group(function () {
+        Route::get('/patients/{id}/print-reports', [PatientController::class, 'printAllReports']);
+        Route::get('/reports/{report_id}/print', [PatientController::class, 'printSingleReport']);
+    });
     Route::apiResource('patients', PatientController::class);
     Route::get('/patient/me', [PatientController::class, 'me']);
+
+    // Doctor routes
+    Route::apiResource('doctors', DoctorController::class);
+    Route::get('/doctors/{doctor}/patients', [DoctorController::class, 'patients']);
+    Route::get('/doctors-search', [DoctorController::class, 'search']);
+
+    // Organization routes
+    Route::apiResource('organizations', OrganizationController::class);
+    Route::get('/organizations/{organization}/patients', [OrganizationController::class, 'patients']);
+    Route::get('/organizations-search', [OrganizationController::class, 'search']);
+
+    // Lab Request routes
+    Route::apiResource('lab-requests', LabRequestController::class);
+    Route::put('/lab-requests/{labRequest}/suffix', [LabRequestController::class, 'updateSuffix']);
+    Route::get('/lab-requests-search', [LabRequestController::class, 'search']);
+    Route::get('/lab-requests-stats', [LabRequestController::class, 'getStats']);
+    Route::get('/lab-requests-patient-details', [LabRequestController::class, 'getPatientDetailsByLabNo']);
 
     // Lab test routes
     Route::apiResource('tests', LabTestController::class);
 
     // Visit routes
-    // Route::apiResource('visits', VisitController::class); // Removed to fix missing index method error
+    Route::get('/visits', [VisitController::class, 'index']);
+    Route::post('/visits', [VisitController::class, 'store']);
+    Route::get('/visits/{visit}', [VisitController::class, 'show']);
     Route::put('/visits/{visit}', [VisitController::class, 'update']);
+    Route::delete('/visits/{visit}', [VisitController::class, 'destroy']);
     Route::put('/visits/{visit}/results', [VisitController::class, 'updateVisitResults']);
     Route::put('/visits/{visit}/tests/{visitTest}/result', [VisitController::class, 'updateTestResult']);
+    Route::put('/visits/{visit}/complete', [VisitController::class, 'completeVisit']);
     Route::get('/visits/{visit}/report', [VisitController::class, 'generateReport']);
+    
+    // Dashboard stats route
+    Route::get('/dashboard/stats', [VisitController::class, 'getDashboardStats']);
     // Barcode endpoint for VisitTest (sample)
     Route::get('/visits/tests/{visitTest}/barcode', [VisitController::class, 'barcode']);
     // Print label for VisitTest
@@ -102,8 +134,8 @@ Route::middleware('auth:web')->group(function () {
         Route::patch('/users/{user}/change-password', [UserController::class, 'changePassword']);
     });
 
-    // Inventory routes (admin and lab tech only)
-    Route::middleware(['role:admin,lab_tech'])->group(function () {
+    // Inventory routes (admin and staff only)
+    Route::middleware(['role:admin,staff'])->group(function () {
         Route::apiResource('inventory', InventoryController::class);
         Route::get('/inventory/stats', [InventoryController::class, 'getStats']);
         Route::get('/inventory/low-stock', [InventoryController::class, 'getLowStockItems']);
@@ -112,8 +144,8 @@ Route::middleware('auth:web')->group(function () {
         Route::post('/inventory/bulk-update', [InventoryController::class, 'bulkUpdate']);
     });
 
-    // Reports (admin only)
-    Route::middleware(['role:admin'])->group(function () {
+    // Reports (admin and staff)
+    Route::middleware(['role:admin,staff'])->group(function () {
         Route::get('/reports/revenue', [ReportController::class, 'revenue']);
         Route::get('/reports/patients', [ReportController::class, 'patients']);
         Route::get('/reports/tests', [ReportController::class, 'tests']);
@@ -121,24 +153,21 @@ Route::middleware('auth:web')->group(function () {
         Route::get('/reports/export', [ReportController::class, 'export']);
     });
 
-    // Sample Tracking routes (admin and lab tech only)
-    Route::middleware(['role:admin,lab_tech'])->group(function () {
-        Route::apiResource('sample-tracking', SampleTrackingController::class);
+    // Sample Tracking routes (admin and staff only)
+    Route::middleware(['role:admin,staff'])->group(function () {
+        // Specific routes must come before resource routes to avoid conflicts
         Route::get('/sample-tracking/stats', [SampleTrackingController::class, 'getStats']);
         Route::post('/sample-tracking/create/{visitTestId}', [SampleTrackingController::class, 'createSample']);
         Route::put('/sample-tracking/{id}/status', [SampleTrackingController::class, 'updateStatus']);
         Route::get('/sample-tracking/visit-test/{visitTestId}', [SampleTrackingController::class, 'getSampleByVisitTest']);
+        
+        // Resource routes come last
+        Route::apiResource('sample-tracking', SampleTrackingController::class);
     });
 
-    // Critical Values routes (admin and lab tech only)
-    Route::middleware(['role:admin,lab_tech'])->group(function () {
-        Route::apiResource('critical-values', CriticalValueController::class);
-        Route::post('/critical-values/check', [CriticalValueController::class, 'checkCriticalValue']);
-        Route::get('/critical-values/test/{testId}', [CriticalValueController::class, 'getByTest']);
-    });
 
-    // Notifications routes (admin and lab tech only)
-    Route::middleware(['role:admin,lab_tech'])->group(function () {
+    // Notifications routes (admin and staff only)
+    Route::middleware(['role:admin,staff'])->group(function () {
         Route::apiResource('notifications', NotificationController::class);
         Route::post('/notifications/send-result', [NotificationController::class, 'sendResultNotification']);
         Route::post('/notifications/{id}/resend', [NotificationController::class, 'resendNotification']);
@@ -148,27 +177,10 @@ Route::middleware('auth:web')->group(function () {
         Route::put('/notifications/{id}/failed', [NotificationController::class, 'markAsFailed']);
     });
 
-    // Audit Logs routes (admin only)
-    Route::middleware(['role:admin'])->group(function () {
-        Route::apiResource('audit-logs', AuditLogController::class);
-        Route::get('/audit-logs/user/{userId}', [AuditLogController::class, 'getActivityByUser']);
-        Route::get('/audit-logs/model/{modelType}/{modelId}', [AuditLogController::class, 'getActivityByModel']);
-        Route::get('/audit-logs/stats', [AuditLogController::class, 'getStats']);
-        Route::get('/audit-logs/export', [AuditLogController::class, 'export']);
-    });
 
-    // Test Panels routes (admin and lab tech only)
-    Route::middleware(['role:admin,lab_tech'])->group(function () {
-        Route::get('/test-panels/available-tests', [TestPanelController::class, 'getAvailableTests']);
-        Route::get('/test-panels/stats', [TestPanelController::class, 'getStats']);
-        Route::apiResource('test-panels', TestPanelController::class);
-        Route::post('/test-panels/{id}/tests', [TestPanelController::class, 'addTest']);
-        Route::delete('/test-panels/{id}/tests/{testId}', [TestPanelController::class, 'removeTest']);
-        Route::put('/test-panels/{id}/reorder', [TestPanelController::class, 'reorderTests']);
-    });
 
-    // Check-in and Billing Workflow routes (admin, lab_tech, and accountant)
-    Route::middleware(['role:admin,lab_tech,accountant'])->group(function () {
+    // Check-in and Billing Workflow routes (admin and staff only)
+    Route::middleware(['role:admin,staff'])->group(function () {
         Route::post('/check-in/register-patient', [CheckInController::class, 'registerPatient']);
         Route::post('/check-in/create-visit', [CheckInController::class, 'createVisitWithBilling']);
         Route::get('/check-in/patients/search', [CheckInController::class, 'searchPatients']);
@@ -179,12 +191,28 @@ Route::middleware('auth:web')->group(function () {
         Route::get('/check-in/visits/{visitId}/final-payment-receipt', [CheckInController::class, 'getFinalPaymentReceipt']);
     });
 
-    // Unpaid Invoices and Patient Balance routes (admin and accountant)
-    Route::middleware(['role:admin,accountant'])->group(function () {
+    // Unpaid Invoices and Patient Balance routes (admin and staff only)
+    Route::middleware(['role:admin,staff'])->group(function () {
         Route::get('/unpaid-invoices/search', [UnpaidInvoicesController::class, 'searchUnpaidInvoices']);
         Route::get('/unpaid-invoices/summary', [UnpaidInvoicesController::class, 'getUnpaidInvoicesSummary']);
         Route::get('/patients/{patientId}/balance', [UnpaidInvoicesController::class, 'getPatientBalance']);
         Route::post('/invoices/{invoiceId}/add-payment', [UnpaidInvoicesController::class, 'addPayment']);
         Route::get('/patients/{patientId}/portal-access', [UnpaidInvoicesController::class, 'checkPatientPortalAccess']);
+    });
+
+    // Doctor routes (doctors can view and approve reports)
+    Route::middleware(['role:doctor'])->group(function () {
+        Route::get('/doctor/reports', [ReportController::class, 'doctorReports']);
+        Route::get('/doctor/reports/{reportId}', [ReportController::class, 'getDoctorReport']);
+        Route::put('/doctor/reports/{reportId}/approve', [ReportController::class, 'approveReport']);
+        Route::put('/doctor/reports/{reportId}/fill-data', [ReportController::class, 'fillReportData']);
+    });
+
+    // Patient routes (patients can view their own reports after payment)
+    Route::middleware(['role:patient'])->group(function () {
+        Route::get('/patient/my-reports', [PatientController::class, 'myReports']);
+        Route::get('/patient/my-reports/{reportId}', [PatientController::class, 'getMyReport']);
+        Route::get('/patient/my-visits', [PatientController::class, 'myVisits']);
+        Route::get('/patient/my-invoices', [PatientController::class, 'myInvoices']);
     });
 }); 

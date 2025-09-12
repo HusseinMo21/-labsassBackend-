@@ -14,6 +14,7 @@ class Patient extends Model
         'gender',
         'birth_date',
         'phone',
+        'whatsapp_number',
         'email',
         'address',
         'national_id',
@@ -30,6 +31,8 @@ class Patient extends Model
         'username',
         'password',
         'user_id',
+        'doctor_id',
+        'organization_id',
     ];
 
     protected $casts = [
@@ -53,9 +56,29 @@ class Patient extends Model
         return $this->belongsTo(User::class, 'user_id');
     }
 
+    public function doctor()
+    {
+        return $this->belongsTo(Doctor::class);
+    }
+
+    public function organization()
+    {
+        return $this->belongsTo(Organization::class);
+    }
+
     public function credentials()
     {
         return $this->hasOne(PatientCredential::class);
+    }
+
+    public function labRequests()
+    {
+        return $this->hasMany(LabRequest::class);
+    }
+
+    public function reports()
+    {
+        return $this->hasManyThrough(Report::class, LabRequest::class, 'patient_id', 'lab_request_id');
     }
 
     public function getPortalCredentials()

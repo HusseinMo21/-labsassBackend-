@@ -10,6 +10,9 @@ use App\Models\SampleTracking;
 use App\Models\VisitTest;
 use App\Models\PatientCredential;
 use App\Models\Invoice;
+use App\Models\LabRequest;
+use App\Services\LabNoGenerator;
+use App\Services\BarcodeGenerator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Hash;
@@ -17,6 +20,15 @@ use Illuminate\Support\Facades\DB;
 
 class CheckInController extends Controller
 {
+    protected $labNoGenerator;
+    protected $barcodeGenerator;
+
+    public function __construct(LabNoGenerator $labNoGenerator, BarcodeGenerator $barcodeGenerator)
+    {
+        $this->labNoGenerator = $labNoGenerator;
+        $this->barcodeGenerator = $barcodeGenerator;
+    }
+
     public function registerPatient(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -209,11 +221,72 @@ class CheckInController extends Controller
                 ]);
             }
 
+            // Create or update lab request with samples automatically filled from selected tests
+            $labRequest = null;
+            try {
+                // Check if patient already has a lab request
+                $existingLabRequest = LabRequest::where('patient_id', $patient->id)->first();
+                
+                if ($existingLabRequest) {
+                    // Patient already has a lab number - add samples to existing lab request
+                    $labRequest = $existingLabRequest;
+                    \Log::info('Using existing lab request for patient: ' . $patient->id . ', Lab No: ' . $labRequest->lab_no);
+                } else {
+                    // Patient doesn't have a lab number - create new lab request
+                    $labNoData = $this->labNoGenerator->generate();
+                    $labNo = $labNoData['base'];
+                    
+                    $labRequest = LabRequest::create([
+                        'patient_id' => $patient->id,
+                        'lab_no' => $labNo,
+                        'status' => 'pending',
+                        'metadata' => [
+                            'auto_created' => true,
+                            'created_with_visit' => true,
+                            'visit_id' => $visit->id,
+                            'created_at' => now()->toISOString(),
+                        ],
+                    ]);
+                    
+                    // Generate barcode and QR code for the new lab request
+                    $this->barcodeGenerator->generateForLabRequest($labRequest);
+                    
+                    \Log::info('New lab request created for patient: ' . $patient->id . ', Lab No: ' . $labNo);
+                }
+
+                // Add samples for each selected test to the lab request
+                foreach ($request->tests as $testData) {
+                    $labTest = LabTest::find($testData['lab_test_id']);
+                    
+                    // Check if this sample already exists for this test
+                    $existingSample = $labRequest->samples()
+                        ->where('tsample', $labTest->name)
+                        ->where('nsample', $labTest->code)
+                        ->first();
+                    
+                    if (!$existingSample) {
+                        // Create sample with test information
+                        $labRequest->samples()->create([
+                            'tsample' => $labTest->name, // Sample Type = Test Name
+                            'nsample' => $labTest->code, // Sample Name = Test Code
+                            'isample' => $labTest->id,   // Sample ID = Test ID
+                            'notes' => $labTest->description ?: "Test: {$labTest->name}",
+                        ]);
+                    }
+                }
+                
+                \Log::info('Samples added to lab request: ' . $labRequest->id);
+            } catch (\Exception $e) {
+                \Log::error('Failed to create/update lab request for visit: ' . $e->getMessage());
+                // Don't fail the visit creation if lab request creation fails
+            }
+
             DB::commit();
 
             return response()->json([
                 'message' => 'Visit created successfully',
                 'visit' => $visit->load(['patient', 'visitTests.labTest']),
+                'lab_request' => $labRequest ? $labRequest->load('samples') : null,
                 'receipt_data' => [
                     'receipt_number' => $visit->receipt_number,
                     'date' => $visit->visit_date,
@@ -287,30 +360,47 @@ class CheckInController extends Controller
 
     public function getSampleLabel($visitId)
     {
-        $visit = Visit::with(['patient', 'visitTests.labTest'])->findOrFail($visitId);
-        
-        // Generate individual labels for each test
-        $testLabels = $visit->visitTests->map(function ($visitTest) use ($visit) {
-            return [
-                'test_name' => $visitTest->labTest->name,
-                'patient_name' => $visit->patient->name,
-                'patient_id' => $visit->patient->id,
-                'sample_date' => $visit->visit_date,
-                'sample_time' => $visit->visit_time ? date('H:i', strtotime($visit->visit_time)) : date('H:i'),
-                'barcode' => $visitTest->barcode_uid,
-            ];
-        });
-        
-        return response()->json([
-            'label_data' => [
-                'patient_name' => $visit->patient->name,
-                'patient_age' => $visit->patient->age,
-                'visit_id' => $visit->id,
-                'visit_date' => $visit->visit_date,
-                'receipt_number' => $visit->receipt_number,
-                'test_labels' => $testLabels,
-            ],
-        ]);
+        try {
+            \Log::info('Getting sample label for visit ID: ' . $visitId);
+            
+            $visit = Visit::with(['patient', 'visitTests.labTest'])->findOrFail($visitId);
+            
+            \Log::info('Visit found: ' . $visit->id . ', Patient: ' . $visit->patient->name);
+            \Log::info('Visit tests count: ' . $visit->visitTests->count());
+            
+            // Generate individual labels for each test
+            $testLabels = $visit->visitTests->map(function ($visitTest) use ($visit) {
+                return [
+                    'test_name' => $visitTest->labTest->name,
+                    'patient_name' => $visit->patient->name,
+                    'patient_id' => $visit->patient->id,
+                    'sample_date' => $visit->visit_date,
+                    'sample_time' => $visit->visit_time ? date('H:i', strtotime($visit->visit_time)) : date('H:i'),
+                    'barcode' => $visitTest->barcode_uid,
+                ];
+            });
+            
+            \Log::info('Generated ' . $testLabels->count() . ' test labels');
+            
+            return response()->json([
+                'label_data' => [
+                    'patient_name' => $visit->patient->name,
+                    'patient_age' => $visit->patient->age,
+                    'visit_id' => $visit->id,
+                    'visit_date' => $visit->visit_date,
+                    'receipt_number' => $visit->receipt_number,
+                    'test_labels' => $testLabels,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error generating sample label: ' . $e->getMessage());
+            \Log::error('Stack trace: ' . $e->getTraceAsString());
+            
+            return response()->json([
+                'error' => 'Failed to generate sample label',
+                'message' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function getFinalPaymentReceipt(Request $request, $visitId)
@@ -377,7 +467,7 @@ class CheckInController extends Controller
             ->orWhere('national_id', 'like', "%{$query}%")
             ->orWhere('username', 'like', "%{$query}%")
             ->limit(10)
-            ->get();
+            ->get(['id', 'name', 'phone', 'email', 'birth_date']);
 
         return response()->json(['patients' => $patients]);
     }

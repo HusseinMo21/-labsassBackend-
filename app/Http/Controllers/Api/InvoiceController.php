@@ -53,11 +53,26 @@ class InvoiceController extends Controller
     }
 
     // List all invoices (paginated)
-    public function index()
+    public function index(Request $request)
     {
-        $invoices = Invoice::with(['visit.patient', 'payments'])
-            ->orderBy('created_at', 'desc')
-            ->paginate(15);
+        $query = Invoice::with(['visit.patient', 'payments']);
+        
+        // Search functionality
+        if ($request->has('search') && !empty($request->search)) {
+            $searchTerm = $request->search;
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('invoice_number', 'like', "%{$searchTerm}%")
+                  ->orWhereHas('visit', function ($visitQuery) use ($searchTerm) {
+                      $visitQuery->where('visit_number', 'like', "%{$searchTerm}%")
+                                ->orWhereHas('patient', function ($patientQuery) use ($searchTerm) {
+                                    $patientQuery->where('name', 'like', "%{$searchTerm}%")
+                                                ->orWhere('phone', 'like', "%{$searchTerm}%");
+                                });
+                  });
+            });
+        }
+        
+        $invoices = $query->orderBy('created_at', 'desc')->paginate(15);
         return response()->json($invoices);
     }
 
@@ -181,11 +196,58 @@ class InvoiceController extends Controller
     // Download invoice as PDF
     public function downloadInvoicePdf($id)
     {
-        $invoice = Invoice::with(['visit.patient', 'payments'])->findOrFail($id);
-        $pdf = \PDF::loadView('invoices.pdf', ['invoice' => $invoice]);
+        $invoice = Invoice::with(['visit.patient.credentials', 'payments'])->findOrFail($id);
+        
+        // Configure MPDF for Arabic support
+        $mpdf = new \Mpdf\Mpdf([
+            'mode' => 'utf-8',
+            'format' => 'A4',
+            'orientation' => 'P',
+            'margin_left' => 15,
+            'margin_right' => 15,
+            'margin_top' => 16,
+            'margin_bottom' => 16,
+            'margin_header' => 9,
+            'margin_footer' => 9,
+            'tempDir' => storage_path('app/temp'),
+        ]);
+        
+        // Set font for Arabic support
+        $mpdf->autoScriptToLang = true;
+        $mpdf->autoLangToFont = true;
+        
+        $html = view('invoices.pdf', ['invoice' => $invoice])->render();
+        $mpdf->WriteHTML($html);
+        
         $filename = 'invoice_' . $invoice->invoice_number . '.pdf';
-        // Serve inline for preview
-        return $pdf->stream($filename);
+        
+        // Get PDF content as string
+        $pdfContent = $mpdf->Output('', 'S');
+        
+        // Create response with CORS headers
+        $response = response($pdfContent, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="' . $filename . '"',
+            'Access-Control-Allow-Origin' => '*',
+            'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin',
+            'Access-Control-Allow-Credentials' => 'true',
+            'Access-Control-Expose-Headers' => 'Content-Type, Content-Disposition, Content-Length'
+        ]);
+        
+        return $response;
+    }
+
+    // Handle OPTIONS request for CORS preflight
+    public function optionsInvoiceDownload($id)
+    {
+        return response('', 200, [
+            'Access-Control-Allow-Origin' => '*',
+            'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin',
+            'Access-Control-Allow-Credentials' => 'true',
+            'Access-Control-Max-Age' => '86400',
+        ]);
     }
 
     // Delete invoice

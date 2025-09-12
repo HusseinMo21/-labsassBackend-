@@ -182,8 +182,9 @@ class UserController extends Controller
     {
         $roles = [
             ['value' => 'admin', 'label' => 'Administrator'],
-            ['value' => 'lab_tech', 'label' => 'Lab Technician'],
-            ['value' => 'accountant', 'label' => 'Accountant'],
+            ['value' => 'staff', 'label' => 'Staff'],
+            ['value' => 'doctor', 'label' => 'Doctor'],
+            ['value' => 'patient', 'label' => 'Patient'],
         ];
 
         return response()->json($roles);

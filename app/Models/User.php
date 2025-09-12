@@ -56,14 +56,30 @@ class User extends Authenticatable
         return $this->role === 'admin';
     }
 
+    public function isStaff()
+    {
+        return $this->role === 'staff';
+    }
+
+    public function isDoctor()
+    {
+        return $this->role === 'doctor';
+    }
+
+    public function isPatient()
+    {
+        return $this->role === 'patient';
+    }
+
+    // Legacy methods for backward compatibility
     public function isLabTech()
     {
-        return $this->role === 'lab_tech';
+        return $this->role === 'staff'; // Map lab_tech to staff
     }
 
     public function isAccountant()
     {
-        return $this->role === 'accountant';
+        return $this->role === 'staff'; // Map accountant to staff
     }
 
     public function hasRole($role)
@@ -74,5 +90,13 @@ class User extends Authenticatable
     public function hasAnyRole($roles)
     {
         return in_array($this->role, (array) $roles);
+    }
+
+    /**
+     * Get the refresh tokens for the user
+     */
+    public function refreshTokens()
+    {
+        return $this->hasMany(RefreshToken::class);
     }
 } 

@@ -13,7 +13,10 @@
         "laravel/framework": "^11.0",
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.8",
-        "milon/barcode": "^11.0"
+        "milon/barcode": "^11.0",
+        "mpdf/mpdf": "^8.2",
+        "picqer/php-barcode-generator": "^3.2",
+        "simplesoftwareio/simple-qrcode": "^4.2"
     },
     "require-dev": {
         "fakerphp/faker": "^1.9.1",

@@ -11,6 +11,7 @@ class Invoice extends Model
 
     protected $fillable = [
         'visit_id',
+        'lab_request_id',
         'invoice_number',
         'invoice_date',
         'subtotal',
@@ -40,6 +41,11 @@ class Invoice extends Model
     public function visit()
     {
         return $this->belongsTo(Visit::class);
+    }
+
+    public function labRequest()
+    {
+        return $this->belongsTo(LabRequest::class);
     }
 
     public function payments()

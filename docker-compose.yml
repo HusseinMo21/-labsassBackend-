@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      target: production
+    container_name: lab-erp-app
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+      - ./storage:/var/www/html/storage
+    networks:
+      - lab-erp-network
+    depends_on:
+      - db
+      - redis
+
+  nginx:
+    image: nginx:alpine
+    container_name: lab-erp-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./:/var/www/html
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./docker/nginx/sites-available:/etc/nginx/sites-available
+      - ./docker/ssl:/etc/nginx/ssl
+    networks:
+      - lab-erp-network
+    depends_on:
+      - app
+
+  db:
+    image: mysql:8.0
+    container_name: lab-erp-db
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: lab_erp_production
+      MYSQL_USER: lab_erp_user
+      MYSQL_PASSWORD: secure_password_here
+      MYSQL_ROOT_PASSWORD: root_password_here
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./docker/mysql/my.cnf:/etc/mysql/conf.d/my.cnf
+    ports:
+      - "3306:3306"
+    networks:
+      - lab-erp-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: lab-erp-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass redis_password_here
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - lab-erp-network
+
+  queue:
+    build:
+      context: .
+      target: production
+    container_name: lab-erp-queue
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    command: php artisan queue:work --verbose --tries=3 --timeout=90
+    networks:
+      - lab-erp-network
+    depends_on:
+      - db
+      - redis
+
+  scheduler:
+    build:
+      context: .
+      target: production
+    container_name: lab-erp-scheduler
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    command: php artisan schedule:work
+    networks:
+      - lab-erp-network
+    depends_on:
+      - db
+      - redis
+
+volumes:
+  db_data:
+  redis_data:
+
+networks:
+  lab-erp-network:
+    driver: bridge
+
+
+
+
+

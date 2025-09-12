@@ -15,6 +15,7 @@ class DatabaseSeeder extends Seeder
             PatientSeeder::class,
             CriticalValueSeeder::class,
             TestPanelSeeder::class,
+            SampleDataSeeder::class,
         ]);
     }
 } 
