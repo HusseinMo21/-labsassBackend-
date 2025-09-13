@@ -36,7 +36,7 @@ class Invoice extends Model
         'balance' => 'decimal:2',
     ];
 
-    protected $appends = ['remaining_balance'];
+    protected $appends = ['remaining_balance', 'lab_number'];
 
     public function visit()
     {
@@ -93,6 +93,31 @@ class Invoice extends Model
         $this->status = $this->payment_status;
         $this->save();
 
+        // Update the visit's billing status and remaining balance
+        $visit = $this->visit;
+        if ($visit) {
+            $visit->update([
+                'remaining_balance' => $this->remaining_balance,
+                'billing_status' => $this->isFullyPaid() ? 'paid' : 'partial',
+            ]);
+        }
+
         return $this;
+    }
+
+    /**
+     * Get the lab number for this invoice.
+     */
+    public function getLabNumberAttribute()
+    {
+        if ($this->labRequest) {
+            return $this->labRequest->full_lab_no;
+        }
+        
+        if ($this->visit && $this->visit->labRequest) {
+            return $this->visit->labRequest->full_lab_no;
+        }
+        
+        return null;
     }
 } 

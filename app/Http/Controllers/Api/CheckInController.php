@@ -13,6 +13,7 @@ use App\Models\Invoice;
 use App\Models\LabRequest;
 use App\Services\LabNoGenerator;
 use App\Services\BarcodeGenerator;
+use App\Services\BarcodeService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Hash;
@@ -22,11 +23,13 @@ class CheckInController extends Controller
 {
     protected $labNoGenerator;
     protected $barcodeGenerator;
+    protected $barcodeService;
 
-    public function __construct(LabNoGenerator $labNoGenerator, BarcodeGenerator $barcodeGenerator)
+    public function __construct(LabNoGenerator $labNoGenerator, BarcodeGenerator $barcodeGenerator, BarcodeService $barcodeService)
     {
         $this->labNoGenerator = $labNoGenerator;
         $this->barcodeGenerator = $barcodeGenerator;
+        $this->barcodeService = $barcodeService;
     }
 
     public function registerPatient(Request $request)
@@ -110,6 +113,11 @@ class CheckInController extends Controller
             'payment_method' => 'required|in:cash,card,insurance,other',
             'notes' => 'nullable|string',
             'expected_delivery_date' => 'nullable|date',
+            'discount_amount' => 'nullable|numeric|min:0',
+            'discount_percentage' => 'nullable|numeric|min:0|max:100',
+            'insurance_provider' => 'nullable|string|max:255',
+            'insurance_policy_number' => 'nullable|string|max:255',
+            'insurance_claim_number' => 'nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {
@@ -138,9 +146,13 @@ class CheckInController extends Controller
                 $selectedTests[] = $test;
             }
 
-            // Apply insurance discount if applicable
+            // Apply discount (from frontend or insurance)
+            $discountAmount = $request->discount_amount ?? 0;
             $insuranceDiscount = $patient->getInsuranceDiscountAmount($totalAmount);
-            $finalAmount = $totalAmount - $insuranceDiscount;
+            
+            // Use the higher of frontend discount or insurance discount
+            $totalDiscount = max($discountAmount, $insuranceDiscount);
+            $finalAmount = $totalAmount - $totalDiscount;
 
             // Validate upfront payment
             $minimumUpfront = ($finalAmount * 50) / 100; // 50% minimum
@@ -165,7 +177,7 @@ class CheckInController extends Controller
                 'visit_date' => now()->toDateString(),
                 'visit_time' => now(),
                 'total_amount' => $totalAmount,
-                'discount_amount' => $insuranceDiscount,
+                'discount_amount' => $totalDiscount,
                 'final_amount' => $finalAmount,
                 'upfront_payment' => $request->upfront_payment,
                 'remaining_balance' => $finalAmount - $request->upfront_payment,
@@ -178,7 +190,7 @@ class CheckInController extends Controller
                 'check_in_at' => now(),
                 'billing_status' => $request->upfront_payment >= $finalAmount ? 'paid' : 'partial',
                 'status' => 'registered',
-                'remarks' => $request->notes,
+                'remarks' => $this->buildRemarks($request),
             ]);
             
             \Log::info('Visit created successfully with ID: ' . $visit->id);
@@ -189,7 +201,7 @@ class CheckInController extends Controller
                 'invoice_number' => 'INV' . now()->format('Ymd') . str_pad($visit->id, 4, '0', STR_PAD_LEFT),
                 'invoice_date' => now()->toDateString(),
                 'subtotal' => $totalAmount,
-                'discount_amount' => $insuranceDiscount,
+                'discount_amount' => $totalDiscount,
                 'tax_amount' => 0, // No tax for now
                 'total_amount' => $finalAmount,
                 'amount_paid' => $request->upfront_payment,
@@ -254,6 +266,14 @@ class CheckInController extends Controller
                     \Log::info('New lab request created for patient: ' . $patient->id . ', Lab No: ' . $labNo);
                 }
 
+                // Link the visit to the lab request
+                $visit->update(['lab_request_id' => $labRequest->id]);
+                \Log::info('Linked visit ' . $visit->id . ' to lab request ' . $labRequest->id);
+
+                // Link the invoice to the lab request
+                $invoice->update(['lab_request_id' => $labRequest->id]);
+                \Log::info('Linked invoice ' . $invoice->id . ' to lab request ' . $labRequest->id);
+
                 // Add samples for each selected test to the lab request
                 foreach ($request->tests as $testData) {
                     $labTest = LabTest::find($testData['lab_test_id']);
@@ -265,13 +285,21 @@ class CheckInController extends Controller
                         ->first();
                     
                     if (!$existingSample) {
-                        // Create sample with test information
+                        // Generate sample ID and barcode
+                        $sampleId = $this->barcodeService->generateNextSampleId($labRequest->lab_no);
+                        $barcode = $this->barcodeService->generateBarcode($labRequest->lab_no, $sampleId);
+                        
+                        // Create sample with test information and barcode
                         $labRequest->samples()->create([
+                            'barcode' => $barcode,
+                            'sample_id' => $sampleId,
                             'tsample' => $labTest->name, // Sample Type = Test Name
                             'nsample' => $labTest->code, // Sample Name = Test Code
                             'isample' => $labTest->id,   // Sample ID = Test ID
                             'notes' => $labTest->description ?: "Test: {$labTest->name}",
                         ]);
+                        
+                        \Log::info('Created sample with barcode: ' . $barcode . ' for test: ' . $labTest->name);
                     }
                 }
                 
@@ -300,7 +328,7 @@ class CheckInController extends Controller
                         ];
                     }),
                     'total_amount' => $totalAmount,
-                    'discount_amount' => $insuranceDiscount,
+                    'discount_amount' => $totalDiscount,
                     'final_amount' => $finalAmount,
                     'upfront_payment' => $request->upfront_payment,
                     'remaining_balance' => $finalAmount - $request->upfront_payment,
@@ -325,14 +353,45 @@ class CheckInController extends Controller
         }
     }
 
+    private function buildRemarks($request)
+    {
+        $remarks = [];
+        
+        if ($request->notes) {
+            $remarks[] = "Notes: " . $request->notes;
+        }
+        
+        if ($request->payment_method === 'insurance') {
+            if ($request->insurance_provider) {
+                $remarks[] = "Insurance Provider: " . $request->insurance_provider;
+            }
+            if ($request->insurance_policy_number) {
+                $remarks[] = "Policy Number: " . $request->insurance_policy_number;
+            }
+            if ($request->insurance_claim_number) {
+                $remarks[] = "Claim Number: " . $request->insurance_claim_number;
+            }
+        }
+        
+        if ($request->discount_amount > 0) {
+            $remarks[] = "Discount Applied: $" . number_format($request->discount_amount, 2);
+            if ($request->discount_percentage > 0) {
+                $remarks[] = "Discount Percentage: " . $request->discount_percentage . "%";
+            }
+        }
+        
+        return implode("\n", $remarks);
+    }
+
     public function getReceipt($visitId)
     {
-        $visit = Visit::with(['patient', 'visitTests.labTest'])->findOrFail($visitId);
+        $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest'])->findOrFail($visitId);
         
         return response()->json([
             'visit' => $visit,
             'receipt_data' => [
                 'receipt_number' => $visit->receipt_number,
+                'lab_number' => $visit->lab_number,
                 'date' => $visit->visit_date,
                 'patient_name' => $visit->patient->name,
                 'patient_age' => $visit->patient->age,
@@ -350,7 +409,7 @@ class CheckInController extends Controller
                 'remaining_balance' => $visit->remaining_balance,
                 'payment_method' => $visit->payment_method,
                 'expected_delivery_date' => $visit->expected_delivery_date,
-                'barcode' => $visit->barcode,
+                'barcode' => $visit->labRequest ? $this->barcodeService->generateReceiptBarcode($visit->labRequest->lab_no) : $visit->barcode,
                 'check_in_by' => $visit->check_in_by,
                 'check_in_at' => $visit->check_in_at,
                 'patient_credentials' => $visit->patient->getPortalCredentials(),

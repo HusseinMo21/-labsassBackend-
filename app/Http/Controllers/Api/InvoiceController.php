@@ -55,7 +55,7 @@ class InvoiceController extends Controller
     // List all invoices (paginated)
     public function index(Request $request)
     {
-        $query = Invoice::with(['visit.patient', 'payments']);
+        $query = Invoice::with(['visit.patient', 'visit.labRequest', 'labRequest', 'payments']);
         
         // Search functionality
         if ($request->has('search') && !empty($request->search)) {
@@ -68,6 +68,9 @@ class InvoiceController extends Controller
                                     $patientQuery->where('name', 'like', "%{$searchTerm}%")
                                                 ->orWhere('phone', 'like', "%{$searchTerm}%");
                                 });
+                  })
+                  ->orWhereHas('labRequest', function ($labQuery) use ($searchTerm) {
+                      $labQuery->where('lab_no', 'like', "%{$searchTerm}%");
                   });
             });
         }
@@ -79,7 +82,7 @@ class InvoiceController extends Controller
     // Get a single invoice
     public function show($id)
     {
-        $invoice = Invoice::with(['visit.patient', 'visit.visitTests.labTest', 'payments'])
+        $invoice = Invoice::with(['visit.patient', 'visit.visitTests.labTest', 'visit.labRequest', 'labRequest', 'payments'])
             ->findOrFail($id);
         return response()->json($invoice);
     }
@@ -119,6 +122,16 @@ class InvoiceController extends Controller
                 'balance' => $balance,
                 'status' => $status,
             ]);
+            
+            // Update the visit's billing status and remaining balance
+            $visit = $invoice->visit;
+            if ($visit) {
+                $visit->update([
+                    'remaining_balance' => $balance,
+                    'billing_status' => $status === 'paid' ? 'paid' : 'partial',
+                ]);
+            }
+            
             DB::commit();
             return response()->json([
                 'message' => 'Payment added successfully',

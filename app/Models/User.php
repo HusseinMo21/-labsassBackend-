@@ -99,4 +99,9 @@ class User extends Authenticatable
     {
         return $this->hasMany(RefreshToken::class);
     }
+
+    public function patient()
+    {
+        return $this->hasOne(Patient::class, 'user_id');
+    }
 } 

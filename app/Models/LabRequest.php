@@ -63,6 +63,14 @@ class LabRequest extends Model
     }
 
     /**
+     * Get the visit for the lab request.
+     */
+    public function visit(): HasOne
+    {
+        return $this->hasOne(Visit::class, 'lab_request_id');
+    }
+
+    /**
      * Get the full lab number (lab_no + suffix).
      */
     public function getFullLabNoAttribute(): string
@@ -75,7 +83,7 @@ class LabRequest extends Model
      */
     public function getBarcodeUrlAttribute(): string
     {
-        return asset('storage/barcodes/' . $this->full_lab_no . '_barcode.png');
+        return asset('storage/barcodes/' . $this->full_lab_no . '_barcode.svg');
     }
 
     /**
@@ -83,7 +91,7 @@ class LabRequest extends Model
      */
     public function getQrCodeUrlAttribute(): string
     {
-        return asset('storage/qrcodes/' . $this->full_lab_no . '_qr.png');
+        return asset('storage/qrcodes/' . $this->full_lab_no . '_qr.svg');
     }
 
     /**

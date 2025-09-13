@@ -30,7 +30,7 @@ class UserController extends Controller
             $query->where('is_active', $request->status === 'active');
         }
 
-        $users = $query->latest()->paginate(15);
+        $users = $query->with('patient')->latest()->paginate(15);
 
         return response()->json($users);
     }

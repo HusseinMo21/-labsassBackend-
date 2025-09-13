@@ -11,6 +11,7 @@ class Visit extends Model
 
     protected $fillable = [
         'patient_id',
+        'lab_request_id',
         'visit_number',
         'visit_date',
         'visit_time',
@@ -52,6 +53,8 @@ class Visit extends Model
         'completed_at' => 'datetime',
     ];
 
+    protected $appends = ['lab_number'];
+
     public function patient()
     {
         return $this->belongsTo(Patient::class);
@@ -65,6 +68,11 @@ class Visit extends Model
     public function invoice()
     {
         return $this->hasOne(Invoice::class);
+    }
+
+    public function labRequest()
+    {
+        return $this->belongsTo(LabRequest::class);
     }
 
     public static function generateReceiptNumber()
@@ -91,7 +99,34 @@ class Visit extends Model
         $timestamp = now()->format('YmdHis');
         $random = strtoupper(substr(md5(uniqid()), 0, 6));
         
-        return $prefix . $timestamp . $random;
+        $barcodeText = $prefix . $timestamp . $random;
+        
+        // Generate simple HTML barcode for receipt display
+        try {
+            // Create a simple barcode representation using HTML/CSS
+            $bars = '';
+            $textLength = strlen($barcodeText);
+            
+            // Generate bars based on text characters
+            for ($i = 0; $i < $textLength; $i++) {
+                $char = $barcodeText[$i];
+                $charCode = ord($char);
+                
+                // Create bars based on character code
+                $barWidth = ($charCode % 4) + 1; // 1-4 pixels wide
+                $bars .= '<div style="display:inline-block;width:' . $barWidth . 'px;height:40px;background-color:black;margin-right:1px;"></div>';
+            }
+            
+            return '<div style="font-family:monospace;font-size:12px;text-align:center;padding:8px;border:1px solid #ccc;background:white;margin:4px 0;">
+                        <div style="margin-bottom:5px;font-weight:bold;">' . htmlspecialchars($barcodeText) . '</div>
+                        <div style="margin:5px 0;">' . $bars . '</div>
+                        <div style="font-size:10px;color:#666;">BARCODE</div>
+                    </div>';
+        } catch (\Exception $e) {
+            // Fallback to text if barcode generation fails
+            \Log::error('Failed to generate barcode in Visit model: ' . $e->getMessage());
+            return $barcodeText;
+        }
     }
 
     public static function generateVisitNumber()
@@ -146,5 +181,17 @@ class Visit extends Model
             ->max('lab_tests.turnaround_time_hours') ?? 24;
         
         return now()->addHours($maxTurnaroundHours)->toDateString();
+    }
+
+    /**
+     * Get the lab number for this visit.
+     */
+    public function getLabNumberAttribute()
+    {
+        if ($this->labRequest) {
+            return $this->labRequest->full_lab_no;
+        }
+        
+        return null;
     }
 } 

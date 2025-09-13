@@ -151,7 +151,7 @@ class PatientController extends Controller
     {
         $patient->load([
             'visits' => function ($q) {
-                $q->with(['visitTests.labTest', 'invoice'])->latest();
+                $q->with(['visitTests.labTest', 'invoice', 'labRequest'])->latest();
             },
             'visits.visitTests.performedBy',
         ]);
@@ -366,35 +366,64 @@ class PatientController extends Controller
 
     public function printSingleReport($reportId)
     {
-        $test = \App\Models\VisitTest::with(['labTest', 'visit.patient'])->findOrFail($reportId);
+        \Log::info("Starting PDF generation for VisitTest ID: {$reportId}");
         
-        // Configure MPDF for Arabic support
-        $mpdf = new \Mpdf\Mpdf([
-            'mode' => 'utf-8',
-            'format' => 'A4',
-            'orientation' => 'P',
-            'margin_left' => 15,
-            'margin_right' => 15,
-            'margin_top' => 16,
-            'margin_bottom' => 16,
-            'margin_header' => 9,
-            'margin_footer' => 9,
-            'tempDir' => storage_path('app/temp'),
-        ]);
+        // Optimized database query - only get what we need
+        $test = \App\Models\VisitTest::with([
+            'labTest:id,name',
+            'visit:id,patient_id,visit_date,visit_number,clinical_data,microscopic_description,diagnosis,recommendations,referred_doctor,lab_request_id',
+            'visit.patient:id,name,birth_date,gender',
+            'visit.labRequest:id,lab_no,barcode_url'
+        ])->findOrFail($reportId);
         
-        // Set font for Arabic support
-        $mpdf->autoScriptToLang = true;
-        $mpdf->autoLangToFont = true;
+        $visit = $test->visit;
+        \Log::info("Found visit: {$visit->visit_number} for patient: {$visit->patient->name}");
         
-        $html = view('reports.single_report_pdf', [
-            'test' => $test,
-        ])->render();
-        $mpdf->WriteHTML($html);
-        
-        $filename = 'report_' . $test->id . '.pdf';
-        
-        // Get PDF content as string
-        $pdfContent = $mpdf->Output('', 'S');
+        try {
+            // Configure MPDF for Arabic support with proper margins for printing
+            $mpdf = new \Mpdf\Mpdf([
+                'mode' => 'utf-8',
+                'format' => 'A4',
+                'orientation' => 'P',
+                'margin_left' => 8,
+                'margin_right' => 8,
+                'margin_top' => 20,
+                'margin_bottom' => 20,
+                'margin_header' => 0,
+                'margin_footer' => 0,
+                'tempDir' => storage_path('app/temp'),
+                'default_font_size' => 12,
+                'default_font' => 'dejavusans',
+            ]);
+            
+            // Set font for Arabic support
+            $mpdf->autoScriptToLang = true;
+            $mpdf->autoLangToFont = true;
+            
+            // Disable image processing for faster generation
+            $mpdf->showImageErrors = false;
+            
+            $html = view('reports.professional_pathology_report', [
+                'visit' => $visit,
+            ])->render();
+            
+            $mpdf->WriteHTML($html);
+            
+            $filename = 'pathology_report_' . ($visit->labRequest->lab_no ?? $visit->visit_number) . '.pdf';
+            
+            // Get PDF content as string
+            $pdfContent = $mpdf->Output('', 'S');
+            
+            \Log::info("PDF generated successfully. Size: " . strlen($pdfContent) . " bytes");
+            
+        } catch (\Exception $e) {
+            \Log::error('PDF generation error: ' . $e->getMessage());
+            \Log::error('Stack trace: ' . $e->getTraceAsString());
+            return response()->json([
+                'error' => 'PDF generation failed',
+                'message' => $e->getMessage()
+            ], 500);
+        }
         
         // Create response with CORS headers
         $response = response($pdfContent, 200, [
@@ -532,24 +561,25 @@ class PatientController extends Controller
             return response()->json(['message' => 'Patient not found'], 404);
         }
 
-        $invoices = $patient->visits()->with(['invoice.payments'])->get()
+        $invoices = $patient->visits()->with(['invoice.payments', 'labRequest'])->get()
             ->filter(function($visit) {
                 return $visit->invoice !== null;
             })
-            ->map(function($visit) {
+            ->map(function($visit) use ($patient) {
                 $invoice = $visit->invoice;
                 return [
                     'id' => $invoice->id,
                     'invoice_number' => $invoice->invoice_number,
                     'invoice_date' => $invoice->invoice_date,
-                    'visit_id' => $visit->visit_id,
+                    'visit_id' => $visit->id,
+                    'lab_number' => $invoice->lab_number,
                     'patient_name' => $patient->name,
                     'total_amount' => $invoice->total_amount,
                     'discount_amount' => $invoice->discount_amount,
                     'tax_amount' => $invoice->tax_amount,
                     'final_amount' => $invoice->total_amount - $invoice->discount_amount + $invoice->tax_amount,
                     'payment_status' => $invoice->payment_status,
-                    'balance_due' => $invoice->balance_due,
+                    'balance_due' => $invoice->balance,
                     'payments' => $invoice->payments->map(function($payment) {
                         return [
                             'id' => $payment->id,

@@ -104,6 +104,15 @@ class UnpaidInvoicesController extends Controller
         try {
             $invoice->addPayment($request->amount, $request->payment_method, $request->notes);
             
+            // Update the visit's billing status and remaining balance
+            $visit = $invoice->visit;
+            if ($visit) {
+                $visit->update([
+                    'remaining_balance' => $invoice->remaining_balance,
+                    'billing_status' => $invoice->isFullyPaid() ? 'paid' : 'partial',
+                ]);
+            }
+            
             DB::commit();
 
             return response()->json([
@@ -164,6 +173,51 @@ class UnpaidInvoicesController extends Controller
                     ? 'You need to complete your payment to access your results.' 
                     : 'You can access your test results.',
             ],
+        ]);
+    }
+
+    public function getFinalPaymentReceiptData($invoiceId)
+    {
+        $invoice = Invoice::with(['visit.patient', 'visit.visitTests.labTest', 'visit.labRequest', 'payments'])
+            ->findOrFail($invoiceId);
+        
+        $visit = $invoice->visit;
+        $patient = $visit->patient;
+        
+        // Get the last payment (the final payment)
+        $lastPayment = $invoice->payments()->latest()->first();
+        
+        // Calculate payment breakdown
+        $totalPaid = $invoice->amount_paid;
+        $paidBefore = $totalPaid - ($lastPayment ? $lastPayment->amount : 0);
+        $paidNow = $lastPayment ? $lastPayment->amount : 0;
+        
+        // Get patient credentials
+        $credentials = $patient->getPortalCredentials();
+        
+        return response()->json([
+            'receipt_number' => $visit->receipt_number,
+            'date' => $visit->visit_date,
+            'patient_name' => $patient->name,
+            'patient_age' => $patient->age,
+            'patient_phone' => $patient->phone,
+            'tests' => $visit->visitTests->map(function($test) {
+                return [
+                    'name' => $test->labTest->name,
+                    'price' => $test->price
+                ];
+            }),
+            'total_amount' => $invoice->total_amount,
+            'discount_amount' => $invoice->discount_amount,
+            'final_amount' => $invoice->total_amount - $invoice->discount_amount,
+            'upfront_payment' => $paidBefore,
+            'remaining_balance' => $paidNow,
+            'payment_method' => $lastPayment ? $lastPayment->payment_method : 'cash',
+            'expected_delivery_date' => $visit->expected_delivery_date,
+            'lab_number' => $visit->labRequest ? $visit->labRequest->lab_no : null,
+            'check_in_by' => $visit->check_in_by,
+            'visit_id' => $visit->visit_number,
+            'patient_credentials' => $credentials,
         ]);
     }
 } 

@@ -12,6 +12,8 @@ class Sample extends Model
 
     protected $fillable = [
         'lab_request_id',
+        'barcode',
+        'sample_id',
         'tsample',
         'nsample',
         'isample',

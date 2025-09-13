@@ -86,6 +86,15 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
     Route::get('/lab-requests-stats', [LabRequestController::class, 'getStats']);
     Route::get('/lab-requests-patient-details', [LabRequestController::class, 'getPatientDetailsByLabNo']);
 
+    // Barcode routes
+    Route::post('/barcode/scan', [App\Http\Controllers\Api\BarcodeController::class, 'scan']);
+    Route::post('/barcode/parse', [App\Http\Controllers\Api\BarcodeController::class, 'parse']);
+    Route::post('/barcode/validate', [App\Http\Controllers\Api\BarcodeController::class, 'validate']);
+    Route::get('/barcode/sample', [App\Http\Controllers\Api\BarcodeController::class, 'getSample']);
+    Route::get('/barcode/lab-request', [App\Http\Controllers\Api\BarcodeController::class, 'getLabRequest']);
+    Route::get('/barcode/next-sample-id', [App\Http\Controllers\Api\BarcodeController::class, 'generateNextSampleId']);
+    Route::post('/barcode/test-generate', [App\Http\Controllers\Api\BarcodeController::class, 'testGenerate']);
+
     // Lab test routes
     Route::apiResource('tests', LabTestController::class);
 
@@ -198,6 +207,7 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
         Route::get('/patients/{patientId}/balance', [UnpaidInvoicesController::class, 'getPatientBalance']);
         Route::post('/invoices/{invoiceId}/add-payment', [UnpaidInvoicesController::class, 'addPayment']);
         Route::get('/patients/{patientId}/portal-access', [UnpaidInvoicesController::class, 'checkPatientPortalAccess']);
+        Route::get('/invoices/{invoiceId}/final-payment-receipt', [UnpaidInvoicesController::class, 'getFinalPaymentReceiptData']);
     });
 
     // Doctor routes (doctors can view and approve reports)
@@ -206,6 +216,11 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
         Route::get('/doctor/reports/{reportId}', [ReportController::class, 'getDoctorReport']);
         Route::put('/doctor/reports/{reportId}/approve', [ReportController::class, 'approveReport']);
         Route::put('/doctor/reports/{reportId}/fill-data', [ReportController::class, 'fillReportData']);
+    });
+
+    // Professional report generation (accessible by admin, staff, doctor)
+    Route::middleware(['role:admin,staff,doctor'])->group(function () {
+        Route::get('/reports/professional/{visitId}', [ReportController::class, 'generateProfessionalReport']);
     });
 
     // Patient routes (patients can view their own reports after payment)

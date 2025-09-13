@@ -530,4 +530,52 @@ class ReportController extends Controller
 
         return response()->json(['message' => 'Report data updated successfully']);
     }
+
+    public function generateProfessionalReport($visitId)
+    {
+        $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest'])
+            ->findOrFail($visitId);
+        
+        // Configure MPDF for Arabic support with proper margins for printing
+        $mpdf = new \Mpdf\Mpdf([
+            'mode' => 'utf-8',
+            'format' => 'A4',
+            'orientation' => 'P',
+            'margin_left' => 8,
+            'margin_right' => 8,
+            'margin_top' => 20,
+            'margin_bottom' => 20,
+            'margin_header' => 0,
+            'margin_footer' => 0,
+            'tempDir' => storage_path('app/temp'),
+        ]);
+        
+        // Set font for Arabic support
+        $mpdf->autoScriptToLang = true;
+        $mpdf->autoLangToFont = true;
+        
+        $html = view('reports.professional_pathology_report', [
+            'visit' => $visit,
+        ])->render();
+        
+        $mpdf->WriteHTML($html);
+        
+        $filename = 'pathology_report_' . ($visit->labRequest->lab_no ?? $visit->visit_number) . '.pdf';
+        
+        // Get PDF content as string
+        $pdfContent = $mpdf->Output('', 'S');
+        
+        // Create response with CORS headers
+        $response = response($pdfContent, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="' . $filename . '"',
+            'Access-Control-Allow-Origin' => '*',
+            'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin',
+            'Access-Control-Allow-Credentials' => 'true',
+            'Access-Control-Expose-Headers' => 'Content-Type, Content-Disposition, Content-Length'
+        ]);
+        
+        return $response;
+    }
 } 

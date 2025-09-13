@@ -15,7 +15,7 @@ class VisitController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Visit::with(['patient', 'visitTests.labTest', 'invoice']);
+        $query = Visit::with(['patient', 'visitTests.labTest', 'invoice', 'labRequest']);
         
         // Filter to only include visits with receipts if requested
         if ($request->has('include_receipts') && $request->include_receipts === 'true') {
@@ -31,6 +31,9 @@ class VisitController extends Controller
                   ->orWhereHas('patient', function ($patientQuery) use ($searchTerm) {
                       $patientQuery->where('name', 'like', "%{$searchTerm}%")
                                   ->orWhere('phone', 'like', "%{$searchTerm}%");
+                  })
+                  ->orWhereHas('labRequest', function ($labQuery) use ($searchTerm) {
+                      $labQuery->where('lab_no', 'like', "%{$searchTerm}%");
                   });
             });
         }
@@ -80,7 +83,7 @@ class VisitController extends Controller
 
     public function show($id)
     {
-        $visit = Visit::with(['patient', 'visitTests.labTest', 'invoice.payments'])
+        $visit = Visit::with(['patient', 'visitTests.labTest', 'invoice.payments', 'labRequest'])
             ->findOrFail($id);
         
         return response()->json($visit);
@@ -111,7 +114,7 @@ class VisitController extends Controller
         $totalRevenue = Visit::sum('total_amount');
         // Add more stats as needed
 
-        $recentVisits = Visit::with(['patient', 'visitTests.labTest'])
+        $recentVisits = Visit::with(['patient', 'visitTests.labTest', 'labRequest'])
             ->orderBy('created_at', 'desc')
             ->limit(5)
             ->get();
@@ -217,7 +220,7 @@ class VisitController extends Controller
 
     public function getVisits()
     {
-        $visits = Visit::with(['patient', 'visitTests.labTest', 'invoice'])
+        $visits = Visit::with(['patient', 'visitTests.labTest', 'invoice', 'labRequest'])
             ->orderBy('created_at', 'desc')
             ->paginate(15);
 
@@ -226,7 +229,7 @@ class VisitController extends Controller
 
     public function getVisit($id)
     {
-        $visit = Visit::with(['patient', 'tests.labTest', 'invoice.payments'])
+        $visit = Visit::with(['patient', 'tests.labTest', 'invoice.payments', 'labRequest'])
             ->findOrFail($id);
 
         return response()->json($visit);

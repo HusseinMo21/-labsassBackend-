@@ -5,8 +5,8 @@ namespace App\Services;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
-use Picqer\Barcode\BarcodeGeneratorPNG;
-use Picqer\Barcode\BarcodeGeneratorHTML;
+use Milon\Barcode\DNS1D;
+use Milon\Barcode\DNS2D;
 
 class BarcodeGenerator
 {
@@ -49,32 +49,156 @@ class BarcodeGenerator
      * @param string $format The barcode format (default: CODE128)
      * @return string The file path of the generated barcode
      */
-    public function generateBarcode(string $text, string $format = 'CODE128'): string
+    public function generateBarcode(string $text, string $format = 'C128'): string
     {
         try {
-            $generator = new BarcodeGeneratorPNG();
+            $barcode = new DNS1D();
             
-            // Generate barcode image
-            $barcodeData = $generator->getBarcode($text, $format, 2, 50);
+            // Clean the text for barcode generation
+            $cleanText = preg_replace('/[^A-Za-z0-9]/', '', $text);
+            if (empty($cleanText)) {
+                $cleanText = str_replace(['-', '_', ' '], '', $text);
+            }
             
-            // Create filename
-            $filename = $text . '_barcode.png';
+            // Try different formats and parameters to get a complete barcode
+            $formats = ['C128', 'C39', 'C39+', 'C93', 'I25', 'I25+', 'S25', 'S25+'];
+            
+            $barcodeData = null;
+            $usedFormat = null;
+            
+            foreach ($formats as $testFormat) {
+                try {
+                    // Try with original text first
+                    $testData = $barcode->getBarcodeSVG($text, $testFormat, 2, 50);
+                    
+                    // If that fails, try with cleaned text
+                    if (empty($testData) || !str_contains($testData, '<svg')) {
+                        $testData = $barcode->getBarcodeSVG($cleanText, $testFormat, 2, 50);
+                    }
+                    
+                    if (!empty($testData) && str_contains($testData, '<svg')) {
+                        // Check if the barcode has reasonable width (more than 50 pixels)
+                        if (preg_match('/width="(\d+)"/', $testData, $matches)) {
+                            $width = (int)$matches[1];
+                            if ($width > 50) { // Reasonable width for a barcode
+                                $barcodeData = $testData;
+                                $usedFormat = $testFormat;
+                                break;
+                            }
+                        }
+                    }
+                } catch (\Exception $e) {
+                    // Continue to next format
+                    continue;
+                }
+            }
+            
+            if (!$barcodeData) {
+                throw new \Exception('Failed to generate valid barcode with any format');
+            }
+            
+            // Create filename with SVG extension
+            $filename = $text . '_barcode.svg';
             $path = 'barcodes/' . $filename;
             
             // Store the barcode
             Storage::disk('public')->put($path, $barcodeData);
             
+            Log::info('Barcode generated successfully with milon/barcode', [
+                'text' => $text,
+                'clean_text' => $cleanText,
+                'format' => $usedFormat,
+                'path' => $path,
+                'data_length' => strlen($barcodeData)
+            ]);
+            
             return $path;
         } catch (\Exception $e) {
-            Log::error('Barcode generation failed', [
+            Log::error('Milon barcode generation failed', [
                 'text' => $text,
                 'format' => $format,
                 'error' => $e->getMessage()
             ]);
             
-            // Return a placeholder path if barcode generation fails
-            return 'barcodes/' . $text . '_barcode.png';
+            // Fallback to simple SVG barcode
+            return $this->generateSimpleSvgBarcode($text);
         }
+    }
+
+    /**
+     * Generate a simple SVG barcode as fallback.
+     */
+    private function generateSimpleSvgBarcode(string $text): string
+    {
+        // Create a simple SVG barcode representation
+        $bars = '';
+        $textLength = strlen($text);
+        $x = 0;
+        
+        // Generate bars based on text characters
+        for ($i = 0; $i < $textLength; $i++) {
+            $char = $text[$i];
+            $charCode = ord($char);
+            
+            // Create bars based on character code
+            $barWidth = ($charCode % 4) + 1; // 1-4 pixels wide
+            $bars .= '<rect x="' . $x . '" y="0" width="' . $barWidth . '" height="38" fill="black" />';
+            $x += $barWidth + 1;
+        }
+        
+        $svgContent = '<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="' . ($x + 10) . '" height="50" version="1.1" xmlns="http://www.w3.org/2000/svg">
+    <g id="bars" fill="black" stroke="none">
+        ' . $bars . '
+        <text x="' . (($x + 10) / 2) . '" text-anchor="middle" y="50" id="code" fill="black" font-size="12px">' . htmlspecialchars($text) . '</text>
+    </g>
+</svg>';
+        
+        // Save as SVG file
+        $filename = $text . '_barcode.svg';
+        $path = 'barcodes/' . $filename;
+        Storage::disk('public')->put($path, $svgContent);
+        
+        Log::info('Simple SVG barcode generated as fallback', [
+            'text' => $text,
+            'path' => $path
+        ]);
+        
+        return $path;
+    }
+
+    /**
+     * Generate a simple HTML barcode representation as fallback.
+     */
+    private function generateSimpleBarcode(string $text): string
+    {
+        // Create a simple barcode-like representation using HTML/CSS
+        $bars = '';
+        $textLength = strlen($text);
+        
+        // Generate bars based on text characters
+        for ($i = 0; $i < $textLength; $i++) {
+            $char = $text[$i];
+            $charCode = ord($char);
+            
+            // Create bars based on character code
+            $barWidth = ($charCode % 4) + 1; // 1-4 pixels wide
+            $bars .= '<div style="display:inline-block;width:' . $barWidth . 'px;height:50px;background-color:black;margin-right:1px;"></div>';
+        }
+        
+        $barcodeHtml = '<div style="font-family:monospace;font-size:12px;text-align:center;padding:5px;border:1px solid #ccc;background:white;">
+                    <div style="margin-bottom:5px;">' . htmlspecialchars($text) . '</div>
+                    <div style="margin:5px 0;">' . $bars . '</div>
+                    <div style="font-size:10px;color:#666;">BARCODE</div>
+                </div>';
+        
+        // Save as HTML file
+        $filename = $text . '_barcode.html';
+        $path = 'barcodes/' . $filename;
+        Storage::disk('public')->put($path, $barcodeHtml);
+        
+        return $path;
     }
 
     /**
@@ -87,14 +211,13 @@ class BarcodeGenerator
     public function generateQrCode(string $text, int $size = 200): string
     {
         try {
-            // Generate QR code
-            $qrCodeData = QrCode::format('png')
-                ->size($size)
-                ->margin(1)
-                ->generate($text);
+            $qrCode = new DNS2D();
             
-            // Create filename
-            $filename = $text . '_qr.png';
+            // Generate QR code as SVG
+            $qrCodeData = $qrCode->getBarcodeSVG($text, 'QRCODE', $size/10, $size/10);
+            
+            // Create filename with SVG extension
+            $filename = $text . '_qr.svg';
             $path = 'qrcodes/' . $filename;
             
             // Store the QR code
@@ -107,8 +230,26 @@ class BarcodeGenerator
                 'error' => $e->getMessage()
             ]);
             
-            // Return a placeholder path if QR generation fails
-            return 'qrcodes/' . $text . '_qr.png';
+            // Fallback to SimpleSoftwareIO QR code
+            try {
+                $qrCodeData = QrCode::format('svg')
+                    ->size($size)
+                    ->margin(1)
+                    ->generate($text);
+                
+                $filename = $text . '_qr.svg';
+                $path = 'qrcodes/' . $filename;
+                Storage::disk('public')->put($path, $qrCodeData);
+                
+                return $path;
+            } catch (\Exception $e2) {
+                Log::error('QR code fallback generation failed', [
+                    'text' => $text,
+                    'error' => $e2->getMessage()
+                ]);
+                
+                return 'qrcodes/' . $text . '_qr.svg';
+            }
         }
     }
 
@@ -119,10 +260,21 @@ class BarcodeGenerator
      * @param string $format The barcode format
      * @return string The HTML barcode
      */
-    public function generateBarcodeHtml(string $text, string $format = 'CODE128'): string
+    public function generateBarcodeHtml(string $text, string $format = 'C128'): string
     {
-        $generator = new BarcodeGeneratorHTML();
-        return $generator->getBarcode($text, $format, 2, 50);
+        try {
+            $generator = new DNS1D();
+            return $generator->getBarcodeSVG($text, $format, 2, 50);
+        } catch (\Exception $e) {
+            Log::error('Failed to generate barcode HTML with milon/barcode', [
+                'text' => $text,
+                'format' => $format,
+                'error' => $e->getMessage()
+            ]);
+            
+            // Return a simple fallback
+            return '<div style="font-family: monospace; font-size: 12px; text-align: center; padding: 5px; border: 1px solid #ccc;">' . htmlspecialchars($text) . '</div>';
+        }
     }
 
     /**
@@ -134,8 +286,8 @@ class BarcodeGenerator
     public function deleteForLabRequest(string $fullLabNo): bool
     {
         try {
-            $barcodePath = 'barcodes/' . $fullLabNo . '_barcode.png';
-            $qrCodePath = 'qrcodes/' . $fullLabNo . '_qr.png';
+            $barcodePath = 'barcodes/' . $fullLabNo . '_barcode.svg';
+            $qrCodePath = 'qrcodes/' . $fullLabNo . '_qr.svg';
             
             $deleted = true;
             
@@ -173,7 +325,7 @@ class BarcodeGenerator
      */
     public function getBarcodeUrl(string $fullLabNo): ?string
     {
-        $path = 'barcodes/' . $fullLabNo . '_barcode.png';
+        $path = 'barcodes/' . $fullLabNo . '_barcode.svg';
         
         if (Storage::disk('public')->exists($path)) {
             return Storage::disk('public')->url($path);
@@ -190,7 +342,7 @@ class BarcodeGenerator
      */
     public function getQrCodeUrl(string $fullLabNo): ?string
     {
-        $path = 'qrcodes/' . $fullLabNo . '_qr.png';
+        $path = 'qrcodes/' . $fullLabNo . '_qr.svg';
         
         if (Storage::disk('public')->exists($path)) {
             return Storage::disk('public')->url($path);
