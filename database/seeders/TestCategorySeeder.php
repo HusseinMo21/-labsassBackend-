@@ -11,52 +11,48 @@ class TestCategorySeeder extends Seeder
     {
         $categories = [
             [
-                'name' => 'Blood Tests',
-                'description' => 'Complete blood count and blood chemistry tests',
+                'name' => 'PATH',
+                'code' => 'path',
+                'description' => 'Pathology tests - tissue examination and diagnosis',
                 'is_active' => true,
             ],
             [
-                'name' => 'Urine Tests',
-                'description' => 'Urinalysis and urine culture tests',
+                'name' => 'CYTHO',
+                'code' => 'cytho',
+                'description' => 'Cytology tests - cell examination and analysis',
                 'is_active' => true,
             ],
             [
-                'name' => 'Biochemistry',
-                'description' => 'Blood chemistry and metabolic tests',
+                'name' => 'IHC',
+                'code' => 'ihc',
+                'description' => 'Immunohistochemistry tests - protein detection in tissues',
                 'is_active' => true,
             ],
             [
-                'name' => 'Microbiology',
-                'description' => 'Bacterial culture and sensitivity tests',
+                'name' => 'REV',
+                'code' => 'rev',
+                'description' => 'Review tests - second opinion and consultation',
                 'is_active' => true,
             ],
             [
-                'name' => 'Immunology',
-                'description' => 'Immune system and antibody tests',
+                'name' => 'OTHER',
+                'code' => 'other',
+                'description' => 'Other specialized tests not covered by main categories',
                 'is_active' => true,
             ],
             [
-                'name' => 'Hormone Tests',
-                'description' => 'Endocrine and hormone level tests',
-                'is_active' => true,
-            ],
-            [
-                'name' => 'Cardiac Markers',
-                'description' => 'Heart function and cardiac enzyme tests',
-                'is_active' => true,
-            ],
-            [
-                'name' => 'Tumor Markers',
-                'description' => 'Cancer screening and monitoring tests',
+                'name' => 'PATH+IHC',
+                'code' => 'path_ihc',
+                'description' => 'Combined Pathology and Immunohistochemistry tests',
                 'is_active' => true,
             ],
         ];
 
         foreach ($categories as $categoryData) {
             TestCategory::updateOrCreate(
-                ['name' => $categoryData['name']],
+                ['code' => $categoryData['code']],
                 $categoryData
             );
         }
     }
-} 
+}

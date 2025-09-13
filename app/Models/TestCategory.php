@@ -11,6 +11,7 @@ class TestCategory extends Model
 
     protected $fillable = [
         'name',
+        'code',
         'description',
         'is_active',
     ];
@@ -19,13 +20,30 @@ class TestCategory extends Model
         'is_active' => 'boolean',
     ];
 
-    public function labTests()
+    public function visitTests()
     {
-        return $this->hasMany(LabTest::class, 'category_id');
+        return $this->hasMany(VisitTest::class);
     }
 
-    public function getActiveTestsAttribute()
+    public function labTests()
     {
-        return $this->labTests()->where('is_active', true);
+        return $this->hasMany(LabTest::class);
     }
-} 
+
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
+
+    public static function getMainCategories()
+    {
+        return [
+            'PATH' => 'Pathology',
+            'CYTHO' => 'Cytology',
+            'IHC' => 'Immunohistochemistry',
+            'REV' => 'Review',
+            'OTHER' => 'Other',
+            'PATH+IHC' => 'Pathology + Immunohistochemistry',
+        ];
+    }
+}

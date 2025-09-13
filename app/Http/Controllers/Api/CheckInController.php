@@ -108,13 +108,14 @@ class CheckInController extends Controller
         $validator = Validator::make($request->all(), [
             'patient_id' => 'required|exists:patients,id',
             'tests' => 'required|array|min:1',
-            'tests.*.lab_test_id' => 'required|exists:lab_tests,id',
+            'tests.*.test_category_id' => 'required|exists:test_categories,id',
+            'tests.*.custom_test_name' => 'required|string|max:255',
+            'tests.*.custom_price' => 'required|numeric|min:0',
+            'tests.*.discount_percentage' => 'nullable|numeric|min:0|max:100',
             'upfront_payment' => 'required|numeric|min:0',
             'payment_method' => 'required|in:cash,card,insurance,other',
             'notes' => 'nullable|string',
             'expected_delivery_date' => 'nullable|date',
-            'discount_amount' => 'nullable|numeric|min:0',
-            'discount_percentage' => 'nullable|numeric|min:0|max:100',
             'insurance_provider' => 'nullable|string|max:255',
             'insurance_policy_number' => 'nullable|string|max:255',
             'insurance_claim_number' => 'nullable|string|max:255',
@@ -130,6 +131,7 @@ class CheckInController extends Controller
         DB::beginTransaction();
         try {
             \Log::info('Starting visit creation for patient: ' . $request->patient_id);
+            \Log::info('Request data: ' . json_encode($request->all()));
             $patient = Patient::findOrFail($request->patient_id);
             
             // Log existing credentials for debugging
@@ -141,9 +143,33 @@ class CheckInController extends Controller
             $selectedTests = [];
             
             foreach ($request->tests as $testData) {
-                $test = LabTest::findOrFail($testData['lab_test_id']);
-                $totalAmount += $test->price;
-                $selectedTests[] = $test;
+                \Log::info('Processing test data: ' . json_encode($testData));
+                $testCategory = \App\Models\TestCategory::find($testData['test_category_id']);
+                \Log::info('Found test category: ' . ($testCategory ? json_encode($testCategory->toArray()) : 'null'));
+                if (!$testCategory) {
+                    return response()->json([
+                        'message' => 'Invalid test category ID: ' . $testData['test_category_id'],
+                    ], 422);
+                }
+                
+                $customPrice = $testData['custom_price'];
+                $discountPercentage = $testData['discount_percentage'] ?? 0;
+                
+                // Calculate final price after discount
+                $finalPrice = $customPrice;
+                if ($discountPercentage > 0) {
+                    $discountAmount = ($customPrice * $discountPercentage) / 100;
+                    $finalPrice = $customPrice - $discountAmount;
+                }
+                
+                $totalAmount += $finalPrice;
+                $selectedTests[] = [
+                    'category' => $testCategory,
+                    'custom_test_name' => $testData['custom_test_name'],
+                    'custom_price' => $customPrice,
+                    'discount_percentage' => $discountPercentage,
+                    'final_price' => $finalPrice
+                ];
             }
 
             // Apply discount (from frontend or insurance)
@@ -215,11 +241,14 @@ class CheckInController extends Controller
             \Log::info('Invoice created successfully with ID: ' . $invoice->id);
 
             // Create visit tests and sample tracking
-            foreach ($request->tests as $testData) {
-                $labTest = LabTest::find($testData['lab_test_id']);
+            foreach ($selectedTests as $testData) {
                 $visitTest = $visit->visitTests()->create([
-                    'lab_test_id' => $testData['lab_test_id'],
-                    'price' => $labTest->price,
+                    'test_category_id' => $testData['category']->id,
+                    'custom_test_name' => $testData['custom_test_name'],
+                    'custom_price' => $testData['custom_price'],
+                    'discount_percentage' => $testData['discount_percentage'],
+                    'final_price' => $testData['final_price'],
+                    'price' => $testData['custom_price'], // Keep original price for reference
                     'status' => 'pending',
                     'barcode_uid' => VisitTest::generateBarcodeUid(),
                 ]);
@@ -275,13 +304,17 @@ class CheckInController extends Controller
                 \Log::info('Linked invoice ' . $invoice->id . ' to lab request ' . $labRequest->id);
 
                 // Add samples for each selected test to the lab request
-                foreach ($request->tests as $testData) {
-                    $labTest = LabTest::find($testData['lab_test_id']);
+                foreach ($selectedTests as $testData) {
+                    $testName = $testData['custom_test_name'];
+                    $testCode = $testData['category']->code ?? 'unknown';
+                    $categoryName = $testData['category']->name ?? 'Unknown';
+                    
+                    \Log::info('Creating sample for test: ' . $testName . ', category: ' . $categoryName . ', code: ' . $testCode);
                     
                     // Check if this sample already exists for this test
                     $existingSample = $labRequest->samples()
-                        ->where('tsample', $labTest->name)
-                        ->where('nsample', $labTest->code)
+                        ->where('tsample', $testName)
+                        ->where('nsample', $testCode)
                         ->first();
                     
                     if (!$existingSample) {
@@ -293,13 +326,13 @@ class CheckInController extends Controller
                         $labRequest->samples()->create([
                             'barcode' => $barcode,
                             'sample_id' => $sampleId,
-                            'tsample' => $labTest->name, // Sample Type = Test Name
-                            'nsample' => $labTest->code, // Sample Name = Test Code
-                            'isample' => $labTest->id,   // Sample ID = Test ID
-                            'notes' => $labTest->description ?: "Test: {$labTest->name}",
+                            'tsample' => $testName, // Sample Type = Custom Test Name
+                            'nsample' => $testCode, // Sample Name = Category Code
+                            'isample' => $testData['category']->id,   // Sample ID = Category ID
+                            'notes' => "Test: {$testName} ({$categoryName})",
                         ]);
                         
-                        \Log::info('Created sample with barcode: ' . $barcode . ' for test: ' . $labTest->name);
+                        \Log::info('Created sample with barcode: ' . $barcode . ' for test: ' . $testName);
                     }
                 }
                 
@@ -313,7 +346,7 @@ class CheckInController extends Controller
 
             return response()->json([
                 'message' => 'Visit created successfully',
-                'visit' => $visit->load(['patient', 'visitTests.labTest']),
+                'visit' => $visit->load(['patient', 'visitTests.testCategory']),
                 'lab_request' => $labRequest ? $labRequest->load('samples') : null,
                 'receipt_data' => [
                     'receipt_number' => $visit->receipt_number,
@@ -323,8 +356,9 @@ class CheckInController extends Controller
                     'patient_phone' => $visit->patient->phone,
                     'tests' => $visit->visitTests->map(function ($visitTest) {
                         return [
-                            'name' => $visitTest->labTest->name,
-                            'price' => $visitTest->price,
+                            'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
+                            'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
+                            'price' => $visitTest->final_price ?: $visitTest->price,
                         ];
                     }),
                     'total_amount' => $totalAmount,
@@ -385,7 +419,7 @@ class CheckInController extends Controller
 
     public function getReceipt($visitId)
     {
-        $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest'])->findOrFail($visitId);
+        $visit = Visit::with(['patient', 'visitTests.testCategory', 'labRequest'])->findOrFail($visitId);
         
         return response()->json([
             'visit' => $visit,
@@ -398,8 +432,9 @@ class CheckInController extends Controller
                 'patient_phone' => $visit->patient->phone,
                 'tests' => $visit->visitTests->map(function ($visitTest) {
                     return [
-                        'name' => $visitTest->labTest->name,
-                        'price' => $visitTest->price,
+                        'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
+                        'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
+                        'price' => $visitTest->final_price ?: $visitTest->price,
                     ];
                 }),
                 'total_amount' => $visit->total_amount,
@@ -422,20 +457,29 @@ class CheckInController extends Controller
         try {
             \Log::info('Getting sample label for visit ID: ' . $visitId);
             
-            $visit = Visit::with(['patient', 'visitTests.labTest'])->findOrFail($visitId);
+            $visit = Visit::with(['patient', 'visitTests.testCategory'])->findOrFail($visitId);
             
             \Log::info('Visit found: ' . $visit->id . ', Patient: ' . $visit->patient->name);
             \Log::info('Visit tests count: ' . $visit->visitTests->count());
             
             // Generate individual labels for each test
-            $testLabels = $visit->visitTests->map(function ($visitTest) use ($visit) {
+            $testLabels = $visit->visitTests->map(function ($visitTest, $index) use ($visit) {
+                // Generate sample ID like "2025-19-S1", "2025-19-S2", etc.
+                $sampleId = $visit->labRequest ? $visit->labRequest->full_lab_no . '-S' . ($index + 1) : $visitTest->barcode_uid;
+                
+                // Generate real barcode image for the sample ID
+                $barcodeImage = $this->barcodeService->generateReceiptBarcode($sampleId);
+                
                 return [
-                    'test_name' => $visitTest->labTest->name,
+                    'test_name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
+                    'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
                     'patient_name' => $visit->patient->name,
                     'patient_id' => $visit->patient->id,
+                    'sample_id' => $sampleId,
                     'sample_date' => $visit->visit_date,
                     'sample_time' => $visit->visit_time ? date('H:i', strtotime($visit->visit_time)) : date('H:i'),
-                    'barcode' => $visitTest->barcode_uid,
+                    'barcode' => $barcodeImage, // Real scannable barcode image
+                    'barcode_text' => $sampleId, // The text that the barcode represents
                 ];
             });
             
@@ -464,7 +508,7 @@ class CheckInController extends Controller
 
     public function getFinalPaymentReceipt(Request $request, $visitId)
     {
-        $visit = Visit::with(['patient', 'visitTests.labTest', 'invoice', 'labRequest'])->findOrFail($visitId);
+        $visit = Visit::with(['patient', 'visitTests.testCategory', 'invoice', 'labRequest'])->findOrFail($visitId);
         $paymentAmount = $request->get('payment_amount', 0);
         $paymentMethod = $request->get('payment_method', 'cash');
         
@@ -491,8 +535,9 @@ class CheckInController extends Controller
                 'patient_phone' => $visit->patient->phone,
                 'tests' => $visit->visitTests->map(function ($visitTest) {
                     return [
-                        'name' => $visitTest->labTest->name,
-                        'price' => $visitTest->price,
+                        'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
+                        'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
+                        'price' => $visitTest->final_price ?: $visitTest->price,
                     ];
                 }),
                 'total_amount' => $visit->total_amount,
@@ -584,6 +629,15 @@ class CheckInController extends Controller
                 'insurance_coverage' => $patient->insurance_coverage,
             ],
             'selected_tests' => $selectedTests,
+        ]);
+    }
+
+    public function getTestCategories()
+    {
+        $categories = \App\Models\TestCategory::active()->orderBy('name')->get(['id', 'name', 'code', 'description']);
+        return response()->json([
+            'success' => true,
+            'data' => $categories
         ]);
     }
 } 
