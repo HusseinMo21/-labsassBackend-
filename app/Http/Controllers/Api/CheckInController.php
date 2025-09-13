@@ -391,7 +391,7 @@ class CheckInController extends Controller
             'visit' => $visit,
             'receipt_data' => [
                 'receipt_number' => $visit->receipt_number,
-                'lab_number' => $visit->lab_number,
+                'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : 'N/A',
                 'date' => $visit->visit_date,
                 'patient_name' => $visit->patient->name,
                 'patient_age' => $visit->patient->age,
@@ -409,7 +409,7 @@ class CheckInController extends Controller
                 'remaining_balance' => $visit->remaining_balance,
                 'payment_method' => $visit->payment_method,
                 'expected_delivery_date' => $visit->expected_delivery_date,
-                'barcode' => $visit->labRequest ? $this->barcodeService->generateReceiptBarcode($visit->labRequest->lab_no) : $visit->barcode,
+                'barcode' => $visit->labRequest ? $this->barcodeService->generateReceiptBarcode($visit->labRequest->full_lab_no) : ($visit->barcode ?: 'N/A'),
                 'check_in_by' => $visit->check_in_by,
                 'check_in_at' => $visit->check_in_at,
                 'patient_credentials' => $visit->patient->getPortalCredentials(),
@@ -464,7 +464,7 @@ class CheckInController extends Controller
 
     public function getFinalPaymentReceipt(Request $request, $visitId)
     {
-        $visit = Visit::with(['patient', 'visitTests.labTest', 'invoice'])->findOrFail($visitId);
+        $visit = Visit::with(['patient', 'visitTests.labTest', 'invoice', 'labRequest'])->findOrFail($visitId);
         $paymentAmount = $request->get('payment_amount', 0);
         $paymentMethod = $request->get('payment_method', 'cash');
         
@@ -484,6 +484,7 @@ class CheckInController extends Controller
         return response()->json([
             'receipt_data' => [
                 'receipt_number' => $visit->receipt_number,
+                'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : 'N/A',
                 'date' => now()->format('Y-m-d'),
                 'patient_name' => $visit->patient->name,
                 'patient_age' => $visit->patient->age,
@@ -502,7 +503,7 @@ class CheckInController extends Controller
                 'remaining_balance' => $remainingBalance,
                 'payment_method' => $paymentMethod,
                 'expected_delivery_date' => $visit->expected_delivery_date,
-                'barcode' => $visit->barcode,
+                'barcode' => $visit->labRequest ? $this->barcodeService->generateReceiptBarcode($visit->labRequest->full_lab_no) : ($visit->barcode ?: 'N/A'),
                 'check_in_by' => auth()->user()->name,
                 'check_in_at' => now(),
                 'patient_credentials' => $visit->patient->getPortalCredentials(),

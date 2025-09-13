@@ -214,7 +214,7 @@ class UnpaidInvoicesController extends Controller
             'remaining_balance' => $paidNow,
             'payment_method' => $lastPayment ? $lastPayment->payment_method : 'cash',
             'expected_delivery_date' => $visit->expected_delivery_date,
-            'lab_number' => $visit->labRequest ? $visit->labRequest->lab_no : null,
+            'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : 'N/A',
             'check_in_by' => $visit->check_in_by,
             'visit_id' => $visit->visit_number,
             'patient_credentials' => $credentials,
