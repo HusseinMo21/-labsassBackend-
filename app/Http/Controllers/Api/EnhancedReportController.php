@@ -25,22 +25,19 @@ class EnhancedReportController extends Controller
             $visit = Visit::with([
                 'patient',
                 'visitTests.labTest',
-                'visitTests.testValidations.validatedBy',
-                'visitTests.qualityControls',
+                'visitTests.testCategory',
                 'labRequest'
             ])->findOrFail($visitId);
 
-            // Check if all tests have been validated by doctors
-            $unvalidatedTests = $visit->visitTests()
-                ->whereDoesntHave('testValidations', function($query) {
-                    $query->where('status', 'validated');
-                })
+            // Check if all tests are completed
+            $uncompletedTests = $visit->visitTests()
+                ->where('status', '!=', 'completed')
                 ->count();
 
-            if ($unvalidatedTests > 0) {
+            if ($uncompletedTests > 0) {
                 return response()->json([
-                    'message' => 'Cannot generate report. Some tests have not been validated by doctors.',
-                    'unvalidated_tests' => $unvalidatedTests,
+                    'message' => 'Cannot generate report. Some tests are not completed yet.',
+                    'uncompleted_tests' => $uncompletedTests,
                 ], 400);
             }
 
@@ -209,14 +206,13 @@ class EnhancedReportController extends Controller
 
         foreach ($visit->visitTests as $visitTest) {
             $resultClass = $this->getResultClass($visitTest);
-            $validation = $visitTest->testValidations->where('status', 'validated')->first();
-            $validatedBy = $validation ? $validation->validatedBy->name : 'Pending';
+            $validatedBy = 'Completed';
 
             $html .= '
                     <tr>
-                        <td>' . htmlspecialchars($visitTest->labTest->name) . '</td>
+                        <td>' . htmlspecialchars($visitTest->custom_test_name ?? $visitTest->labTest->name ?? 'Unknown Test') . '</td>
                         <td>' . htmlspecialchars($visitTest->result_value ?? 'N/A') . '</td>
-                        <td>' . htmlspecialchars($visitTest->labTest->reference_range ?? 'N/A') . '</td>
+                        <td>' . htmlspecialchars($visitTest->labTest->reference_range ?? 'N/A' ?? 'N/A') . '</td>
                         <td class="' . $resultClass . '">' . $this->getResultStatus($visitTest) . '</td>
                         <td>' . htmlspecialchars($validatedBy) . '</td>
                     </tr>';
@@ -227,11 +223,7 @@ class EnhancedReportController extends Controller
                 </table>
             </div>';
 
-        // Add Quality Control section
-        $html .= $this->generateQCSection($visit);
-
-        // Add Validation section
-        $html .= $this->generateValidationSection($visit);
+        // Quality Control and Validation sections removed - simplified workflow
 
         // Add clinical correlation and notes
         $html .= $this->generateClinicalSection($visit);
@@ -251,97 +243,6 @@ class EnhancedReportController extends Controller
         return $html;
     }
 
-    /**
-     * Generate Quality Control section
-     */
-    private function generateQCSection(Visit $visit)
-    {
-        $qcRecords = $visit->visitTests->flatMap->qualityControls;
-        
-        if ($qcRecords->isEmpty()) {
-            return '';
-        }
-
-        $html = '
-        <div class="qc-section">
-            <h3>QUALITY CONTROL</h3>
-            <table class="results-table">
-                <thead>
-                    <tr>
-                        <th>Test</th>
-                        <th>QC Type</th>
-                        <th>Expected</th>
-                        <th>Actual</th>
-                        <th>Status</th>
-                        <th>Performed By</th>
-                    </tr>
-                </thead>
-                <tbody>';
-
-        foreach ($qcRecords as $qc) {
-            $html .= '
-                <tr>
-                    <td>' . htmlspecialchars($qc->visitTest->labTest->name) . '</td>
-                    <td>' . ucfirst(str_replace('_', ' ', $qc->qc_type)) . '</td>
-                    <td>' . ($qc->expected_value ?? 'N/A') . '</td>
-                    <td>' . ($qc->actual_value ?? 'N/A') . '</td>
-                    <td class="' . $this->getQCStatusClass($qc->status) . '">' . ucfirst($qc->status) . '</td>
-                    <td>' . htmlspecialchars($qc->performedBy->name) . '</td>
-                </tr>';
-        }
-
-        $html .= '
-                </tbody>
-            </table>
-        </div>';
-
-        return $html;
-    }
-
-    /**
-     * Generate Validation section
-     */
-    private function generateValidationSection(Visit $visit)
-    {
-        $validations = $visit->visitTests->flatMap->testValidations->where('status', 'validated');
-        
-        if ($validations->isEmpty()) {
-            return '';
-        }
-
-        $html = '
-        <div class="validation-section">
-            <h3>VALIDATION RECORDS</h3>
-            <table class="results-table">
-                <thead>
-                    <tr>
-                        <th>Test</th>
-                        <th>Validation Type</th>
-                        <th>Clinical Correlation</th>
-                        <th>Validated By</th>
-                        <th>Date</th>
-                    </tr>
-                </thead>
-                <tbody>';
-
-        foreach ($validations as $validation) {
-            $html .= '
-                <tr>
-                    <td>' . htmlspecialchars($validation->visitTest->labTest->name) . '</td>
-                    <td>' . ucfirst($validation->validation_type) . '</td>
-                    <td>' . htmlspecialchars($validation->clinical_correlation ?? 'N/A') . '</td>
-                    <td>' . htmlspecialchars($validation->validatedBy->name) . '</td>
-                    <td>' . $validation->validated_at->format('Y-m-d H:i') . '</td>
-                </tr>';
-        }
-
-        $html .= '
-                </tbody>
-            </table>
-        </div>';
-
-        return $html;
-    }
 
     /**
      * Generate Clinical section
@@ -408,7 +309,7 @@ class EnhancedReportController extends Controller
         }
 
         // Check reference range
-        if ($visitTest->labTest->reference_range) {
+        if ($visitTest->labTest->reference_range ?? 'N/A') {
             // Simple check - can be enhanced
             return 'normal';
         }
@@ -432,18 +333,6 @@ class EnhancedReportController extends Controller
         return 'Normal';
     }
 
-    /**
-     * Get QC status class
-     */
-    private function getQCStatusClass($status)
-    {
-        switch ($status) {
-            case 'passed': return 'normal';
-            case 'failed': return 'abnormal';
-            case 'requires_review': return 'critical';
-            default: return '';
-        }
-    }
 
     /**
      * Generate report content for database storage
@@ -461,9 +350,9 @@ class EnhancedReportController extends Controller
 
         foreach ($visit->visitTests as $visitTest) {
             $content['tests'][] = [
-                'test_name' => $visitTest->labTest->name,
+                'test_name' => $visitTest->custom_test_name ?? $visitTest->labTest->name ?? 'Unknown Test',
                 'result_value' => $visitTest->result_value,
-                'reference_range' => $visitTest->labTest->reference_range,
+                'reference_range' => $visitTest->labTest->reference_range ?? 'N/A',
                 'status' => $visitTest->status,
             ];
         }
@@ -477,44 +366,27 @@ class EnhancedReportController extends Controller
     public function getReportStatus($visitId)
     {
         try {
-            $visit = Visit::with(['visitTests.testValidations', 'visitTests.qualityControls'])->findOrFail($visitId);
+            $visit = Visit::with(['visitTests.testCategory'])->findOrFail($visitId);
 
             $status = [
                 'visit_id' => $visit->id,
                 'can_generate_report' => false,
                 'tests_status' => [],
-                'quality_control_status' => [],
-                'validation_status' => [],
                 'blocking_issues' => [],
             ];
 
-            // Check test validation status
+            // Check test completion status
             foreach ($visit->visitTests as $visitTest) {
-                $validation = $visitTest->testValidations->where('status', 'validated')->first();
+                $testName = $visitTest->custom_test_name ?? $visitTest->labTest->name ?? 'Unknown Test';
                 $status['tests_status'][] = [
-                    'test_name' => $visitTest->labTest->name,
-                    'is_validated' => $validation ? true : false,
-                    'validated_by' => $validation ? $validation->validatedBy->name : null,
-                    'validated_at' => $validation ? $validation->validated_at : null,
+                    'test_name' => $testName,
+                    'is_completed' => $visitTest->status === 'completed',
+                    'status' => $visitTest->status,
+                    'completed_at' => $visitTest->status === 'completed' ? $visitTest->updated_at : null,
                 ];
 
-                if (!$validation) {
-                    $status['blocking_issues'][] = "Test '{$visitTest->labTest->name}' has not been validated by a doctor";
-                }
-            }
-
-            // Check quality control status
-            $qcRecords = $visit->visitTests->flatMap->qualityControls;
-            foreach ($qcRecords as $qc) {
-                $status['quality_control_status'][] = [
-                    'test_name' => $qc->visitTest->labTest->name,
-                    'qc_type' => $qc->qc_type,
-                    'status' => $qc->status,
-                    'performed_by' => $qc->performedBy->name,
-                ];
-
-                if ($qc->status === 'failed') {
-                    $status['blocking_issues'][] = "Quality control failed for test '{$qc->visitTest->labTest->name}'";
+                if ($visitTest->status !== 'completed') {
+                    $status['blocking_issues'][] = "Test '{$testName}' is not completed yet";
                 }
             }
 

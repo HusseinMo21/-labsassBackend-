@@ -241,40 +241,21 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
         Route::get('/patient/my-invoices', [PatientController::class, 'myInvoices']);
     });
 
-    // Quality Control routes (admin and staff only)
-    Route::middleware(['role:admin,staff'])->group(function () {
-        Route::apiResource('quality-controls', App\Http\Controllers\Api\QualityControlController::class);
-        Route::post('/quality-controls/{id}/review', [App\Http\Controllers\Api\QualityControlController::class, 'review']);
-        Route::get('/quality-controls/statistics', [App\Http\Controllers\Api\QualityControlController::class, 'statistics']);
-        Route::get('/quality-controls/pending-review', [App\Http\Controllers\Api\QualityControlController::class, 'pendingReview']);
-        Route::get('/visit-tests/{visitTestId}/quality-controls', [App\Http\Controllers\Api\QualityControlController::class, 'getByVisitTest']);
-    });
 
-    // Test Validation routes
-    Route::middleware(['role:admin,staff,doctor'])->group(function () {
-        Route::get('/test-validations', [App\Http\Controllers\Api\TestValidationController::class, 'index']);
-        Route::get('/test-validations/{id}', [App\Http\Controllers\Api\TestValidationController::class, 'show']);
-        Route::get('/test-validations/statistics', [App\Http\Controllers\Api\TestValidationController::class, 'statistics']);
-        Route::get('/visit-tests/{visitTestId}/validation-history', [App\Http\Controllers\Api\TestValidationController::class, 'getValidationHistory']);
-    });
-
-    // Doctor-specific validation routes
-    Route::middleware(['role:doctor'])->group(function () {
-        Route::post('/test-validations/create-initial', [App\Http\Controllers\Api\TestValidationController::class, 'createInitialValidation']);
-        Route::post('/test-validations/{id}/doctor-review', [App\Http\Controllers\Api\TestValidationController::class, 'doctorReview']);
-        Route::get('/test-validations/pending-doctor-review', [App\Http\Controllers\Api\TestValidationController::class, 'pendingDoctorReview']);
-    });
-
-    // Admin final approval routes (Head of Doctors)
-    Route::middleware(['role:admin'])->group(function () {
-        Route::post('/test-validations/{id}/admin-approval', [App\Http\Controllers\Api\TestValidationController::class, 'adminFinalApproval']);
-        Route::get('/test-validations/pending-admin-approval', [App\Http\Controllers\Api\TestValidationController::class, 'pendingAdminApproval']);
-    });
 
     // Enhanced Report Generation routes
     Route::middleware(['role:admin,staff,doctor'])->group(function () {
         Route::get('/enhanced-reports/professional/{visitId}', [App\Http\Controllers\Api\EnhancedReportController::class, 'generateProfessionalReport']);
         Route::get('/enhanced-reports/status/{visitId}', [App\Http\Controllers\Api\EnhancedReportController::class, 'getReportStatus']);
         Route::get('/enhanced-reports', [App\Http\Controllers\Api\EnhancedReportController::class, 'listReports']);
+    });
+
+    // Admin Review Reports routes (Head of Doctors - Final Approval)
+    Route::middleware(['role:admin'])->group(function () {
+        Route::get('/admin/review-reports', [App\Http\Controllers\Api\ReviewReportsController::class, 'index']);
+        Route::get('/admin/review-reports/{visitId}', [App\Http\Controllers\Api\ReviewReportsController::class, 'show']);
+        Route::post('/admin/review-reports/{visitId}/approve', [App\Http\Controllers\Api\ReviewReportsController::class, 'approve']);
+        Route::post('/admin/review-reports/{visitId}/reject', [App\Http\Controllers\Api\ReviewReportsController::class, 'reject']);
+        Route::get('/admin/review-reports/pending', [App\Http\Controllers\Api\ReviewReportsController::class, 'pending']);
     });
 }); 

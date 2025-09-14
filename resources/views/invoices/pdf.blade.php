@@ -73,19 +73,19 @@
             </tr>
             <tr>
                 <td>Lab Tests & Services</td>
-                <td class="right">${{ number_format($invoice->total_amount, 2) }}</td>
+                <td class="right">EGP {{ number_format($invoice->total_amount, 2) }}</td>
             </tr>
             <tr>
                 <td>Discount</td>
-                <td class="right">-${{ number_format($invoice->discount_amount, 2) }}</td>
+                <td class="right">-EGP {{ number_format($invoice->discount_amount, 2) }}</td>
             </tr>
             <tr>
                 <td>Tax</td>
-                <td class="right">${{ number_format($invoice->tax_amount, 2) }}</td>
+                <td class="right">EGP {{ number_format($invoice->tax_amount, 2) }}</td>
             </tr>
             <tr>
                 <th>Total</th>
-                <th class="right">${{ number_format($invoice->total_amount - $invoice->discount_amount + $invoice->tax_amount, 2) }}</th>
+                <th class="right">EGP {{ number_format($invoice->total_amount - $invoice->discount_amount + $invoice->tax_amount, 2) }}</th>
             </tr>
         </table>
     </div>
@@ -101,12 +101,12 @@
             <tr>
                 <td>{{ $payment->paid_at ? $payment->paid_at->format('Y-m-d H:i') : '-' }}</td>
                 <td>{{ ucfirst($payment->payment_method) }}</td>
-                <td class="right">${{ number_format($payment->amount, 2) }}</td>
+                <td class="right">EGP {{ number_format($payment->amount, 2) }}</td>
             </tr>
             @endforeach
         </table>
-        <div><b>Amount Paid:</b> ${{ number_format($invoice->amount_paid, 2) }}</div>
-        <div><b>Balance Due:</b> ${{ number_format($invoice->balance, 2) }}</div>
+        <div><b>Amount Paid:</b> EGP {{ number_format($invoice->amount_paid, 2) }}</div>
+        <div><b>Remaining:</b> EGP {{ number_format($invoice->balance, 2) }}</div>
     </div>
     <div class="section" style="margin-top: 40px; color: #888; font-size: 0.95rem;">
         Thank you for choosing our laboratory.

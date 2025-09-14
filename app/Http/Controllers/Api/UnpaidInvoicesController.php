@@ -8,6 +8,7 @@ use App\Models\Patient;
 use App\Models\Visit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class UnpaidInvoicesController extends Controller
 {
@@ -79,11 +80,29 @@ class UnpaidInvoicesController extends Controller
 
     public function addPayment(Request $request, $invoiceId)
     {
-        $request->validate([
-            'amount' => 'required|numeric|min:0.01',
-            'payment_method' => 'required|in:cash,card,insurance,other',
-            'notes' => 'nullable|string',
+        // Log the request data for debugging
+        Log::info('Add payment request', [
+            'invoice_id' => $invoiceId,
+            'request_data' => $request->all(),
         ]);
+
+        try {
+            $request->validate([
+                'amount' => 'required|numeric|min:0.01',
+                'payment_method' => 'required|in:cash,card,insurance,other',
+                'notes' => 'nullable|string',
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            Log::error('Validation failed for add payment', [
+                'invoice_id' => $invoiceId,
+                'errors' => $e->errors(),
+                'request_data' => $request->all(),
+            ]);
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        }
 
         $invoice = Invoice::findOrFail($invoiceId);
         
@@ -178,8 +197,9 @@ class UnpaidInvoicesController extends Controller
 
     public function getFinalPaymentReceiptData($invoiceId)
     {
-        $invoice = Invoice::with(['visit.patient', 'visit.visitTests.labTest', 'visit.labRequest', 'payments'])
-            ->findOrFail($invoiceId);
+        try {
+            $invoice = Invoice::with(['visit.patient', 'visit.visitTests.labTest', 'visit.labRequest', 'payments'])
+                ->findOrFail($invoiceId);
         
         $visit = $invoice->visit;
         $patient = $visit->patient;
@@ -193,7 +213,10 @@ class UnpaidInvoicesController extends Controller
         $paidNow = $lastPayment ? $lastPayment->amount : 0;
         
         // Get patient credentials
-        $credentials = $patient->getPortalCredentials();
+        $credentials = $patient->getPortalCredentials() ?? [
+            'username' => 'N/A',
+            'password' => 'N/A'
+        ];
         
         return response()->json([
             'receipt_number' => $visit->receipt_number,
@@ -203,8 +226,8 @@ class UnpaidInvoicesController extends Controller
             'patient_phone' => $patient->phone,
             'tests' => $visit->visitTests->map(function($test) {
                 return [
-                    'name' => $test->labTest->name,
-                    'price' => $test->price
+                    'name' => $test->labTest ? $test->labTest->name : ($test->custom_test_name ?? 'Unknown Test'),
+                    'price' => $test->price ?? $test->custom_price ?? 0
                 ];
             }),
             'total_amount' => $invoice->total_amount,
@@ -219,5 +242,16 @@ class UnpaidInvoicesController extends Controller
             'visit_id' => $visit->visit_number,
             'patient_credentials' => $credentials,
         ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to get final payment receipt data', [
+                'invoice_id' => $invoiceId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return response()->json([
+                'error' => 'Failed to get final payment receipt data',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
     }
 } 

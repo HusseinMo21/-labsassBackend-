@@ -69,15 +69,6 @@ class VisitTest extends Model
         return $this->hasMany(Notification::class);
     }
 
-    public function qualityControls()
-    {
-        return $this->hasMany(QualityControl::class);
-    }
-
-    public function testValidations()
-    {
-        return $this->hasMany(TestValidation::class);
-    }
 
     public function checkCriticalValue($value)
     {

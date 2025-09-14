@@ -408,7 +408,7 @@ class CheckInController extends Controller
         }
         
         if ($request->discount_amount > 0) {
-            $remarks[] = "Discount Applied: $" . number_format($request->discount_amount, 2);
+            $remarks[] = "Discount Applied: EGP " . number_format($request->discount_amount, 2);
             if ($request->discount_percentage > 0) {
                 $remarks[] = "Discount Percentage: " . $request->discount_percentage . "%";
             }

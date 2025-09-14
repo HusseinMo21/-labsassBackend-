@@ -76,12 +76,6 @@ class DoctorController extends Controller
 
     public function destroy(Doctor $doctor)
     {
-        if ($doctor->patients()->count() > 0) {
-            return response()->json([
-                'message' => 'Cannot delete doctor with existing patients',
-            ], 422);
-        }
-
         $doctor->delete();
 
         return response()->json([

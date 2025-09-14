@@ -55,6 +55,14 @@ class LabRequest extends Model
     }
 
     /**
+     * Get the reports for the lab request.
+     */
+    public function reports(): HasMany
+    {
+        return $this->hasMany(Report::class);
+    }
+
+    /**
      * Get the invoice for the lab request.
      */
     public function invoice(): HasOne

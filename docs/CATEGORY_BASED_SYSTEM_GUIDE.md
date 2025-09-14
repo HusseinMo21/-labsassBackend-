@@ -32,29 +32,29 @@ When a patient comes for testing:
 #### Example 1: Breast Biopsy
 - **Category**: PATH
 - **Test Name**: "Breast Biopsy - Right Breast"
-- **Price**: $200.00
+- **Price**: EGP 200.00
 - **Discount**: 25% (for insurance)
-- **Final Price**: $150.00
-- **Upfront Payment**: $75.00
-- **Remaining Balance**: $75.00
+- **Final Price**: EGP 150.00
+- **Upfront Payment**: EGP 75.00
+- **Remaining Balance**: EGP 75.00
 
 #### Example 2: Pap Smear
 - **Category**: CYTHO
 - **Test Name**: "Pap Smear with HPV Testing"
-- **Price**: $80.00
+- **Price**: EGP 80.00
 - **Discount**: 0%
-- **Final Price**: $80.00
-- **Upfront Payment**: $80.00
-- **Remaining Balance**: $0.00
+- **Final Price**: EGP 80.00
+- **Upfront Payment**: EGP 80.00
+- **Remaining Balance**: EGP 0.00
 
 #### Example 3: Combined Test
 - **Category**: PATH+IHC
 - **Test Name**: "Lung Biopsy with PD-L1 Staining"
-- **Price**: $350.00
+- **Price**: EGP 350.00
 - **Discount**: 30% (for insurance)
-- **Final Price**: $245.00
-- **Upfront Payment**: $150.00
-- **Remaining Balance**: $95.00
+- **Final Price**: EGP 245.00
+- **Upfront Payment**: EGP 150.00
+- **Remaining Balance**: EGP 95.00
 
 ## API Endpoints
 

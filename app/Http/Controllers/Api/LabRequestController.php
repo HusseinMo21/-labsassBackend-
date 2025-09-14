@@ -395,9 +395,9 @@ class LabRequestController extends Controller
                         'visit_date' => $visit->visit_date,
                         'visit_number' => $visit->visit_number,
                         'test_id' => $visitTest->lab_test_id,
-                        'test_name' => $visitTest->labTest->name,
-                        'test_code' => $visitTest->labTest->code,
-                        'test_price' => $visitTest->price,
+                        'test_name' => $visitTest->labTest ? $visitTest->labTest->name : ($visitTest->custom_test_name ?? 'Unknown Test'),
+                        'test_code' => $visitTest->labTest ? $visitTest->labTest->code : 'N/A',
+                        'test_price' => $visitTest->price ?? $visitTest->custom_price ?? 0,
                         'status' => $visitTest->status,
                         'barcode_uid' => $visitTest->barcode_uid,
                     ]);
@@ -423,7 +423,7 @@ class LabRequestController extends Controller
             }
 
             // Get reports
-            $reports = $patient->reports()->with('labTest')->orderBy('created_at', 'desc')->get();
+            $reports = $patient->reports()->orderBy('created_at', 'desc')->get();
 
             $comprehensiveData = [
                 'lab_request' => [
@@ -485,10 +485,6 @@ class LabRequestController extends Controller
                         'content' => $report->content,
                         'status' => $report->status,
                         'generated_at' => $report->generated_at,
-                        'lab_test' => $report->labTest ? [
-                            'name' => $report->labTest->name,
-                            'code' => $report->labTest->code,
-                        ] : null,
                     ];
                 }),
                 'visits_summary' => [

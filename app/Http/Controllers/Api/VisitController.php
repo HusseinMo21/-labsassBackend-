@@ -30,7 +30,8 @@ class VisitController extends Controller
                   ->orWhere('visit_number', 'like', "%{$searchTerm}%")
                   ->orWhereHas('patient', function ($patientQuery) use ($searchTerm) {
                       $patientQuery->where('name', 'like', "%{$searchTerm}%")
-                                  ->orWhere('phone', 'like', "%{$searchTerm}%");
+                                  ->orWhere('phone', 'like', "%{$searchTerm}%")
+                                  ->orWhere('id', 'like', "%{$searchTerm}%");
                   })
                   ->orWhereHas('labRequest', function ($labQuery) use ($searchTerm) {
                       $labQuery->where('lab_no', 'like', "%{$searchTerm}%");

@@ -76,12 +76,6 @@ class OrganizationController extends Controller
 
     public function destroy(Organization $organization)
     {
-        if ($organization->patients()->count() > 0) {
-            return response()->json([
-                'message' => 'Cannot delete organization with existing patients',
-            ], 422);
-        }
-
         $organization->delete();
 
         return response()->json([

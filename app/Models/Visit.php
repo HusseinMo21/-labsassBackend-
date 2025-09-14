@@ -75,6 +75,11 @@ class Visit extends Model
         return $this->belongsTo(LabRequest::class);
     }
 
+    public function reports()
+    {
+        return $this->hasManyThrough(Report::class, LabRequest::class, 'id', 'lab_request_id', 'lab_request_id', 'id');
+    }
+
     public static function generateReceiptNumber()
     {
         $prefix = 'RCP';
