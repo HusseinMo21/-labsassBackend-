@@ -103,6 +103,7 @@ class EnhancedReportApiController extends Controller
             'priority' => 'required|in:low,normal,high,urgent',
             'examination_details' => 'nullable|array',
             'quality_control' => 'nullable|array',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,bmp,webp|max:20480', // 20MB limit
         ]);
 
         $validated['created_by'] = Auth::id();
@@ -111,6 +112,19 @@ class EnhancedReportApiController extends Controller
         // Auto-generate lab number if not provided
         if (empty($validated['lab_no'])) {
             $validated['lab_no'] = 'RPT-' . date('Y') . '-' . str_pad(EnhancedReport::count() + 1, 4, '0', STR_PAD_LEFT);
+        }
+
+        // Handle image upload
+        if ($request->hasFile('image')) {
+            $image = $request->file('image');
+            $imagePath = $image->store('report-images', 'public');
+            
+            $validated['image_path'] = $imagePath;
+            $validated['image_filename'] = $image->getClientOriginalName();
+            $validated['image_mime_type'] = $image->getMimeType();
+            $validated['image_size'] = $image->getSize();
+            $validated['image_uploaded_at'] = now();
+            $validated['image_uploaded_by'] = Auth::id();
         }
 
         $report = EnhancedReport::create($validated);
@@ -174,7 +188,31 @@ class EnhancedReportApiController extends Controller
             'priority' => 'required|in:low,normal,high,urgent',
             'examination_details' => 'nullable|array',
             'quality_control' => 'nullable|array',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,bmp,webp|max:20480', // 20MB limit
+            'remove_image' => 'nullable|boolean',
         ]);
+
+        // Handle image upload or removal
+        if ($request->has('remove_image') && $request->remove_image) {
+            // Remove existing image
+            $enhancedReport->deleteImage();
+        } elseif ($request->hasFile('image')) {
+            // Remove old image if exists
+            if ($enhancedReport->hasImage()) {
+                $enhancedReport->deleteImage();
+            }
+            
+            // Upload new image
+            $image = $request->file('image');
+            $imagePath = $image->store('report-images', 'public');
+            
+            $validated['image_path'] = $imagePath;
+            $validated['image_filename'] = $image->getClientOriginalName();
+            $validated['image_mime_type'] = $image->getMimeType();
+            $validated['image_size'] = $image->getSize();
+            $validated['image_uploaded_at'] = now();
+            $validated['image_uploaded_by'] = Auth::id();
+        }
 
         $enhancedReport->update($validated);
 
@@ -291,7 +329,7 @@ class EnhancedReportApiController extends Controller
             $mpdf->showImageErrors = false;
             
             $html = view('reports.enhanced_report_pdf', [
-                'report' => $report->load(['patient', 'labRequest', 'createdBy', 'reviewedBy', 'approvedBy'])
+                'report' => $report->load(['patient', 'labRequest', 'createdBy', 'reviewedBy', 'approvedBy', 'imageUploadedBy'])
             ])->render();
             
             $mpdf->WriteHTML($html);
@@ -379,7 +417,7 @@ class EnhancedReportApiController extends Controller
             $mpdf->showImageErrors = false;
             
             $html = view('reports.enhanced_report_pdf', [
-                'report' => $report->load(['patient', 'labRequest', 'createdBy', 'reviewedBy', 'approvedBy'])
+                'report' => $report->load(['patient', 'labRequest', 'createdBy', 'reviewedBy', 'approvedBy', 'imageUploadedBy'])
             ])->render();
             
             $mpdf->WriteHTML($html);
@@ -434,5 +472,108 @@ class EnhancedReportApiController extends Controller
             'success' => true,
             'data' => $stats
         ]);
+    }
+
+    public function uploadImage(Request $request, EnhancedReport $report)
+    {
+        // Role-based access control
+        $user = Auth::user();
+        if ($user->role === 'staff') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Staff members cannot upload images. Contact an administrator or doctor.'
+            ], 403);
+        }
+
+        if (!$report->isEditable()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This report cannot be edited in its current status'
+            ], 422);
+        }
+
+        $request->validate([
+            'image' => 'required|image|mimes:jpeg,png,jpg,gif,bmp,webp|max:20480', // 20MB limit
+        ]);
+
+        try {
+            // Remove old image if exists
+            if ($report->hasImage()) {
+                $report->deleteImage();
+            }
+            
+            // Upload new image
+            $image = $request->file('image');
+            $imagePath = $image->store('report-images', 'public');
+            
+            $report->update([
+                'image_path' => $imagePath,
+                'image_filename' => $image->getClientOriginalName(),
+                'image_mime_type' => $image->getMimeType(),
+                'image_size' => $image->getSize(),
+                'image_uploaded_at' => now(),
+                'image_uploaded_by' => Auth::id(),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Image uploaded successfully',
+                'data' => [
+                    'image_url' => $report->getImageUrl(),
+                    'image_filename' => $report->image_filename,
+                    'image_size' => $report->getImageSizeFormatted(),
+                    'uploaded_at' => $report->image_uploaded_at,
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Image upload error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to upload image: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function removeImage(EnhancedReport $report)
+    {
+        // Role-based access control
+        $user = Auth::user();
+        if ($user->role === 'staff') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Staff members cannot remove images. Contact an administrator or doctor.'
+            ], 403);
+        }
+
+        if (!$report->isEditable()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This report cannot be edited in its current status'
+            ], 422);
+        }
+
+        if (!$report->hasImage()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No image to remove'
+            ], 404);
+        }
+
+        try {
+            $report->deleteImage();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Image removed successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Image removal error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to remove image: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

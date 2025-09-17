@@ -112,6 +112,13 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
     Route::put('/visits/{visit}/tests/{visitTest}/result', [VisitController::class, 'updateTestResult']);
     Route::put('/visits/{visit}/complete', [VisitController::class, 'completeVisit']);
     Route::get('/visits/{visit}/report', [VisitController::class, 'generateReport']);
+    Route::post('/visits/{visit}/upload-image', [VisitController::class, 'uploadImage']);
+    Route::delete('/visits/{visit}/remove-image', [VisitController::class, 'removeImage']);
+    
+    // Visit Report PDF routes (with CORS support)
+    Route::middleware('pdf.cors')->group(function () {
+        Route::get('/visits/{visit}/report-pdf', [VisitController::class, 'generateReport']);
+    });
     
     // Dashboard stats route
     Route::get('/dashboard/stats', [VisitController::class, 'getDashboardStats']);
@@ -136,8 +143,8 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
 
     // Expense routes (admin and staff only)
     Route::middleware(['role:admin,staff'])->group(function () {
-        Route::apiResource('expenses', \App\Http\Controllers\Api\ExpenseController::class);
         Route::get('/expenses/stats', [\App\Http\Controllers\Api\ExpenseController::class, 'stats']);
+        Route::apiResource('expenses', \App\Http\Controllers\Api\ExpenseController::class);
     });
 
     // User management (admin only)
@@ -150,12 +157,16 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
 
     // Inventory routes (admin and staff only)
     Route::middleware(['role:admin,staff'])->group(function () {
-        Route::apiResource('inventory', InventoryController::class);
+        // Specific routes first to avoid conflicts with apiResource
         Route::get('/inventory/stats', [InventoryController::class, 'getStats']);
+        Route::get('/inventory/alerts', [InventoryController::class, 'getAlerts']);
         Route::get('/inventory/low-stock', [InventoryController::class, 'getLowStockItems']);
         Route::get('/inventory/expired', [InventoryController::class, 'getExpiredItems']);
         Route::patch('/inventory/{inventoryItem}/adjust-quantity', [InventoryController::class, 'adjustQuantity']);
         Route::post('/inventory/bulk-update', [InventoryController::class, 'bulkUpdate']);
+        
+        // Resource routes last
+        Route::apiResource('inventory', InventoryController::class);
     });
 
     // Reports (admin and staff)
@@ -258,6 +269,8 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
         Route::post('/enhanced-reports/{report}/approve', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'approve']);
         Route::post('/enhanced-reports/{report}/deliver', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'deliver']);
         Route::get('/enhanced-reports-statistics', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'statistics']);
+        Route::post('/enhanced-reports/{report}/upload-image', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'uploadImage']);
+        Route::delete('/enhanced-reports/{report}/remove-image', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'removeImage']);
     });
 
     // Enhanced Reports PDF routes (with CORS support)

@@ -20,6 +20,12 @@ class InventoryItem extends Model
         'expiry_date',
         'status',
         'updated_by',
+        'category',
+        'batch_number',
+        'lot_number',
+        'storage_conditions',
+        'hazard_level',
+        'temperature_range',
     ];
 
     protected $casts = [

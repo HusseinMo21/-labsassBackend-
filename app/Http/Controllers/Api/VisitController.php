@@ -296,12 +296,29 @@ class VisitController extends Controller
             'notes' => 'nullable|string',
             'status' => 'nullable|string',
             'clinical_data' => 'nullable|string',
+            'specimen_information' => 'nullable|string',
+            'gross_examination' => 'nullable|string',
             'microscopic_description' => 'nullable|string',
             'diagnosis' => 'nullable|string',
             'recommendations' => 'nullable|string',
             'referred_doctor' => 'nullable|string',
             'test_status' => 'nullable|string',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,bmp,webp|max:20480', // 20MB limit
         ]);
+        
+        // Handle image upload
+        if ($request->hasFile('image')) {
+            $image = $request->file('image');
+            $imagePath = $image->store('visit-images', 'public');
+            
+            $validated['image_path'] = $imagePath;
+            $validated['image_filename'] = $image->getClientOriginalName();
+            $validated['image_mime_type'] = $image->getMimeType();
+            $validated['image_size'] = $image->getSize();
+            $validated['image_uploaded_at'] = now();
+            $validated['image_uploaded_by'] = auth()->id();
+        }
+        
         $visit->update($validated);
         
         // If test_status is being set, also update all visit_tests status accordingly
@@ -310,7 +327,7 @@ class VisitController extends Controller
         }
         
         return response()->json([
-            'message' => 'Visit updated successfully',
+            'message' => 'Visit updated successfully' . ($request->hasFile('image') ? ' with image' : ''),
             'visit' => $visit->fresh()
         ]);
     }
@@ -515,6 +532,152 @@ class VisitController extends Controller
             'message' => 'Visit marked as completed successfully',
             'visit' => $visit->fresh()
         ]);
+    }
+
+    public function generateReport($visitId)
+    {
+        $visit = Visit::with(['patient', 'visitTests.labTest'])->findOrFail($visitId);
+        
+        try {
+            // Configure MPDF for Arabic support with proper margins for printing
+            $mpdf = new \Mpdf\Mpdf([
+                'mode' => 'utf-8',
+                'format' => 'A4',
+                'orientation' => 'P',
+                'margin_left' => 8,
+                'margin_right' => 8,
+                'margin_top' => 20,
+                'margin_bottom' => 20,
+                'margin_header' => 0,
+                'margin_footer' => 0,
+                'tempDir' => storage_path('app/temp'),
+                'default_font_size' => 12,
+                'default_font' => 'dejavusans',
+            ]);
+            
+            // Set font for Arabic support
+            $mpdf->autoScriptToLang = true;
+            $mpdf->autoLangToFont = true;
+            
+            // Disable image processing for faster generation
+            $mpdf->showImageErrors = false;
+            
+            $html = view('reports.visit_report_pdf', [
+                'visit' => $visit
+            ])->render();
+            
+            $mpdf->WriteHTML($html);
+            
+            $filename = 'visit_report_' . $visit->visit_number . '.pdf';
+            
+            // Get PDF content as string
+            $pdfContent = $mpdf->Output('', 'S');
+            
+            // Create response with CORS headers
+            $response = response($pdfContent, 200, [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' => 'inline; filename="' . $filename . '"',
+                'Access-Control-Allow-Origin' => '*',
+                'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin',
+                'Access-Control-Allow-Credentials' => 'true',
+                'Access-Control-Expose-Headers' => 'Content-Type, Content-Disposition, Content-Length'
+            ]);
+            
+            return $response;
+            
+        } catch (\Exception $e) {
+            \Log::error('Visit Report PDF generation error: ' . $e->getMessage());
+            \Log::error('Stack trace: ' . $e->getTraceAsString());
+            return response()->json([
+                'error' => 'PDF generation failed',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function uploadImage(Request $request, $visitId)
+    {
+        $visit = Visit::findOrFail($visitId);
+        
+        // Check if user has permission to edit this visit
+        if (auth()->user()->role === 'staff' && $visit->created_by !== auth()->id()) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $request->validate([
+            'image' => 'required|image|mimes:jpeg,png,jpg,gif,bmp,webp|max:20480', // 20MB limit
+        ]);
+
+        try {
+            // Remove old image if exists
+            if ($visit->image_path && \Storage::disk('public')->exists($visit->image_path)) {
+                \Storage::disk('public')->delete($visit->image_path);
+            }
+
+            $image = $request->file('image');
+            $imagePath = $image->store('visit-images', 'public');
+
+            $visit->update([
+                'image_path' => $imagePath,
+                'image_filename' => $image->getClientOriginalName(),
+                'image_mime_type' => $image->getMimeType(),
+                'image_size' => $image->getSize(),
+                'image_uploaded_at' => now(),
+                'image_uploaded_by' => auth()->id(),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Image uploaded successfully',
+                'data' => [
+                    'image_url' => asset('storage/' . $imagePath),
+                    'image_filename' => $visit->image_filename,
+                    'image_size' => $visit->image_size,
+                    'uploaded_at' => $visit->image_uploaded_at,
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Image upload error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Failed to upload image: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function removeImage($visitId)
+    {
+        $visit = Visit::findOrFail($visitId);
+        
+        // Check if user has permission to edit this visit
+        if (auth()->user()->role === 'staff' && $visit->created_by !== auth()->id()) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        try {
+            // Delete image file from storage
+            if ($visit->image_path && \Storage::disk('public')->exists($visit->image_path)) {
+                \Storage::disk('public')->delete($visit->image_path);
+            }
+
+            // Clear image data from database
+            $visit->update([
+                'image_path' => null,
+                'image_filename' => null,
+                'image_mime_type' => null,
+                'image_size' => null,
+                'image_uploaded_at' => null,
+                'image_uploaded_by' => null,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Image removed successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Image removal error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Failed to remove image: ' . $e->getMessage()], 500);
+        }
     }
 
     /**

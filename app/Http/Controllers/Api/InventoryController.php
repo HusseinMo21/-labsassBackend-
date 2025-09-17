@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\InventoryItem;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
 
 class InventoryController extends Controller
 {
@@ -18,12 +19,18 @@ class InventoryController extends Controller
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                   ->orWhere('description', 'like', "%{$search}%")
-                  ->orWhere('supplier', 'like', "%{$search}%");
+                  ->orWhere('supplier', 'like', "%{$search}%")
+                  ->orWhere('batch_number', 'like', "%{$search}%")
+                  ->orWhere('lot_number', 'like', "%{$search}%");
             });
         }
 
         if ($request->has('status')) {
             $query->where('status', $request->status);
+        }
+
+        if ($request->has('category')) {
+            $query->where('category', $request->category);
         }
 
         if ($request->has('low_stock')) {
@@ -32,6 +39,11 @@ class InventoryController extends Controller
 
         if ($request->has('expired')) {
             $query->where('expiry_date', '<', now());
+        }
+
+        if ($request->has('expiring_soon')) {
+            $query->where('expiry_date', '>', now())
+                  ->where('expiry_date', '<=', now()->addDays(30));
         }
 
         $items = $query->latest()->paginate(15);
@@ -49,7 +61,13 @@ class InventoryController extends Controller
             'minimum_quantity' => 'required|integer|min:0',
             'unit_price' => 'nullable|numeric|min:0',
             'supplier' => 'nullable|string|max:255',
-            'expiry_date' => 'nullable|date|after:today',
+            'expiry_date' => 'nullable|date',
+            'category' => 'required|in:reagents,consumables,equipment,pathology,cytology,ihc,other',
+            'batch_number' => 'nullable|string|max:255',
+            'lot_number' => 'nullable|string|max:255',
+            'storage_conditions' => 'nullable|string|max:255',
+            'hazard_level' => 'required|in:low,medium,high,critical',
+            'temperature_range' => 'nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {
@@ -73,8 +91,7 @@ class InventoryController extends Controller
 
     public function show(InventoryItem $inventoryItem)
     {
-        $inventoryItem->load('updatedBy');
-        return response()->json($inventoryItem);
+        return response()->json($inventoryItem->load('updatedBy'));
     }
 
     public function update(Request $request, InventoryItem $inventoryItem)
@@ -88,6 +105,12 @@ class InventoryController extends Controller
             'unit_price' => 'nullable|numeric|min:0',
             'supplier' => 'nullable|string|max:255',
             'expiry_date' => 'nullable|date',
+            'category' => 'required|in:reagents,consumables,equipment,pathology,cytology,ihc,other',
+            'batch_number' => 'nullable|string|max:255',
+            'lot_number' => 'nullable|string|max:255',
+            'storage_conditions' => 'nullable|string|max:255',
+            'hazard_level' => 'required|in:low,medium,high,critical',
+            'temperature_range' => 'nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {
@@ -105,7 +128,7 @@ class InventoryController extends Controller
 
         return response()->json([
             'message' => 'Inventory item updated successfully',
-            'item' => $inventoryItem->fresh()->load('updatedBy'),
+            'item' => $inventoryItem->load('updatedBy'),
         ]);
     }
 
@@ -148,7 +171,7 @@ class InventoryController extends Controller
 
         return response()->json([
             'message' => 'Quantity adjusted successfully',
-            'item' => $inventoryItem->fresh()->load('updatedBy'),
+            'item' => $inventoryItem->load('updatedBy'),
         ]);
     }
 
@@ -159,6 +182,8 @@ class InventoryController extends Controller
             'low_stock_items' => InventoryItem::whereRaw('quantity <= minimum_quantity')->count(),
             'out_of_stock_items' => InventoryItem::where('quantity', 0)->count(),
             'expired_items' => InventoryItem::where('expiry_date', '<', now())->count(),
+            'expiring_soon_items' => InventoryItem::where('expiry_date', '>', now())
+                ->where('expiry_date', '<=', now()->addDays(30))->count(),
             'total_value' => InventoryItem::sum(DB::raw('quantity * unit_price')),
             'by_status' => [
                 'active' => InventoryItem::where('status', 'active')->count(),
@@ -166,9 +191,91 @@ class InventoryController extends Controller
                 'out_of_stock' => InventoryItem::where('status', 'out_of_stock')->count(),
                 'expired' => InventoryItem::where('status', 'expired')->count(),
             ],
+            'by_category' => [
+                'reagents' => InventoryItem::where('category', 'reagents')->count(),
+                'consumables' => InventoryItem::where('category', 'consumables')->count(),
+                'equipment' => InventoryItem::where('category', 'equipment')->count(),
+                'pathology' => InventoryItem::where('category', 'pathology')->count(),
+                'cytology' => InventoryItem::where('category', 'cytology')->count(),
+                'ihc' => InventoryItem::where('category', 'ihc')->count(),
+                'other' => InventoryItem::where('category', 'other')->count(),
+            ],
+            'critical_alerts' => InventoryItem::where(function($query) {
+                $query->where('quantity', 0)
+                      ->orWhere('expiry_date', '<', now())
+                      ->orWhereRaw('quantity <= minimum_quantity');
+            })->count(),
         ];
 
         return response()->json($stats);
+    }
+
+    public function getAlerts()
+    {
+        $alerts = [];
+
+        // Critical alerts - out of stock
+        $outOfStockItems = InventoryItem::where('quantity', 0)->get();
+        foreach ($outOfStockItems as $item) {
+            $alerts[] = [
+                'type' => 'out_of_stock',
+                'severity' => 'error',
+                'title' => 'Out of Stock',
+                'message' => "{$item->name} is completely out of stock",
+                'icon' => 'Error',
+                'item_id' => $item->id,
+                'item_name' => $item->name,
+            ];
+        }
+
+        // Critical alerts - expired items
+        $expiredItems = InventoryItem::where('expiry_date', '<', now())->get();
+        foreach ($expiredItems as $item) {
+            $alerts[] = [
+                'type' => 'expired',
+                'severity' => 'error',
+                'title' => 'Expired Item',
+                'message' => "{$item->name} has expired and should be removed from use",
+                'icon' => 'Error',
+                'item_id' => $item->id,
+                'item_name' => $item->name,
+            ];
+        }
+
+        // Warning alerts - low stock
+        $lowStockItems = InventoryItem::whereRaw('quantity <= minimum_quantity')
+            ->where('quantity', '>', 0)
+            ->get();
+        foreach ($lowStockItems as $item) {
+            $alerts[] = [
+                'type' => 'low_stock',
+                'severity' => 'warning',
+                'title' => 'Low Stock',
+                'message' => "{$item->name} is running low ({$item->quantity} remaining)",
+                'icon' => 'Warning',
+                'item_id' => $item->id,
+                'item_name' => $item->name,
+            ];
+        }
+
+        // Warning alerts - expiring soon
+        $expiringSoonItems = InventoryItem::where('expiry_date', '>', now())
+            ->where('expiry_date', '<=', now()->addDays(30))
+            ->get();
+        foreach ($expiringSoonItems as $item) {
+            $daysUntilExpiry = now()->diffInDays($item->expiry_date);
+            $alerts[] = [
+                'type' => 'expiring_soon',
+                'severity' => 'warning',
+                'title' => 'Expiring Soon',
+                'message' => "{$item->name} expires in {$daysUntilExpiry} days",
+                'icon' => 'Schedule',
+                'item_id' => $item->id,
+                'item_name' => $item->name,
+            ];
+        }
+
+        return response()->json($alerts);
     }
 
     public function getLowStockItems()

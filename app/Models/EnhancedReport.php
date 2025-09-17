@@ -44,6 +44,12 @@ class EnhancedReport extends Model
         'approved_at',
         'printed_at',
         'delivered_at',
+        'image_path',
+        'image_filename',
+        'image_mime_type',
+        'image_size',
+        'image_uploaded_at',
+        'image_uploaded_by',
     ];
 
     protected $casts = [
@@ -56,6 +62,8 @@ class EnhancedReport extends Model
         'approved_at' => 'datetime',
         'printed_at' => 'datetime',
         'delivered_at' => 'datetime',
+        'image_uploaded_at' => 'datetime',
+        'image_size' => 'integer',
     ];
 
     // Relationships
@@ -82,6 +90,11 @@ class EnhancedReport extends Model
     public function approvedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function imageUploadedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'image_uploaded_by');
     }
 
     // Scopes
@@ -215,5 +228,52 @@ class EnhancedReport extends Model
     public function canBeDelivered()
     {
         return $this->status === 'printed';
+    }
+
+    // Image-related methods
+    public function hasImage()
+    {
+        return !empty($this->image_path);
+    }
+
+    public function getImageUrl()
+    {
+        if (!$this->hasImage()) {
+            return null;
+        }
+        
+        return asset('storage/' . $this->image_path);
+    }
+
+    public function getImageSizeFormatted()
+    {
+        if (!$this->image_size) {
+            return null;
+        }
+
+        $bytes = $this->image_size;
+        $units = ['B', 'KB', 'MB', 'GB'];
+        
+        for ($i = 0; $bytes > 1024 && $i < count($units) - 1; $i++) {
+            $bytes /= 1024;
+        }
+        
+        return round($bytes, 2) . ' ' . $units[$i];
+    }
+
+    public function deleteImage()
+    {
+        if ($this->hasImage() && \Storage::disk('public')->exists($this->image_path)) {
+            \Storage::disk('public')->delete($this->image_path);
+        }
+        
+        $this->update([
+            'image_path' => null,
+            'image_filename' => null,
+            'image_mime_type' => null,
+            'image_size' => null,
+            'image_uploaded_at' => null,
+            'image_uploaded_by' => null,
+        ]);
     }
 }

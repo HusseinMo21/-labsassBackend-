@@ -46,3 +46,4 @@ return new class extends Migration
         DB::table('users')->where('role', 'staff')->update(['role' => 'lab_tech']);
     }
 };
+

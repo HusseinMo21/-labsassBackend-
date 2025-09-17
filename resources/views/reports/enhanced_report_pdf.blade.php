@@ -133,5 +133,78 @@
         </div>
         @endif
     </div>
+    
+    @if($report->hasImage())
+    <!-- Page Break for Image -->
+    <pagebreak />
+    
+    <!-- Image Page -->
+    <div style="position: absolute; top: 20px; left: 20px; right: 20px; bottom: 100px;">
+        <!-- Image Header -->
+        <div style="text-align: center; margin-bottom: 20px;">
+            <h2 style="color: #2c3e50; font-size: 16px; font-weight: bold; margin: 0;">Lab Result Image</h2>
+            <p style="color: #7f8c8d; font-size: 12px; margin: 5px 0 0 0;">
+                Lab No: {{ $report->lab_no ?? 'N/A' }} | 
+                Patient: {{ $report->patient ? $report->patient->name : ($report->nos ?? 'N/A') }} |
+                Date: {{ $report->report_date ? \Carbon\Carbon::parse($report->report_date)->format('d/m/Y') : \Carbon\Carbon::now()->format('d/m/Y') }}
+            </p>
+        </div>
+        
+        <!-- Image Container -->
+        <div style="text-align: center; border: 2px solid #bdc3c7; padding: 20px; background: #ffffff; min-height: 400px; display: flex; align-items: center; justify-content: center;">
+            @if($report->image_path)
+                <img src="{{ storage_path('app/public/' . $report->image_path) }}" 
+                     alt="Lab Result Image" 
+                     style="max-width: 100%; max-height: 500px; object-fit: contain; border: 1px solid #ecf0f1;" />
+            @else
+                <div style="color: #95a5a6; font-size: 14px;">
+                    Image not available
+                </div>
+            @endif
+        </div>
+        
+        <!-- Image Information -->
+        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border: 1px solid #e9ecef;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="width: 50%; padding: 5px; vertical-align: top;">
+                        <div>
+                            <div style="font-weight: bold; font-size: 11px; margin-bottom: 3px;">Image Filename</div>
+                            <div style="font-size: 11px;">{{ $report->image_filename ?? 'N/A' }}</div>
+                        </div>
+                    </td>
+                    <td style="width: 50%; padding: 5px; vertical-align: top;">
+                        <div>
+                            <div style="font-weight: bold; font-size: 11px; margin-bottom: 3px;">File Size</div>
+                            <div style="font-size: 11px;">{{ $report->getImageSizeFormatted() ?? 'N/A' }}</div>
+                        </div>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="width: 50%; padding: 5px; vertical-align: top;">
+                        <div>
+                            <div style="font-weight: bold; font-size: 11px; margin-bottom: 3px;">Uploaded By</div>
+                            <div style="font-size: 11px;">{{ $report->imageUploadedBy ? $report->imageUploadedBy->name : 'N/A' }}</div>
+                        </div>
+                    </td>
+                    <td style="width: 50%; padding: 5px; vertical-align: top;">
+                        <div>
+                            <div style="font-weight: bold; font-size: 11px; margin-bottom: 3px;">Upload Date</div>
+                            <div style="font-size: 11px;">{{ $report->image_uploaded_at ? \Carbon\Carbon::parse($report->image_uploaded_at)->format('d/m/Y H:i') : 'N/A' }}</div>
+                        </div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        
+        <!-- Image Description -->
+        <div style="margin-top: 15px; padding: 10px; background: #e8f4fd; border-left: 4px solid #3498db;">
+            <div style="font-weight: bold; font-size: 11px; margin-bottom: 5px; color: #2c3e50;">Image Description</div>
+            <div style="font-size: 11px; line-height: 1.4; color: #34495e;">
+                This image shows the lab result findings for the above patient. Please refer to the main report for detailed analysis and diagnosis.
+            </div>
+        </div>
+    </div>
+    @endif
 </body>
 </html>

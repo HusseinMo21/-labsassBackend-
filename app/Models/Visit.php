@@ -37,6 +37,14 @@ class Visit extends Model
         'recommendations',
         'referred_doctor',
         'test_status',
+        'image_path',
+        'image_filename',
+        'image_mime_type',
+        'image_size',
+        'image_uploaded_at',
+        'image_uploaded_by',
+        'specimen_information',
+        'gross_examination',
     ];
 
     protected $casts = [
@@ -51,6 +59,8 @@ class Visit extends Model
         'expected_delivery_date' => 'date',
         'check_in_at' => 'datetime',
         'completed_at' => 'datetime',
+        'image_uploaded_at' => 'datetime',
+        'image_size' => 'integer',
     ];
 
     protected $appends = ['lab_number'];

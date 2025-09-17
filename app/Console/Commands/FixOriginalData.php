@@ -164,3 +164,4 @@ class FixOriginalData extends Command
         return 'Pathology'; // Default type
     }
 }
+
