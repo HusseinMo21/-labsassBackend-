@@ -106,7 +106,7 @@ class CheckInController extends Controller
     public function createVisitWithBilling(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'patient_id' => 'required|exists:patients,id',
+            'patient_id' => 'required|exists:patient,id',
             'tests' => 'required|array|min:1',
             'tests.*.test_category_id' => 'required|exists:test_categories,id',
             'tests.*.custom_test_name' => 'required|string|max:255',
@@ -205,61 +205,37 @@ class CheckInController extends Controller
                 'total_amount' => $totalAmount,
                 'discount_amount' => $totalDiscount,
                 'final_amount' => $finalAmount,
-                'upfront_payment' => $request->upfront_payment,
-                'remaining_balance' => $finalAmount - $request->upfront_payment,
-                'minimum_upfront_percentage' => 50,
-                'payment_method' => $request->payment_method,
-                'receipt_number' => Visit::generateReceiptNumber(),
-                'expected_delivery_date' => $request->expected_delivery_date ?? now()->addDays(1)->toDateString(),
-                'barcode' => Visit::generateBarcode(),
-                'check_in_by' => auth()->user()->name,
-                'check_in_at' => now(),
-                'billing_status' => $request->upfront_payment >= $finalAmount ? 'paid' : 'partial',
                 'status' => 'registered',
                 'remarks' => $this->buildRemarks($request),
+                'expected_delivery_date' => $request->expected_delivery_date,
             ]);
             
             \Log::info('Visit created successfully with ID: ' . $visit->id);
 
-            // Create invoice for this visit
-            $invoice = Invoice::create([
-                'visit_id' => $visit->id,
-                'invoice_number' => 'INV' . now()->format('Ymd') . str_pad($visit->id, 4, '0', STR_PAD_LEFT),
-                'invoice_date' => now()->toDateString(),
-                'subtotal' => $totalAmount,
-                'discount_amount' => $totalDiscount,
-                'tax_amount' => 0, // No tax for now
-                'total_amount' => $finalAmount,
-                'amount_paid' => $request->upfront_payment,
-                'balance' => $finalAmount - $request->upfront_payment,
-                'status' => $request->upfront_payment >= $finalAmount ? 'paid' : 'partial',
-                'payment_method' => $request->payment_method,
-                'notes' => $request->notes,
-                'created_by' => auth()->id(),
-            ]);
-            
-            \Log::info('Invoice created successfully with ID: ' . $invoice->id);
+            // Note: Invoice creation will be moved after LabRequest creation
 
             // Create visit tests and sample tracking
             foreach ($selectedTests as $testData) {
+                // Create a dummy lab test for custom tests
+                $dummyLabTest = \App\Models\LabTest::firstOrCreate([
+                    'name' => $testData['custom_test_name'],
+                    'code' => 'CUSTOM_' . now()->format('YmdHis'),
+                ], [
+                    'category_id' => $testData['category']->id,
+                    'price' => $testData['custom_price'],
+                    'description' => 'Custom test created during visit',
+                    'is_active' => true,
+                ]);
+                
                 $visitTest = $visit->visitTests()->create([
-                    'test_category_id' => $testData['category']->id,
-                    'custom_test_name' => $testData['custom_test_name'],
-                    'custom_price' => $testData['custom_price'],
-                    'discount_percentage' => $testData['discount_percentage'],
-                    'final_price' => $testData['final_price'],
-                    'price' => $testData['custom_price'], // Keep original price for reference
+                    'lab_test_id' => $dummyLabTest->id,
+                    'price' => $testData['custom_price'],
                     'status' => 'pending',
-                    'barcode_uid' => VisitTest::generateBarcodeUid(),
+                    'barcode_uid' => 'VT' . now()->format('YmdHis') . rand(1000, 9999),
                 ]);
 
-                // Create sample tracking for this test
-                $visitTest->sampleTracking()->create([
-                    'sample_id' => SampleTracking::generateSampleId(),
-                    'status' => 'collected',
-                    'collected_at' => now(),
-                    'collected_by' => auth()->id(),
-                ]);
+                // Note: Sample tracking creation disabled - table doesn't exist
+                // $visitTest->sampleTracking()->create([...]);
             }
 
             // Create or update lab request with samples automatically filled from selected tests
@@ -299,9 +275,16 @@ class CheckInController extends Controller
                 $visit->update(['lab_request_id' => $labRequest->id]);
                 \Log::info('Linked visit ' . $visit->id . ' to lab request ' . $labRequest->id);
 
-                // Link the invoice to the lab request
-                $invoice->update(['lab_request_id' => $labRequest->id]);
-                \Log::info('Linked invoice ' . $invoice->id . ' to lab request ' . $labRequest->id);
+                // Create invoice for this visit
+                $invoice = Invoice::create([
+                    'lab' => $labRequest->lab_no,
+                    'total' => $finalAmount,
+                    'paid' => $request->upfront_payment,
+                    'remaining' => $finalAmount - $request->upfront_payment,
+                    'lab_request_id' => $labRequest->id,
+                ]);
+                
+                \Log::info('Invoice created successfully with ID: ' . $invoice->id);
 
                 // Add samples for each selected test to the lab request
                 foreach ($selectedTests as $testData) {
@@ -313,8 +296,8 @@ class CheckInController extends Controller
                     
                     // Check if this sample already exists for this test
                     $existingSample = $labRequest->samples()
-                        ->where('tsample', $testName)
-                        ->where('nsample', $testCode)
+                        ->where('sample_type', $testName)
+                        ->where('sample_id', $testCode)
                         ->first();
                     
                     if (!$existingSample) {
@@ -324,11 +307,10 @@ class CheckInController extends Controller
                         
                         // Create sample with test information and barcode
                         $labRequest->samples()->create([
-                            'barcode' => $barcode,
                             'sample_id' => $sampleId,
-                            'tsample' => $testName, // Sample Type = Custom Test Name
-                            'nsample' => $testCode, // Sample Name = Category Code
-                            'isample' => $testData['category']->id,   // Sample ID = Category ID
+                            'sample_type' => $testName, // Sample Type = Custom Test Name
+                            'status' => 'collected',
+                            'collection_date' => now(),
                             'notes' => "Test: {$testName} ({$categoryName})",
                         ]);
                         
@@ -346,10 +328,10 @@ class CheckInController extends Controller
 
             return response()->json([
                 'message' => 'Visit created successfully',
-                'visit' => $visit->load(['patient', 'visitTests.testCategory']),
+                'visit' => $visit->load(['patient', 'visitTests.labTest.category']),
                 'lab_request' => $labRequest ? $labRequest->load('samples') : null,
                 'receipt_data' => [
-                    'receipt_number' => $visit->receipt_number,
+                    'receipt_number' => $visit->visit_number,
                     'date' => $visit->visit_date,
                     'patient_name' => $visit->patient->name,
                     'patient_age' => $visit->patient->age,
@@ -369,7 +351,7 @@ class CheckInController extends Controller
                     'payment_method' => $request->payment_method,
                     'expected_delivery_date' => $visit->expected_delivery_date,
                     'barcode' => $visit->barcode,
-                    'check_in_by' => auth()->user()->name,
+                    'check_in_by' => auth()->user() ? auth()->user()->name : 'System',
                     'check_in_at' => now(),
                     'patient_credentials' => $visit->patient->getPortalCredentials(),
                     'visit_id' => $visit->id,
@@ -421,12 +403,22 @@ class CheckInController extends Controller
     {
         $visit = Visit::with(['patient', 'visitTests.testCategory', 'labRequest'])->findOrFail($visitId);
         
+        // Get the related invoice for financial data
+        $invoice = null;
+        $payments = collect();
+        if ($visit->labRequest) {
+            $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->lab_no)->first();
+            if ($invoice) {
+                $payments = \App\Models\Payment::where('invoice_id', $invoice->id)->get();
+            }
+        }
+        
         return response()->json([
             'visit' => $visit,
             'receipt_data' => [
-                'receipt_number' => $visit->receipt_number,
+                'receipt_number' => $visit->visit_number, // Use visit_number instead of receipt_number
                 'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : 'N/A',
-                'date' => $visit->visit_date,
+                'date' => $visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : 'N/A',
                 'patient_name' => $visit->patient->name,
                 'patient_age' => $visit->patient->age,
                 'patient_phone' => $visit->patient->phone,
@@ -437,19 +429,60 @@ class CheckInController extends Controller
                         'price' => $visitTest->final_price ?: $visitTest->price,
                     ];
                 }),
-                'total_amount' => $visit->total_amount,
-                'discount_amount' => $visit->discount_amount,
-                'final_amount' => $visit->final_amount,
-                'upfront_payment' => $visit->upfront_payment,
-                'remaining_balance' => $visit->remaining_balance,
-                'payment_method' => $visit->payment_method,
-                'expected_delivery_date' => $visit->expected_delivery_date,
+                'total_amount' => $invoice ? $invoice->total : ($visit->total_amount ?: 0),
+                'discount_amount' => $visit->discount_amount ?: 0,
+                'final_amount' => $invoice ? $invoice->total : ($visit->final_amount ?: 0),
+                'upfront_payment' => $invoice ? $invoice->paid : ($visit->upfront_payment ?: 0),
+                'remaining_balance' => $invoice ? $invoice->remaining : ($visit->remaining_balance ?: 0),
+                'payment_method' => $this->getPaymentMethod($visit, $payments),
+                'billing_status' => $this->getPaymentStatus($invoice),
+                'expected_delivery_date' => $visit->expected_delivery_date ?: 'N/A',
                 'barcode' => $visit->labRequest ? $this->barcodeService->generateReceiptBarcode($visit->labRequest->full_lab_no) : ($visit->barcode ?: 'N/A'),
-                'check_in_by' => $visit->check_in_by,
-                'check_in_at' => $visit->check_in_at,
+                'check_in_by' => $visit->check_in_by ?: 'N/A',
+                'check_in_at' => $visit->check_in_at ?: 'N/A',
+                'visit_id' => $visit->id,
                 'patient_credentials' => $visit->patient->getPortalCredentials(),
             ],
         ]);
+    }
+
+    /**
+     * Get payment method from visit or payments
+     */
+    private function getPaymentMethod($visit, $payments)
+    {
+        // First try to get from visit
+        if ($visit->payment_method) {
+            return $visit->payment_method;
+        }
+        
+        // Then try to get from the most recent payment
+        if ($payments->count() > 0) {
+            $latestPayment = $payments->sortByDesc('created_at')->first();
+            if ($latestPayment->payment_method) {
+                return $latestPayment->payment_method;
+            }
+        }
+        
+        return 'Cash'; // Default to Cash
+    }
+
+    /**
+     * Get payment status based on invoice data
+     */
+    private function getPaymentStatus($invoice)
+    {
+        if (!$invoice) {
+            return 'Pending';
+        }
+        
+        if ($invoice->remaining <= 0) {
+            return 'Paid';
+        } elseif ($invoice->paid > 0) {
+            return 'Partial';
+        } else {
+            return 'Pending';
+        }
     }
 
     public function getSampleLabel($visitId)
@@ -491,7 +524,7 @@ class CheckInController extends Controller
                     'patient_age' => $visit->patient->age,
                     'visit_id' => $visit->id,
                     'visit_date' => $visit->visit_date,
-                    'receipt_number' => $visit->receipt_number,
+                    'receipt_number' => $visit->visit_number,
                     'test_labels' => $testLabels,
                 ],
             ]);
@@ -568,11 +601,9 @@ class CheckInController extends Controller
 
         $patients = Patient::where('name', 'like', "%{$query}%")
             ->orWhere('phone', 'like', "%{$query}%")
-            ->orWhere('email', 'like', "%{$query}%")
-            ->orWhere('national_id', 'like', "%{$query}%")
-            ->orWhere('username', 'like', "%{$query}%")
+            ->orWhere('sender', 'like', "%{$query}%")
             ->limit(10)
-            ->get(['id', 'name', 'phone', 'email', 'birth_date']);
+            ->get(['id', 'name', 'phone', 'age', 'gender', 'sender']);
 
         return response()->json(['patients' => $patients]);
     }
@@ -590,7 +621,7 @@ class CheckInController extends Controller
     public function calculateBilling(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'patient_id' => 'required|exists:patients,id',
+            'patient_id' => 'required|exists:patient,id',
             'tests' => 'required|array|min:1',
             'tests.*.lab_test_id' => 'required|exists:lab_tests,id',
         ]);
@@ -634,7 +665,7 @@ class CheckInController extends Controller
 
     public function getTestCategories()
     {
-        $categories = \App\Models\TestCategory::active()->orderBy('name')->get(['id', 'name', 'code', 'description']);
+        $categories = \App\Models\TestCategory::active()->orderBy('name')->get(['id', 'name', 'description']);
         return response()->json([
             'success' => true,
             'data' => $categories

@@ -91,3 +91,5 @@ Report: not_ready → ready → generated
 ### System Decision:
 - 🚫 **Block Report**: If any test not validated or QC failed
 - ✅ **Allow Report**: If all validations complete and QC passed
+
+

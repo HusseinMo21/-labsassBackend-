@@ -65,14 +65,31 @@ class PatientController extends Controller
             });
         }
 
-        $patients = $query->with(['visits' => function ($q) {
-            $q->latest()->take(5);
-        }, 'doctor', 'organization'])
-        ->withCount('visits')
-        ->latest()
+        $patients = $query->with(['doctor', 'organization'])
+        ->orderBy('id', 'desc')
         ->paginate(15);
+        
+        // Add computed birth_date and doctor name for each patient
+        $patients->getCollection()->transform(function ($patient) {
+            if ($patient->age && !isset($patient->birth_date)) {
+                $patient->birth_date = now()->subYears($patient->age)->format('Y-m-d');
+            }
+            // Add doctor name from sender field
+            $patient->doctor_name = $patient->sender ?: 'N/A';
+            return $patient;
+        });
+        
+        // Convert to array and back to ensure properties are accessible
+        $patientsArray = $patients->toArray();
+        foreach ($patientsArray['data'] as &$patient) {
+            if ($patient['age'] && !isset($patient['birth_date'])) {
+                $patient['birth_date'] = now()->subYears($patient['age'])->format('Y-m-d');
+            }
+            // Add doctor name from sender field
+            $patient['doctor_name'] = $patient['sender'] ?: 'N/A';
+        }
 
-        return response()->json($patients);
+        return response()->json($patientsArray);
     }
 
 
@@ -81,16 +98,13 @@ class PatientController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'gender' => 'required|in:male,female,other',
-            'birth_date' => 'required|date|before:today',
+            'age' => 'required|integer|min:0|max:150',
             'phone' => 'required|string|max:20',
             'whatsapp_number' => 'nullable|string|max:20',
             'address' => 'required|string',
-            'emergency_contact' => 'nullable|string|max:255',
-            'emergency_phone' => 'nullable|string|max:20',
-            'medical_history' => 'nullable|string',
-            'allergies' => 'nullable|string',
             'doctor' => 'nullable|string|max:255',
             'organization' => 'nullable|string|max:255',
+            'sender' => 'nullable|string|max:255', // Doctor name
         ]);
 
         if ($validator->fails()) {
@@ -114,15 +128,20 @@ class PatientController extends Controller
         $patientData = $validator->validated();
         $patientData['user_id'] = $user->id;
         
-        // Handle doctor and organization relationships
-        if (isset($patientData['doctor'])) {
-            $doctor = $this->findOrCreateDoctor($patientData['doctor']);
+        // Handle doctor and organization relationships with dual saving
+        if (isset($patientData['sender']) && !empty($patientData['sender'])) {
+            // Save doctor name to both sender field and create Doctor record
+            $doctor = $this->findOrCreateDoctor($patientData['sender']);
             $patientData['doctor_id'] = $doctor ? $doctor->id : null;
+            // Keep sender field as is (it already contains the doctor name)
         }
         
-        if (isset($patientData['organization'])) {
+        if (isset($patientData['organization']) && !empty($patientData['organization'])) {
+            // Save organization name to Organization table and link via organization_id
             $organization = $this->findOrCreateOrganization($patientData['organization']);
             $patientData['organization_id'] = $organization ? $organization->id : null;
+            // Remove organization field from data since it doesn't exist in DB
+            unset($patientData['organization']);
         }
         
         $patient = Patient::create($patientData);
@@ -135,11 +154,27 @@ class PatientController extends Controller
             'is_active' => true,
         ]);
 
-        // Note: Lab requests are now created automatically during check & billing process
+        // Generate lab number and create lab request
+        $labNoData = $this->labNoGenerator->generate();
+        $labRequest = LabRequest::create([
+            'patient_id' => $patient->id,
+            'lab_no' => $labNoData['full'],
+            'suffix' => null,
+            'status' => 'pending',
+            'metadata' => json_encode([
+                'created_via' => 'patient_registration',
+                'patient_data' => $patientData,
+            ]),
+        ]);
+
+        // Update patient with lab number
+        $patient->update(['lab' => $labNoData['full']]);
 
         return response()->json([
             'message' => 'Patient created successfully',
             'patient' => $patient->load('visits', 'user', 'credentials', 'labRequests'),
+            'lab_request' => $labRequest,
+            'lab_number' => $labNoData['full'],
             'user_credentials' => [
                 'username' => $username,
                 'password' => $password,
@@ -174,6 +209,7 @@ class PatientController extends Controller
             'allergies' => 'nullable|string',
             'doctor' => 'nullable|string|max:255',
             'organization' => 'nullable|string|max:255',
+            'sender' => 'nullable|string|max:255', // Doctor name
         ]);
 
         if ($validator->fails()) {
@@ -185,15 +221,20 @@ class PatientController extends Controller
 
         $patientData = $validator->validated();
         
-        // Handle doctor and organization relationships
-        if (isset($patientData['doctor'])) {
-            $doctor = $this->findOrCreateDoctor($patientData['doctor']);
+        // Handle doctor and organization relationships with dual saving
+        if (isset($patientData['sender']) && !empty($patientData['sender'])) {
+            // Save doctor name to both sender field and create Doctor record
+            $doctor = $this->findOrCreateDoctor($patientData['sender']);
             $patientData['doctor_id'] = $doctor ? $doctor->id : null;
+            // Keep sender field as is (it already contains the doctor name)
         }
         
-        if (isset($patientData['organization'])) {
+        if (isset($patientData['organization']) && !empty($patientData['organization'])) {
+            // Save organization name to Organization table and link via organization_id
             $organization = $this->findOrCreateOrganization($patientData['organization']);
             $patientData['organization_id'] = $organization ? $organization->id : null;
+            // Remove organization field from data since it doesn't exist in DB
+            unset($patientData['organization']);
         }
         
         $patient->update($patientData);
@@ -206,17 +247,119 @@ class PatientController extends Controller
 
     public function destroy(Patient $patient)
     {
-        if ($patient->visits()->count() > 0) {
+        // Check if user is admin
+        if (!auth()->user()->isAdmin()) {
             return response()->json([
-                'message' => 'Cannot delete patient with existing visits',
-            ], 422);
+                'message' => 'Only administrators can delete patients',
+            ], 403);
         }
 
-        $patient->delete();
+        try {
+            \DB::beginTransaction();
 
-        return response()->json([
-            'message' => 'Patient deleted successfully',
-        ]);
+            // Get counts for logging
+            $visitsCount = $patient->visits()->count();
+            $labRequestsCount = $patient->labRequests()->count();
+            
+            // Get invoices through lab requests
+            $labRequestIds = $patient->labRequests()->pluck('id');
+            $invoicesCount = \App\Models\Invoice::whereIn('lab_request_id', $labRequestIds)->count();
+            
+            $paymentsCount = 0;
+            $samplesCount = 0;
+            $reportsCount = 0;
+            $visitTestsCount = 0;
+
+            // Delete all related data in the correct order to avoid foreign key constraints
+
+            // 1. Delete payments (through invoices)
+            $invoices = \App\Models\Invoice::whereIn('lab_request_id', $labRequestIds)->get();
+            foreach ($invoices as $invoice) {
+                $paymentsCount += $invoice->payments()->count();
+                $invoice->payments()->delete();
+            }
+
+            // 2. Delete invoices
+            \App\Models\Invoice::whereIn('lab_request_id', $labRequestIds)->delete();
+
+            // 3. Delete visit tests (through visits)
+            foreach ($patient->visits as $visit) {
+                $visitTestsCount += $visit->visitTests()->count();
+                $visit->visitTests()->delete();
+            }
+
+            // 4. Delete visits
+            $patient->visits()->delete();
+
+            // 5. Delete samples (through lab requests)
+            foreach ($patient->labRequests as $labRequest) {
+                $samplesCount += $labRequest->samples()->count();
+                $labRequest->samples()->delete();
+            }
+
+            // 6. Delete reports (through lab requests)
+            foreach ($patient->labRequests as $labRequest) {
+                $reportsCount += $labRequest->reports()->count();
+                $labRequest->reports()->delete();
+            }
+
+            // 7. Delete enhanced reports (through lab requests)
+            foreach ($patient->labRequests as $labRequest) {
+                \App\Models\EnhancedReport::where('lab_request_id', $labRequest->id)->delete();
+            }
+
+            // 8. Delete lab requests
+            $patient->labRequests()->delete();
+
+            // 9. Delete patient credentials
+            $patient->credentials()->delete();
+
+            // 10. Finally, delete the patient
+            $patient->delete();
+
+            \DB::commit();
+
+            // Log the deletion
+            \Log::info('Patient deleted by admin', [
+                'patient_id' => $patient->id,
+                'patient_name' => $patient->name,
+                'deleted_by' => auth()->user()->id,
+                'deleted_data' => [
+                    'visits' => $visitsCount,
+                    'lab_requests' => $labRequestsCount,
+                    'invoices' => $invoicesCount,
+                    'payments' => $paymentsCount,
+                    'samples' => $samplesCount,
+                    'reports' => $reportsCount,
+                    'visit_tests' => $visitTestsCount,
+                ]
+            ]);
+
+            return response()->json([
+                'message' => 'Patient and all related data deleted successfully',
+                'deleted_data' => [
+                    'visits' => $visitsCount,
+                    'lab_requests' => $labRequestsCount,
+                    'invoices' => $invoicesCount,
+                    'payments' => $paymentsCount,
+                    'samples' => $samplesCount,
+                    'reports' => $reportsCount,
+                    'visit_tests' => $visitTestsCount,
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            \DB::rollback();
+            \Log::error('Error deleting patient', [
+                'patient_id' => $patient->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to delete patient: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function me(Request $request)
@@ -239,14 +382,25 @@ class PatientController extends Controller
         if (!$testName) {
             return response()->json(['patients' => []]);
         }
-        $patients = \App\Models\Patient::whereHas('visits.visitTests.labTest', function ($q) use ($testName) {
-            $q->where('name', 'like', "%$testName%");
-        })
-        ->select('id', 'name', 'gender', 'birth_date', 'phone')
-        ->get();
-        // Add age attribute
-        $patients->map(function($p) { $p->age = $p->birth_date ? $p->birth_date->age : null; });
-        return response()->json(['patients' => $patients]);
+        
+        try {
+            $patients = \App\Models\Patient::whereHas('visits.visitTests.labTest', function ($q) use ($testName) {
+                $q->where('name', 'like', "%$testName%");
+            })
+            ->select('id', 'name', 'gender', 'age', 'phone')
+            ->get();
+            
+            // Add birth_date attribute calculated from age
+            $patients->map(function($p) { 
+                $p->birth_date = $p->age ? now()->subYears($p->age)->format('Y-m-d') : null;
+                return $p;
+            });
+            
+            return response()->json(['patients' => $patients]);
+        } catch (\Exception $e) {
+            \Log::error('Error in patientsByTest: ' . $e->getMessage());
+            return response()->json(['error' => 'Failed to fetch patients'], 500);
+        }
     }
 
     public function fullHistory($id)

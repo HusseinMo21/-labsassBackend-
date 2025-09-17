@@ -74,7 +74,21 @@ class BarcodeService
     public function findSampleByBarcode(string $barcode): ?Sample
     {
         try {
-            return Sample::where('barcode', $barcode)->first();
+            // Parse the barcode to get lab_no and sample_id
+            $parsed = $this->parseBarcode($barcode);
+            $labNo = $parsed['lab_no'];
+            $sampleId = $parsed['sample_id'];
+            
+            // Find the lab request first
+            $labRequest = $this->findLabRequestByLabNo($labNo);
+            if (!$labRequest) {
+                return null;
+            }
+            
+            // Find the sample by lab_request_id and sample_id
+            return Sample::where('lab_request_id', $labRequest->id)
+                ->where('sample_id', $sampleId)
+                ->first();
         } catch (\Exception $e) {
             Log::error('Error finding sample by barcode: ' . $e->getMessage(), [
                 'barcode' => $barcode,
@@ -112,6 +126,77 @@ class BarcodeService
     public function getBarcodeData(string $barcode): array
     {
         try {
+            $barcode = trim($barcode);
+            
+            // Determine barcode type and handle accordingly
+            $barcodeType = $this->determineBarcodeType($barcode);
+            
+            switch ($barcodeType) {
+                case 'sample':
+                    return $this->getSampleBarcodeData($barcode);
+                case 'lab_request':
+                    return $this->getLabRequestBarcodeData($barcode);
+                case 'receipt':
+                    return $this->getReceiptBarcodeData($barcode);
+                default:
+                    return [
+                        'success' => false,
+                        'error' => 'Unsupported barcode format',
+                        'barcode' => $barcode
+                    ];
+            }
+        } catch (\Exception $e) {
+            Log::error('Error getting barcode data: ' . $e->getMessage(), [
+                'barcode' => $barcode,
+                'error' => $e->getMessage()
+            ]);
+            
+            return [
+                'success' => false,
+                'error' => 'Internal server error',
+                'barcode' => $barcode
+            ];
+        }
+    }
+    
+    /**
+     * Determine the type of barcode.
+     */
+    private function determineBarcodeType(string $barcode): string
+    {
+        // Try to parse as sample barcode first (most specific)
+        try {
+            $parsed = $this->parseBarcode($barcode);
+            if (isset($parsed['lab_no']) && isset($parsed['sample_id'])) {
+                return 'sample';
+            }
+        } catch (\InvalidArgumentException $e) {
+            // Not a sample barcode
+        }
+        
+        // Check if it's a receipt barcode: RCP followed by date and number (e.g., RCP20250917001)
+        if (preg_match('/^RCP\d+$/', $barcode)) {
+            return 'receipt';
+        }
+        
+        // Check if it's a lab request barcode (contains dash but not ending with -S\d+)
+        if (strpos($barcode, '-') !== false && !preg_match('/-S\d+$/', $barcode)) {
+            // Try to find this as a lab request
+            $labRequest = $this->findLabRequestByLabNo($barcode);
+            if ($labRequest) {
+                return 'lab_request';
+            }
+        }
+        
+        return 'unknown';
+    }
+    
+    /**
+     * Get data for sample barcode.
+     */
+    private function getSampleBarcodeData(string $barcode): array
+    {
+        try {
             // Parse the barcode
             $parsed = $this->parseBarcode($barcode);
             
@@ -144,15 +229,76 @@ class BarcodeService
                 'error' => $e->getMessage(),
                 'barcode' => $barcode
             ];
-        } catch (\Exception $e) {
-            Log::error('Error getting barcode data: ' . $e->getMessage(), [
+        }
+    }
+    
+    /**
+     * Get data for lab request barcode.
+     */
+    private function getLabRequestBarcodeData(string $barcode): array
+    {
+        try {
+            // Find the lab request
+            $labRequest = $this->findLabRequestByLabNo($barcode);
+            if (!$labRequest) {
+                return [
+                    'success' => false,
+                    'error' => 'Lab request not found',
+                    'barcode' => $barcode
+                ];
+            }
+            
+            // Load relationships
+            $labRequest->load(['patient', 'visit', 'samples']);
+            
+            return [
+                'success' => true,
                 'barcode' => $barcode,
-                'error' => $e->getMessage()
-            ]);
+                'lab_request' => $labRequest,
+                'patient' => $labRequest->patient,
+                'visit' => $labRequest->visit,
+                'samples' => $labRequest->samples,
+            ];
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'error' => 'Error retrieving lab request data',
+                'barcode' => $barcode
+            ];
+        }
+    }
+    
+    /**
+     * Get data for receipt barcode.
+     */
+    private function getReceiptBarcodeData(string $barcode): array
+    {
+        try {
+            // For receipt barcodes, we'll need to find the associated visit or invoice
+            // This is a simplified implementation - you might need to adjust based on your receipt system
+            
+            // Try to find a visit with this receipt number
+            $visit = \App\Models\Visit::where('receipt_number', $barcode)->first();
+            if ($visit) {
+                $visit->load(['patient', 'labRequest']);
+                return [
+                    'success' => true,
+                    'barcode' => $barcode,
+                    'visit' => $visit,
+                    'patient' => $visit->patient,
+                    'lab_request' => $visit->labRequest,
+                ];
+            }
             
             return [
                 'success' => false,
-                'error' => 'Internal server error',
+                'error' => 'Receipt not found',
+                'barcode' => $barcode
+            ];
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'error' => 'Error retrieving receipt data',
                 'barcode' => $barcode
             ];
         }

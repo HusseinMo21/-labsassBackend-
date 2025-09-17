@@ -37,28 +37,28 @@
 <body>
     <div class="header">
         <div class="title">INVOICE</div>
-        <div>Invoice #: <b>{{ $invoice->invoice_number }}</b></div>
-        <div>Date: {{ $invoice->invoice_date ? $invoice->invoice_date->format('Y-m-d') : '' }}</div>
+        <div>Invoice #: <b>{{ $invoice->lab ?? 'N/A' }}</b></div>
+        <div>Date: {{ $invoice->created_at ? $invoice->created_at->format('Y-m-d') : 'N/A' }}</div>
     </div>
     <div class="section">
         <div style="margin-bottom: 8px;">
             <b>Patient:</b><br>
-            <span class="arabic-text" style="font-size: 16px; font-weight: bold; margin-right: 20px;">{{ $invoice->visit->patient->name ?? '-' }}</span>
+            <span class="arabic-text" style="font-size: 16px; font-weight: bold; margin-right: 20px;">{{ $invoice->labRequest->patient->name ?? '-' }}</span>
         </div>
         <div style="margin-bottom: 8px;">
-            <b>Phone:</b> {{ $invoice->visit->patient->phone ?? '-' }}
+            <b>Phone:</b> {{ $invoice->labRequest->patient->phone ?? '-' }}
         </div>
         <div style="margin-bottom: 8px;">
-            <b>Visit #:</b> {{ $invoice->visit->visit_number ?? '-' }}
+            <b>Lab #:</b> {{ $invoice->labRequest->lab_no ?? $invoice->lab ?? '-' }}
         </div>
     </div>
     
-    @if($invoice->visit->patient->credentials)
+    @if($invoice->labRequest->patient->credentials ?? false)
     <div class="section" style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #007bff;">
         <h3 style="margin: 0 0 10px 0; color: #007bff; font-size: 16px;">🔐 Patient Portal Access</h3>
         <div style="font-family: 'Courier New', monospace; background: #fff; padding: 10px; border-radius: 3px; border: 1px solid #ddd;">
-            <div><b>Username:</b> {{ $invoice->visit->patient->credentials->username }}</div>
-            <div><b>Password:</b> {{ $invoice->visit->patient->credentials->original_password }}</div>
+            <div><b>Username:</b> {{ $invoice->labRequest->patient->credentials->username }}</div>
+            <div><b>Password:</b> {{ $invoice->labRequest->patient->credentials->original_password }}</div>
         </div>
         <div style="margin-top: 8px; font-size: 12px; color: #666;">
             Use these credentials to access your test results and reports online at our patient portal.
@@ -73,19 +73,19 @@
             </tr>
             <tr>
                 <td>Lab Tests & Services</td>
-                <td class="right">EGP {{ number_format($invoice->total_amount, 2) }}</td>
+                <td class="right">EGP {{ number_format($invoice->total ?? 0, 2) }}</td>
             </tr>
             <tr>
                 <td>Discount</td>
-                <td class="right">-EGP {{ number_format($invoice->discount_amount, 2) }}</td>
+                <td class="right">-EGP {{ number_format($invoice->discount_amount ?? 0, 2) }}</td>
             </tr>
             <tr>
                 <td>Tax</td>
-                <td class="right">EGP {{ number_format($invoice->tax_amount, 2) }}</td>
+                <td class="right">EGP {{ number_format($invoice->tax_amount ?? 0, 2) }}</td>
             </tr>
             <tr>
                 <th>Total</th>
-                <th class="right">EGP {{ number_format($invoice->total_amount - $invoice->discount_amount + $invoice->tax_amount, 2) }}</th>
+                <th class="right">EGP {{ number_format(($invoice->total ?? 0) - ($invoice->discount_amount ?? 0) + ($invoice->tax_amount ?? 0), 2) }}</th>
             </tr>
         </table>
     </div>
@@ -105,8 +105,8 @@
             </tr>
             @endforeach
         </table>
-        <div><b>Amount Paid:</b> EGP {{ number_format($invoice->amount_paid, 2) }}</div>
-        <div><b>Remaining:</b> EGP {{ number_format($invoice->balance, 2) }}</div>
+        <div><b>Amount Paid:</b> EGP {{ number_format($invoice->paid ?? 0, 2) }}</div>
+        <div><b>Remaining:</b> EGP {{ number_format($invoice->remaining ?? 0, 2) }}</div>
     </div>
     <div class="section" style="margin-top: 40px; color: #888; font-size: 0.95rem;">
         Thank you for choosing our laboratory.

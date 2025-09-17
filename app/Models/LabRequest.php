@@ -111,14 +111,18 @@ class LabRequest extends Model
     }
 
     /**
-     * Scope to search by lab number or full lab number.
+     * Scope to search by lab number, full lab number, or patient information.
      */
     public function scopeSearchByLabNo($query, string $search)
     {
         return $query->where(function ($q) use ($search) {
             $q->where('lab_no', 'like', "%{$search}%")
               ->orWhere(function ($subQ) use ($search) {
-                  $subQ->whereRaw("lab_no || COALESCE(suffix, '') LIKE ?", ["%{$search}%"]);
+                  $subQ->whereRaw("CONCAT(lab_no, COALESCE(suffix, '')) LIKE ?", ["%{$search}%"]);
+              })
+              ->orWhereHas('patient', function ($patientQuery) use ($search) {
+                  $patientQuery->where('name', 'like', "%{$search}%")
+                              ->orWhere('phone', 'like', "%{$search}%");
               });
         });
     }

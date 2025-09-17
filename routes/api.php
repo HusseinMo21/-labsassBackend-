@@ -134,10 +134,11 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
     Route::get('/invoices/{id}/report', [App\Http\Controllers\Api\InvoiceController::class, 'generateInvoiceReport']);
     Route::get('/invoices/stats', [App\Http\Controllers\Api\InvoiceController::class, 'getInvoiceStats']);
 
-    // Expense routes (admin and accountant only)
-    Route::apiResource('expenses', \App\Http\Controllers\Api\ExpenseController::class);
-    Route::get('/expenses/stats', [\App\Http\Controllers\Api\ExpenseController::class, 'getStats']);
-    Route::get('/expenses/categories', [\App\Http\Controllers\Api\ExpenseController::class, 'getCategories']);
+    // Expense routes (admin and staff only)
+    Route::middleware(['role:admin,staff'])->group(function () {
+        Route::apiResource('expenses', \App\Http\Controllers\Api\ExpenseController::class);
+        Route::get('/expenses/stats', [\App\Http\Controllers\Api\ExpenseController::class, 'stats']);
+    });
 
     // User management (admin only)
     Route::middleware(['role:admin'])->group(function () {
@@ -170,9 +171,9 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
     Route::middleware(['role:admin,staff'])->group(function () {
         // Specific routes must come before resource routes to avoid conflicts
         Route::get('/sample-tracking/stats', [SampleTrackingController::class, 'getStats']);
-        Route::post('/sample-tracking/create/{visitTestId}', [SampleTrackingController::class, 'createSample']);
+        Route::post('/sample-tracking/create/{labRequestId}', [SampleTrackingController::class, 'createSample']);
         Route::put('/sample-tracking/{id}/status', [SampleTrackingController::class, 'updateStatus']);
-        Route::get('/sample-tracking/visit-test/{visitTestId}', [SampleTrackingController::class, 'getSampleByVisitTest']);
+        Route::get('/sample-tracking/lab-request/{labRequestId}', [SampleTrackingController::class, 'getSampleByLabRequest']);
         
         // Resource routes come last
         Route::apiResource('sample-tracking', SampleTrackingController::class);
@@ -249,6 +250,30 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
         Route::get('/enhanced-reports/status/{visitId}', [App\Http\Controllers\Api\EnhancedReportController::class, 'getReportStatus']);
         Route::get('/enhanced-reports', [App\Http\Controllers\Api\EnhancedReportController::class, 'listReports']);
     });
+
+    // Enhanced Reports API routes (new report system)
+    Route::middleware(['role:admin,staff,doctor'])->group(function () {
+        Route::apiResource('enhanced-reports', App\Http\Controllers\Api\EnhancedReportApiController::class);
+        Route::post('/enhanced-reports/{report}/submit-review', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'submitForReview']);
+        Route::post('/enhanced-reports/{report}/approve', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'approve']);
+        Route::post('/enhanced-reports/{report}/deliver', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'deliver']);
+        Route::get('/enhanced-reports-statistics', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'statistics']);
+    });
+
+    // Enhanced Reports PDF routes (with CORS support)
+    Route::middleware(['role:admin,staff,doctor'])->group(function () {
+        Route::middleware('pdf.cors')->group(function () {
+            Route::get('/enhanced-reports/{report}/print', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'print']);
+            Route::get('/enhanced-reports/{report}/print-view', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'printView']);
+        });
+    });
+
+    // Template routes (admin, staff, and doctor can manage templates)
+    Route::middleware(['role:admin,staff,doctor'])->group(function () {
+        Route::apiResource('templates', App\Http\Controllers\Api\TemplateController::class);
+        Route::post('/templates/from-report', [App\Http\Controllers\Api\TemplateController::class, 'createFromReport']);
+    });
+
 
     // Admin Review Reports routes (Head of Doctors - Final Approval)
     Route::middleware(['role:admin'])->group(function () {

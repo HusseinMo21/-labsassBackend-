@@ -3,7 +3,7 @@
         'name' => 'laravel/laravel',
         'pretty_version' => 'dev-main',
         'version' => 'dev-main',
-        'reference' => '52cd9d94235f0b4fffce9e4fde1c1820452a0104',
+        'reference' => 'b4771df8722f9d0c5666d55c87ca0eb7484fa731',
         'type' => 'project',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
@@ -415,6 +415,15 @@
                 0 => 'v11.45.1',
             ),
         ),
+        'kitloong/laravel-migrations-generator' => array(
+            'pretty_version' => 'v7.2.0',
+            'version' => '7.2.0.0',
+            'reference' => '37f29a99671a5dde3a598e40157e2e245f077878',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../kitloong/laravel-migrations-generator',
+            'aliases' => array(),
+            'dev_requirement' => true,
+        ),
         'knuckleswtf/scribe' => array(
             'pretty_version' => '5.2.1',
             'version' => '5.2.1.0',
@@ -442,7 +451,7 @@
         'laravel/laravel' => array(
             'pretty_version' => 'dev-main',
             'version' => 'dev-main',
-            'reference' => '52cd9d94235f0b4fffce9e4fde1c1820452a0104',
+            'reference' => 'b4771df8722f9d0c5666d55c87ca0eb7484fa731',
             'type' => 'project',
             'install_path' => __DIR__ . '/../../',
             'aliases' => array(),

@@ -31,12 +31,14 @@ class LabRequestController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = LabRequest::with(['patient', 'samples', 'report', 'invoice']);
+            $query = LabRequest::with(['patient', 'samples']);
 
-            // Search by lab number or full lab number
+            // Search by lab number, full lab number, or patient information
             if ($request->has('search') && !empty($request->search)) {
-                $search = $request->search;
-                $query->searchByLabNo($search);
+                $search = trim($request->search);
+                if (strlen($search) >= 2) { // Only search if at least 2 characters
+                    $query->searchByLabNo($search);
+                }
             }
 
             // Filter by status
@@ -57,13 +59,16 @@ class LabRequestController extends Controller
                 });
             }
 
-            $labRequests = $query->latest()->paginate(15);
+            // Order by ID descending (most recent first) and paginate
+            $perPage = $request->get('per_page', 15);
+            $labRequests = $query->orderBy('id', 'desc')->paginate($perPage);
 
             return response()->json($labRequests);
         } catch (\Exception $e) {
             Log::error('Error in LabRequestController@index', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all()
             ]);
 
             return response()->json([
@@ -79,7 +84,7 @@ class LabRequestController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'patient_id' => 'nullable|exists:patients,id',
+            'patient_id' => 'nullable|exists:patient,id',
             'samples' => 'required|array|min:1',
             'samples.*.tsample' => 'nullable|string|max:255',
             'samples.*.nsample' => 'nullable|string|max:255',
@@ -367,10 +372,9 @@ class LabRequestController extends Controller
                     'patient.doctor',
                     'patient.organization', 
                     'patient.visits.visitTests.labTest',
-                    'patient.visits.invoice.payments',
                     'samples',
                     'report',
-                    'invoice'
+                    'invoice.payments'
                 ])
                 ->first();
 
@@ -382,8 +386,7 @@ class LabRequestController extends Controller
 
             // Get all visits for this patient
             $visits = $patient->visits()->with([
-                'visitTests.labTest',
-                'invoice.payments'
+                'visitTests.labTest'
             ])->orderBy('visit_date', 'desc')->get();
 
             // Get all lab tests from all visits
@@ -404,22 +407,21 @@ class LabRequestController extends Controller
                 }
             }
 
-            // Get payment history
+            // Get payment history from lab request's invoice
             $paymentHistory = collect();
-            foreach ($visits as $visit) {
-                if ($visit->invoice) {
-                    $paymentHistory->push([
-                        'visit_id' => $visit->id,
-                        'visit_date' => $visit->visit_date,
-                        'invoice_number' => $visit->invoice->invoice_number,
-                        'total_amount' => $visit->invoice->total_amount,
-                        'amount_paid' => $visit->invoice->amount_paid,
-                        'balance' => $visit->invoice->balance,
-                        'status' => $visit->invoice->status,
-                        'payment_method' => $visit->invoice->payment_method,
-                        'created_at' => $visit->invoice->created_at,
-                    ]);
-                }
+            if ($labRequest->invoice) {
+                $invoice = $labRequest->invoice;
+                $paymentHistory->push([
+                    'visit_id' => $visits->first() ? $visits->first()->id : null,
+                    'visit_date' => $visits->first() ? $visits->first()->visit_date : null,
+                    'invoice_number' => $invoice->lab, // Using lab number as invoice number
+                    'total_amount' => $invoice->total,
+                    'amount_paid' => $invoice->paid,
+                    'balance' => $invoice->remaining,
+                    'status' => $invoice->remaining > 0 ? 'partial' : 'paid',
+                    'payment_method' => 'cash', // Default method
+                    'created_at' => $visits->first() ? $visits->first()->created_at : now(),
+                ]);
             }
 
             // Get reports
@@ -441,7 +443,7 @@ class LabRequestController extends Controller
                     'id' => $patient->id,
                     'name' => $patient->name,
                     'gender' => $patient->gender,
-                    'birth_date' => $patient->birth_date,
+                    'birth_date' => $patient->age ? now()->subYears($patient->age)->format('Y-m-d') : null,
                     'age' => $patient->age,
                     'phone' => $patient->phone,
                     'whatsapp_number' => $patient->whatsapp_number,
@@ -469,9 +471,9 @@ class LabRequestController extends Controller
                 'samples' => $labRequest->samples->map(function($sample) {
                     return [
                         'id' => $sample->id,
-                        'tsample' => $sample->tsample,
-                        'nsample' => $sample->nsample,
-                        'isample' => $sample->isample,
+                        'tsample' => $sample->sample_type, // Map sample_type to tsample
+                        'nsample' => $sample->sample_id,   // Map sample_id to nsample
+                        'isample' => $sample->notes,       // Map notes to isample
                         'notes' => $sample->notes,
                         'created_at' => $sample->created_at,
                     ];

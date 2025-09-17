@@ -8,19 +8,23 @@ use Illuminate\Database\Eloquent\Model;
 class Payment extends Model
 {
     use HasFactory;
+    
+    public $timestamps = false;
 
     protected $fillable = [
+        'paid',
+        'comment',
+        'date',
+        'author',
+        'income',
         'invoice_id',
-        'amount',
-        'payment_method',
-        'paid_at',
-        'created_by',
-        'notes',
     ];
 
     protected $casts = [
-        'amount' => 'decimal:2',
-        'paid_at' => 'datetime',
+        'paid' => 'integer',
+        'date' => 'date',
+        'author' => 'integer',
+        'income' => 'integer',
     ];
 
     public function invoice()

@@ -8,27 +8,23 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Expense extends Model
 {
     protected $fillable = [
-        'description',
+        'name',
         'amount',
-        'category',
-        'expense_date',
-        'payment_method',
-        'reference_number',
-        'notes',
-        'created_by',
+        'date',
+        'author',
     ];
 
     protected $casts = [
-        'expense_date' => 'date',
+        'date' => 'date',
         'amount' => 'decimal:2',
     ];
 
     /**
      * Get the user who created the expense
      */
-    public function createdBy(): BelongsTo
+    public function author(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'created_by');
+        return $this->belongsTo(User::class, 'author');
     }
 
     /**
@@ -36,14 +32,14 @@ class Expense extends Model
      */
     public function scopeDateRange($query, $startDate, $endDate)
     {
-        return $query->whereBetween('expense_date', [$startDate, $endDate]);
+        return $query->whereBetween('date', [$startDate, $endDate]);
     }
 
     /**
-     * Scope to filter by category
+     * Scope to filter by author
      */
-    public function scopeByCategory($query, $category)
+    public function scopeByAuthor($query, $authorId)
     {
-        return $query->where('category', $category);
+        return $query->where('author', $authorId);
     }
 }

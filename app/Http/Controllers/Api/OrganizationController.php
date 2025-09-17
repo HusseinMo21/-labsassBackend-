@@ -87,10 +87,10 @@ class OrganizationController extends Controller
     {
         $patients = $organization->patients()
             ->with(['visits' => function ($q) {
-                $q->latest()->take(5);
+                $q->orderBy('id', 'desc')->take(5);
             }])
             ->withCount('visits')
-            ->latest()
+            ->orderBy('id', 'desc')
             ->get();
 
         return response()->json([

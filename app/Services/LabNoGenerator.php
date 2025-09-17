@@ -24,8 +24,8 @@ class LabNoGenerator
                 // Get next sequence number with row-level locking
                 $sequence = LabSequence::getNextSequence($year);
                 
-                // Format the base lab number
-                $baseLabNo = sprintf('%d-%d', $year, $sequence);
+                // Format the base lab number (sequence-year format to match existing data)
+                $baseLabNo = sprintf('%d-%d', $sequence, $year);
                 
                 // Create full lab number with suffix
                 $fullLabNo = $baseLabNo . ($suffix ?: '');
@@ -88,11 +88,11 @@ class LabNoGenerator
             $suffix = $matches[2];
         }
         
-        // Parse year and sequence
-        if (preg_match('/^(\d{4})-(\d+)$/', $labNo, $matches)) {
+        // Parse sequence and year (sequence-year format)
+        if (preg_match('/^(\d+)-(\d{4})$/', $labNo, $matches)) {
             return [
-                'year' => (int) $matches[1],
-                'sequence' => (int) $matches[2],
+                'sequence' => (int) $matches[1],
+                'year' => (int) $matches[2],
                 'base' => $labNo,
                 'suffix' => $suffix,
                 'full' => $labNo . $suffix

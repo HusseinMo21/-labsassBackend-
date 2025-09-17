@@ -5,55 +5,53 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Expense;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 
 class ExpenseController extends Controller
 {
     /**
-     * Display a listing of the resource.
+     * Display a listing of expenses
      */
     public function index(Request $request)
     {
-        $query = Expense::with('createdBy');
+        $query = Expense::with('author');
 
-        if ($request->has('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('description', 'like', "%{$search}%")
-                  ->orWhere('category', 'like', "%{$search}%");
+        // Search functionality
+        if ($request->has('search') && !empty($request->search)) {
+            $searchTerm = $request->search;
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('name', 'like', "%{$searchTerm}%")
+                  ->orWhere('amount', 'like', "%{$searchTerm}%")
+                  ->orWhereHas('author', function ($authorQuery) use ($searchTerm) {
+                      $authorQuery->where('name', 'like', "%{$searchTerm}%");
+                  });
             });
         }
 
-        if ($request->has('category')) {
-            $query->where('category', $request->category);
+        // Date range filter
+        if ($request->has('start_date') && !empty($request->start_date)) {
+            $query->where('date', '>=', $request->start_date);
         }
 
-        if ($request->has('date_from')) {
-            $query->whereDate('expense_date', '>=', $request->date_from);
+        if ($request->has('end_date') && !empty($request->end_date)) {
+            $query->where('date', '<=', $request->end_date);
         }
 
-        if ($request->has('date_to')) {
-            $query->whereDate('expense_date', '<=', $request->date_to);
-        }
-
-        $expenses = $query->latest()->paginate(15);
+        $expenses = $query->orderBy('date', 'desc')->paginate(15);
 
         return response()->json($expenses);
     }
 
     /**
-     * Store a newly created resource in storage.
+     * Store a newly created expense
      */
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'description' => 'required|string|max:255',
+            'name' => 'required|string|max:255',
             'amount' => 'required|numeric|min:0',
-            'category' => 'required|string|max:100',
-            'expense_date' => 'required|date',
-            'payment_method' => 'nullable|string|max:50',
-            'reference_number' => 'nullable|string|max:100',
-            'notes' => 'nullable|string',
+            'date' => 'required|date',
         ]);
 
         if ($validator->fails()) {
@@ -63,39 +61,39 @@ class ExpenseController extends Controller
             ], 422);
         }
 
-        $data = $validator->validated();
-        $data['created_by'] = $request->user()->id;
-
-        $expense = Expense::create($data);
+        $expense = Expense::create([
+            'name' => $request->name,
+            'amount' => $request->amount,
+            'date' => $request->date,
+            'author' => Auth::id(),
+        ]);
 
         return response()->json([
             'message' => 'Expense created successfully',
-            'expense' => $expense->load('createdBy'),
+            'expense' => $expense->load('author'),
         ], 201);
     }
 
     /**
-     * Display the specified resource.
+     * Display the specified expense
      */
-    public function show(Expense $expense)
+    public function show($id)
     {
-        $expense->load('createdBy');
+        $expense = Expense::with('author')->findOrFail($id);
         return response()->json($expense);
     }
 
     /**
-     * Update the specified resource in storage.
+     * Update the specified expense
      */
-    public function update(Request $request, Expense $expense)
+    public function update(Request $request, $id)
     {
+        $expense = Expense::findOrFail($id);
+
         $validator = Validator::make($request->all(), [
-            'description' => 'required|string|max:255',
+            'name' => 'required|string|max:255',
             'amount' => 'required|numeric|min:0',
-            'category' => 'required|string|max:100',
-            'expense_date' => 'required|date',
-            'payment_method' => 'nullable|string|max:50',
-            'reference_number' => 'nullable|string|max:100',
-            'notes' => 'nullable|string',
+            'date' => 'required|date',
         ]);
 
         if ($validator->fails()) {
@@ -105,19 +103,24 @@ class ExpenseController extends Controller
             ], 422);
         }
 
-        $expense->update($validator->validated());
+        $expense->update([
+            'name' => $request->name,
+            'amount' => $request->amount,
+            'date' => $request->date,
+        ]);
 
         return response()->json([
             'message' => 'Expense updated successfully',
-            'expense' => $expense->fresh()->load('createdBy'),
+            'expense' => $expense->load('author'),
         ]);
     }
 
     /**
-     * Remove the specified resource from storage.
+     * Remove the specified expense
      */
-    public function destroy(Expense $expense)
+    public function destroy($id)
     {
+        $expense = Expense::findOrFail($id);
         $expense->delete();
 
         return response()->json([
@@ -126,41 +129,20 @@ class ExpenseController extends Controller
     }
 
     /**
-     * Get expense statistics for dashboard
+     * Get expense statistics
      */
-    public function getStats(Request $request)
+    public function stats()
     {
-        $startDate = $request->get('start_date', now()->startOfMonth());
-        $endDate = $request->get('end_date', now()->endOfMonth());
-
         $stats = [
-            'total_expenses' => Expense::whereBetween('expense_date', [$startDate, $endDate])->sum('amount'),
-            'expense_count' => Expense::whereBetween('expense_date', [$startDate, $endDate])->count(),
-            'average_expense' => Expense::whereBetween('expense_date', [$startDate, $endDate])->avg('amount'),
-            'by_category' => Expense::whereBetween('expense_date', [$startDate, $endDate])
-                ->selectRaw('category, COUNT(*) as count, SUM(amount) as total')
-                ->groupBy('category')
-                ->get(),
-            'daily_expenses' => Expense::whereBetween('expense_date', [$startDate, $endDate])
-                ->selectRaw('DATE(expense_date) as date, SUM(amount) as total, COUNT(*) as count')
-                ->groupBy('date')
-                ->orderBy('date')
-                ->get(),
+            'total_expenses' => Expense::count(),
+            'total_amount' => Expense::sum('amount'),
+            'this_month' => Expense::whereMonth('date', now()->month)
+                ->whereYear('date', now()->year)
+                ->sum('amount'),
+            'this_year' => Expense::whereYear('date', now()->year)
+                ->sum('amount'),
         ];
 
         return response()->json($stats);
-    }
-
-    /**
-     * Get expense categories
-     */
-    public function getCategories()
-    {
-        $categories = Expense::select('category')
-            ->distinct()
-            ->whereNotNull('category')
-            ->pluck('category');
-
-        return response()->json($categories);
     }
 }

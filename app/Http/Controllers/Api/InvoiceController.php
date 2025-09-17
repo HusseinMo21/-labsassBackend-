@@ -55,34 +55,79 @@ class InvoiceController extends Controller
     // List all invoices (paginated)
     public function index(Request $request)
     {
-        $query = Invoice::with(['visit.patient', 'visit.labRequest', 'labRequest', 'payments']);
+        $query = Invoice::with(['labRequest.patient', 'payments']);
         
         // Search functionality
         if ($request->has('search') && !empty($request->search)) {
             $searchTerm = $request->search;
             $query->where(function ($q) use ($searchTerm) {
-                $q->where('invoice_number', 'like', "%{$searchTerm}%")
-                  ->orWhereHas('visit', function ($visitQuery) use ($searchTerm) {
-                      $visitQuery->where('visit_number', 'like', "%{$searchTerm}%")
-                                ->orWhereHas('patient', function ($patientQuery) use ($searchTerm) {
-                                    $patientQuery->where('name', 'like', "%{$searchTerm}%")
-                                                ->orWhere('phone', 'like', "%{$searchTerm}%");
-                                });
-                  })
+                $q->where('lab', 'like', "%{$searchTerm}%")
                   ->orWhereHas('labRequest', function ($labQuery) use ($searchTerm) {
                       $labQuery->where('lab_no', 'like', "%{$searchTerm}%");
                   });
             });
         }
         
-        $invoices = $query->orderBy('created_at', 'desc')->paginate(15);
-        return response()->json($invoices);
+        $invoices = $query->orderBy('id', 'desc')->paginate(15);
+        
+        // Transform the data to match frontend expectations
+        $transformedData = $invoices->through(function ($invoice) {
+            return [
+                'id' => $invoice->id,
+                'invoice_number' => $invoice->lab ?? 'N/A', // Use lab as invoice number
+                'invoice_date' => $invoice->created_at ? $invoice->created_at->format('Y-m-d H:i:s') : 'N/A',
+                'lab_number' => $invoice->lab ?? 'N/A',
+                'total_amount' => (float) ($invoice->total ?? 0),
+                'discount_amount' => 0,
+                'tax_amount' => 0,
+                'amount_paid' => (float) ($invoice->paid ?? 0),
+                'balance' => (float) ($invoice->remaining ?? 0),
+                'status' => $this->getInvoiceStatus($invoice),
+                'notes' => null,
+                'created_at' => $invoice->created_at ? $invoice->created_at->format('Y-m-d H:i:s') : 'N/A',
+                'visit' => [
+                    'id' => $invoice->labRequest->patient->id ?? 0,
+                    'visit_number' => $invoice->labRequest->patient->id ?? 'N/A',
+                    'patient' => [
+                        'id' => $invoice->labRequest->patient->id ?? 0,
+                        'name' => $invoice->labRequest->patient->name ?? 'N/A',
+                        'phone' => $invoice->labRequest->patient->phone ?? 'N/A',
+                    ],
+                ],
+                'payments' => $invoice->payments ? $invoice->payments->map(function ($payment) {
+                    return [
+                        'id' => $payment->id,
+                        'amount' => (float) $payment->paid,
+                        'payment_method' => 'cash', // Default since payments table doesn't have payment_method
+                        'paid_at' => $payment->date ? $payment->date->format('Y-m-d H:i:s') : 'N/A',
+                        'notes' => $payment->comment ?? null,
+                    ];
+                })->toArray() : [],
+            ];
+        });
+        
+        return response()->json($transformedData);
+    }
+    
+    // Helper method to determine invoice status
+    private function getInvoiceStatus($invoice)
+    {
+        $total = (float) ($invoice->total ?? 0);
+        $paid = (float) ($invoice->paid ?? 0);
+        
+        if ($paid == 0) {
+            return 'unpaid';
+        } elseif ($paid >= $total) {
+            return 'paid';
+        } else {
+            return 'partial';
+        }
     }
 
     // Get a single invoice
     public function show($id)
     {
-        $invoice = Invoice::with(['visit.patient', 'visit.visitTests.labTest', 'visit.labRequest', 'labRequest', 'payments'])
+        $invoice = Invoice::with(['labRequest.patient', 'payments'])
             ->findOrFail($id);
         return response()->json($invoice);
     }
@@ -100,37 +145,19 @@ class InvoiceController extends Controller
             $invoice = Invoice::findOrFail($invoiceId);
             $payment = Payment::create([
                 'invoice_id' => $invoiceId,
-                'amount' => $request->amount,
-                'payment_method' => $request->payment_method,
-                'paid_at' => now(),
-                'notes' => $request->notes,
-                'created_by' => null,
-            ]);
-            // Recalculate amount_paid and balance (sum all payments only)
-            $amountPaid = $invoice->payments()->sum('amount');
-            $total = $invoice->total_amount;
-            $balance = max(0, $total - $amountPaid);
-            // Determine status
-            $status = 'unpaid';
-            if ($amountPaid >= $total && $total > 0) {
-                $status = 'paid';
-            } elseif ($amountPaid > 0 && $amountPaid < $total) {
-                $status = 'partial';
-            }
-            $invoice->update([
-                'amount_paid' => $amountPaid,
-                'balance' => $balance,
-                'status' => $status,
+                'paid' => $request->amount,
+                'comment' => $request->notes,
+                'date' => now()->toDateString(),
+                'author' => auth()->id() ?? 1, // Default to user ID 1 if not authenticated
+                'income' => 1,
             ]);
             
-            // Update the visit's billing status and remaining balance
-            $visit = $invoice->visit;
-            if ($visit) {
-                $visit->update([
-                    'remaining_balance' => $balance,
-                    'billing_status' => $status === 'paid' ? 'paid' : 'partial',
-                ]);
-            }
+            // Update invoice totals
+            $invoice->paid += $request->amount;
+            $invoice->remaining = max(0, $invoice->total - $invoice->paid);
+            $invoice->save();
+            
+            // Note: Visit relationship is disabled, so we can't update visit billing status
             
             DB::commit();
             return response()->json([
@@ -209,7 +236,7 @@ class InvoiceController extends Controller
     // Download invoice as PDF
     public function downloadInvoicePdf($id)
     {
-        $invoice = Invoice::with(['visit.patient.credentials', 'payments'])->findOrFail($id);
+        $invoice = Invoice::with(['labRequest.patient.credentials', 'payments'])->findOrFail($id);
         
         // Configure MPDF for Arabic support
         $mpdf = new \Mpdf\Mpdf([

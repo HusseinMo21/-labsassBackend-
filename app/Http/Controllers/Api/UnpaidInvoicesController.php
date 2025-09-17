@@ -17,12 +17,11 @@ class UnpaidInvoicesController extends Controller
         $query = $request->get('query', '');
         $status = $request->get('status', 'all'); // all, pending, partial, paid
         
-        $invoices = Invoice::with(['visit.patient'])
-            ->whereHas('visit.patient', function ($q) use ($query) {
+        $invoices = Invoice::with(['labRequest.patient'])
+            ->whereHas('labRequest.patient', function ($q) use ($query) {
                 if ($query) {
                     $q->where('name', 'like', "%{$query}%")
-                      ->orWhere('phone', 'like', "%{$query}%")
-                      ->orWhere('email', 'like', "%{$query}%");
+                      ->orWhere('phone', 'like', "%{$query}%");
                 }
             });
 
@@ -30,22 +29,51 @@ class UnpaidInvoicesController extends Controller
         if ($status !== 'all') {
             switch ($status) {
                 case 'pending':
-                    $invoices->where('amount_paid', 0);
+                    $invoices->where('paid', 0);
                     break;
                 case 'partial':
-                    $invoices->where('amount_paid', '>', 0)
-                             ->whereRaw('amount_paid < total_amount');
+                    $invoices->where('paid', '>', 0)
+                             ->whereRaw('paid < total');
                     break;
                 case 'paid':
-                    $invoices->whereRaw('amount_paid >= total_amount');
+                    $invoices->whereRaw('paid >= total');
                     break;
             }
         }
 
-        $invoices = $invoices->orderBy('created_at', 'desc')
+        $invoices = $invoices->orderBy('id', 'desc')
                             ->paginate(15);
 
-        return response()->json($invoices);
+        // Transform the data to match frontend expectations
+        $transformedData = $invoices->through(function ($invoice) {
+            // Find the actual visit ID for this patient
+            $visitId = null;
+            if ($invoice->labRequest && $invoice->labRequest->patient) {
+                $visit = \App\Models\Visit::where('patient_id', $invoice->labRequest->patient->id)
+                    ->orderBy('id', 'desc')
+                    ->first();
+                $visitId = $visit ? $visit->id : null;
+            }
+            
+            return [
+                'id' => $invoice->id,
+                'invoice_number' => $invoice->lab, // Map lab to invoice_number
+                'total_amount' => $invoice->total,
+                'amount_paid' => $invoice->paid,
+                'remaining_balance' => $invoice->remaining,
+                'visit' => $invoice->labRequest ? [
+                    'id' => $visitId, // Use actual visit ID instead of lab request ID
+                    'visit_date' => $invoice->labRequest->created_at ? $invoice->labRequest->created_at->format('Y-m-d') : null,
+                    'patient' => $invoice->labRequest->patient ? [
+                        'id' => $invoice->labRequest->patient->id,
+                        'name' => $invoice->labRequest->patient->name,
+                        'phone' => $invoice->labRequest->patient->phone,
+                    ] : null,
+                ] : null,
+            ];
+        });
+
+        return response()->json($transformedData);
     }
 
     public function getPatientBalance($patientId)
@@ -123,26 +151,31 @@ class UnpaidInvoicesController extends Controller
         try {
             $invoice->addPayment($request->amount, $request->payment_method, $request->notes);
             
-            // Update the visit's billing status and remaining balance
-            $visit = $invoice->visit;
-            if ($visit) {
-                $visit->update([
-                    'remaining_balance' => $invoice->remaining_balance,
-                    'billing_status' => $invoice->isFullyPaid() ? 'paid' : 'partial',
-                ]);
-            }
+            // Note: Visit relationship is disabled, so we can't update visit billing status
+            // $visit = $invoice->visit;
+            // if ($visit) {
+            //     $visit->update([
+            //         'remaining_balance' => $invoice->remaining_balance,
+            //         'billing_status' => $invoice->isFullyPaid() ? 'paid' : 'partial',
+            //     ]);
+            // }
             
             DB::commit();
 
             return response()->json([
                 'message' => 'Payment added successfully',
-                'invoice' => $invoice->load(['visit.patient', 'payments']),
+                'invoice' => $invoice->load(['labRequest.patient', 'payments']),
                 'remaining_balance' => $invoice->remaining_balance,
                 'is_fully_paid' => $invoice->isFullyPaid(),
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
+            Log::error('Failed to add payment', [
+                'invoice_id' => $invoiceId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
             return response()->json([
                 'message' => 'Failed to add payment',
                 'error' => $e->getMessage(),
@@ -155,12 +188,12 @@ class UnpaidInvoicesController extends Controller
         $summary = DB::table('invoices')
             ->selectRaw('
                 COUNT(*) as total_invoices,
-                SUM(total_amount) as total_invoiced,
-                SUM(amount_paid) as total_paid,
-                SUM(total_amount - amount_paid) as total_remaining,
-                COUNT(CASE WHEN amount_paid = 0 THEN 1 END) as pending_count,
-                COUNT(CASE WHEN amount_paid > 0 AND amount_paid < total_amount THEN 1 END) as partial_count,
-                COUNT(CASE WHEN amount_paid >= total_amount THEN 1 END) as paid_count
+                SUM(total) as total_invoiced,
+                SUM(paid) as total_paid,
+                SUM(remaining) as total_remaining,
+                COUNT(CASE WHEN paid = 0 THEN 1 END) as pending_count,
+                COUNT(CASE WHEN paid > 0 AND paid < total THEN 1 END) as partial_count,
+                COUNT(CASE WHEN paid >= total THEN 1 END) as paid_count
             ')
             ->first();
 
@@ -171,13 +204,13 @@ class UnpaidInvoicesController extends Controller
     {
         $patient = Patient::findOrFail($patientId);
         
-        $totalRemaining = Invoice::with(['visit'])
-            ->whereHas('visit', function ($q) use ($patientId) {
-                $q->where('patient_id', $patientId);
+        $totalRemaining = Invoice::with(['labRequest.patient'])
+            ->whereHas('labRequest.patient', function ($q) use ($patientId) {
+                $q->where('id', $patientId);
             })
             ->get()
             ->sum(function ($invoice) {
-                return $invoice->remaining_balance;
+                return $invoice->remaining;
             });
 
         $hasUnpaidBalance = $totalRemaining > 0;
@@ -195,22 +228,35 @@ class UnpaidInvoicesController extends Controller
         ]);
     }
 
-    public function getFinalPaymentReceiptData($invoiceId)
+    public function getFinalPaymentReceiptData(Request $request, $invoiceId)
     {
         try {
-            $invoice = Invoice::with(['visit.patient', 'visit.visitTests.labTest', 'visit.labRequest', 'payments'])
+            $invoice = Invoice::with(['labRequest.patient', 'payments'])
                 ->findOrFail($invoiceId);
         
-        $visit = $invoice->visit;
-        $patient = $visit->patient;
+        $patient = $invoice->labRequest ? $invoice->labRequest->patient : null;
+        
+        // Get the visit data to retrieve expected delivery date
+        $visit = null;
+        if ($invoice->labRequest) {
+            $visit = \App\Models\Visit::where('lab_request_id', $invoice->lab_request_id)
+                ->orderBy('id', 'desc')
+                ->first();
+        }
+        
+        if (!$patient) {
+            return response()->json([
+                'message' => 'Patient not found for this invoice',
+            ], 404);
+        }
         
         // Get the last payment (the final payment)
-        $lastPayment = $invoice->payments()->latest()->first();
+        $lastPayment = $invoice->payments()->orderBy('id', 'desc')->first();
         
         // Calculate payment breakdown
-        $totalPaid = $invoice->amount_paid;
-        $paidBefore = $totalPaid - ($lastPayment ? $lastPayment->amount : 0);
-        $paidNow = $lastPayment ? $lastPayment->amount : 0;
+        $totalPaid = $invoice->paid;
+        $paidBefore = $totalPaid - ($lastPayment ? $lastPayment->paid : 0);
+        $paidNow = $lastPayment ? $lastPayment->paid : 0;
         
         // Get patient credentials
         $credentials = $patient->getPortalCredentials() ?? [
@@ -218,28 +264,31 @@ class UnpaidInvoicesController extends Controller
             'password' => 'N/A'
         ];
         
+        // Get the user who processed the payment (author of the last payment)
+        $processedBy = null;
+        if ($lastPayment && $lastPayment->author) {
+            $user = \App\Models\User::find($lastPayment->author);
+            $processedBy = $user ? $user->name : 'Unknown';
+        }
+        
         return response()->json([
-            'receipt_number' => $visit->receipt_number,
-            'date' => $visit->visit_date,
+            'receipt_number' => $invoice->lab, // Use lab number as receipt number
+            'date' => $invoice->labRequest ? $invoice->labRequest->created_at->format('Y-m-d') : now()->format('Y-m-d'),
             'patient_name' => $patient->name,
             'patient_age' => $patient->age,
             'patient_phone' => $patient->phone,
-            'tests' => $visit->visitTests->map(function($test) {
-                return [
-                    'name' => $test->labTest ? $test->labTest->name : ($test->custom_test_name ?? 'Unknown Test'),
-                    'price' => $test->price ?? $test->custom_price ?? 0
-                ];
-            }),
-            'total_amount' => $invoice->total_amount,
-            'discount_amount' => $invoice->discount_amount,
-            'final_amount' => $invoice->total_amount - $invoice->discount_amount,
-            'upfront_payment' => $paidBefore,
-            'remaining_balance' => $paidNow,
-            'payment_method' => $lastPayment ? $lastPayment->payment_method : 'cash',
-            'expected_delivery_date' => $visit->expected_delivery_date,
-            'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : 'N/A',
-            'check_in_by' => $visit->check_in_by,
-            'visit_id' => $visit->visit_number,
+            'tests' => [], // No visit tests available without visit relationship
+            'total_amount' => $invoice->total,
+            'discount_amount' => 0, // No discount in original table
+            'final_amount' => $invoice->total,
+            'paid_before' => $paidBefore,
+            'paid_now' => $paidNow,
+            'remaining_balance' => $invoice->remaining,
+            'payment_method' => 'cash', // Default since payments table doesn't have payment_method field
+            'expected_delivery_date' => $visit ? $visit->expected_delivery_date : null,
+            'lab_number' => $invoice->labRequest ? $invoice->labRequest->full_lab_no : 'N/A',
+            'processed_by' => $processedBy,
+            'visit_id' => $invoice->labRequest ? $invoice->labRequest->id : null,
             'patient_credentials' => $credentials,
         ]);
         } catch (\Exception $e) {

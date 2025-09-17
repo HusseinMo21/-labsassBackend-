@@ -9,36 +9,41 @@ class Patient extends Model
 {
     use HasFactory;
 
+    protected $table = 'patient';
+    public $timestamps = false;
+
     protected $fillable = [
         'name',
         'gender',
-        'birth_date',
+        'age',
         'phone',
         'whatsapp_number',
-        'email',
         'address',
-        'national_id',
-        'insurance_provider',
-        'insurance_number',
-        'has_insurance',
-        'insurance_coverage',
-        'billing_address',
-        'emergency_contact',
-        'emergency_phone',
-        'emergency_relationship',
-        'medical_history',
-        'allergies',
-        'username',
-        'password',
-        'user_id',
+        'entry',
+        'deli',
+        'time',
+        'tsample',
+        'nsample',
+        'isample',
+        'paid',
+        'had',
+        'sender',
+        'pleft',
+        'total',
+        'lab',
+        'entryday',
+        'deliday',
+        'type',
         'doctor_id',
         'organization_id',
+        'organization', // For form handling (not stored in DB)
     ];
 
     protected $casts = [
-        'birth_date' => 'date',
-        'has_insurance' => 'boolean',
-        'insurance_coverage' => 'decimal:2',
+        'age' => 'integer',
+        'paid' => 'integer',
+        'pleft' => 'integer',
+        'total' => 'integer',
     ];
 
     public function visits()
@@ -48,7 +53,7 @@ class Patient extends Model
 
     public function invoices()
     {
-        return $this->hasManyThrough(Invoice::class, Visit::class);
+        return $this->hasManyThrough(Invoice::class, LabRequest::class, 'patient_id', 'lab_request_id');
     }
 
     public function user()
@@ -116,7 +121,28 @@ class Patient extends Model
 
     public function getAgeAttribute()
     {
-        return $this->birth_date->age;
+        if (isset($this->attributes['age']) && $this->attributes['age']) {
+            return $this->attributes['age'];
+        }
+        
+        if ($this->birth_date) {
+            return \Carbon\Carbon::parse($this->birth_date)->age;
+        }
+        
+        return null;
+    }
+
+    public function getBirthDateAttribute()
+    {
+        if (isset($this->attributes['birth_date']) && $this->attributes['birth_date']) {
+            return $this->attributes['birth_date'];
+        }
+        
+        if (isset($this->attributes['age']) && $this->attributes['age']) {
+            return now()->subYears($this->attributes['age'])->format('Y-m-d');
+        }
+        
+        return null;
     }
 
     public function getLatestVisitAttribute()
@@ -156,5 +182,30 @@ class Patient extends Model
     public function getBillingAddressAttribute($value)
     {
         return $value ?: $this->address;
+    }
+
+    /**
+     * Get the doctor name from the sender field
+     */
+    public function getDoctorNameAttribute()
+    {
+        return $this->sender ?: 'N/A';
+    }
+
+    /**
+     * Get the doctor name for display purposes
+     */
+    public function getDoctorDisplayNameAttribute()
+    {
+        if ($this->sender) {
+            return $this->sender;
+        }
+        
+        // Fallback to doctor relationship if available
+        if ($this->doctor) {
+            return $this->doctor->name;
+        }
+        
+        return 'N/A';
     }
 } 

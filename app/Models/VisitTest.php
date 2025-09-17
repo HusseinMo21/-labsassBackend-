@@ -51,7 +51,7 @@ class VisitTest extends Model
 
     public function testCategory()
     {
-        return $this->belongsTo(TestCategory::class);
+        return $this->hasOneThrough(TestCategory::class, LabTest::class, 'id', 'id', 'lab_test_id', 'category_id');
     }
 
     public function performedBy()
@@ -147,6 +147,6 @@ class VisitTest extends Model
      */
     public function getCategoryNameAttribute()
     {
-        return $this->testCategory ? $this->testCategory->name : 'Unknown';
+        return $this->labTest && $this->labTest->category ? $this->labTest->category->name : 'Unknown';
     }
 } 

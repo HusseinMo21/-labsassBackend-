@@ -14,12 +14,26 @@ class CheckRole
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        $userRole = $request->user()->role;
+        $userRole = $this->mapRole($request->user()->role);
         
         if (!in_array($userRole, $roles)) {
             return response()->json(['message' => 'Access denied'], 403);
         }
 
         return $next($request);
+    }
+
+    /**
+     * Map old role values to new role values for frontend compatibility
+     */
+    private function mapRole($role)
+    {
+        $roleMapping = [
+            'admin' => 'admin',
+            'lab_tech' => 'staff',
+            'accountant' => 'staff',
+            'patient' => 'patient',
+        ];
+        return $roleMapping[$role] ?? 'staff';
     }
 } 

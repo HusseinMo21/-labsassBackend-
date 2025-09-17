@@ -20,7 +20,7 @@ class DoctorController extends Controller
         }
 
         $doctors = $query->withCount('patients')
-            ->latest()
+            ->orderBy('id', 'desc')
             ->paginate(15);
 
         return response()->json($doctors);
@@ -87,10 +87,10 @@ class DoctorController extends Controller
     {
         $patients = $doctor->patients()
             ->with(['visits' => function ($q) {
-                $q->latest()->take(5);
+                $q->orderBy('id', 'desc')->take(5);
             }])
             ->withCount('visits')
-            ->latest()
+            ->orderBy('id', 'desc')
             ->get();
 
         return response()->json([

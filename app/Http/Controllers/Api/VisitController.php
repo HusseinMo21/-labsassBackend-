@@ -15,19 +15,21 @@ class VisitController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Visit::with(['patient', 'visitTests.labTest', 'invoice', 'labRequest']);
+        $query = Visit::with(['patient', 'visitTests.labTest', 'labRequest']);
         
         // Filter to only include visits with receipts if requested
-        if ($request->has('include_receipts') && $request->include_receipts === 'true') {
-            $query->whereNotNull('receipt_number');
-        }
+        // Note: receipt_number column doesn't exist in original visits table
+        // if ($request->has('include_receipts') && $request->include_receipts === 'true') {
+        //     $query->whereNotNull('receipt_number');
+        // }
         
         // Search functionality
         if ($request->has('search') && !empty($request->search)) {
             $searchTerm = $request->search;
             $query->where(function ($q) use ($searchTerm) {
-                $q->where('receipt_number', 'like', "%{$searchTerm}%")
-                  ->orWhere('visit_number', 'like', "%{$searchTerm}%")
+                // Note: receipt_number column doesn't exist in original visits table
+                // $q->where('receipt_number', 'like', "%{$searchTerm}%")
+                $q->where('visit_number', 'like', "%{$searchTerm}%")
                   ->orWhereHas('patient', function ($patientQuery) use ($searchTerm) {
                       $patientQuery->where('name', 'like', "%{$searchTerm}%")
                                   ->orWhere('phone', 'like', "%{$searchTerm}%")
@@ -53,13 +55,14 @@ class VisitController extends Controller
         }
         
         // Filter by sample completion status if provided
-        if ($request->has('sample_completed') && $request->sample_completed === 'true') {
-            $query->whereHas('visitTests.sampleTracking', function ($q) {
-                $q->where('status', 'completed');
-            })->whereDoesntHave('visitTests.sampleTracking', function ($q) {
-                $q->where('status', '!=', 'completed');
-            });
-        }
+        // Note: sample_tracking table doesn't exist, so this filter is disabled
+        // if ($request->has('sample_completed') && $request->sample_completed === 'true') {
+        //     $query->whereHas('visitTests.sampleTracking', function ($q) {
+        //         $q->where('status', 'completed');
+        //     })->whereDoesntHave('visitTests.sampleTracking', function ($q) {
+        //         $q->where('status', '!=', 'completed');
+        //     });
+        // }
         
         // Filter by date range if provided
         if ($request->has('start_date')) {
@@ -72,9 +75,26 @@ class VisitController extends Controller
         
         // Pagination
         $perPage = $request->get('per_page', 15);
-        $visits = $query->orderBy('created_at', 'desc')->paginate($perPage);
+        $visits = $query->orderBy('id', 'desc')->paginate($perPage);
         
-        return response()->json($visits);
+        // Transform the data to add receipt_number field and financial data for frontend compatibility
+        $transformedData = $visits->through(function ($visit) {
+            // Get the related invoice for financial data
+            $invoice = null;
+            if ($visit->labRequest) {
+                $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->lab_no)->first();
+            }
+            
+            return [
+                ...$visit->toArray(),
+                'receipt_number' => $visit->visit_number, // Use visit_number as receipt_number
+                'upfront_payment' => $invoice ? $invoice->paid : ($visit->upfront_payment ?: 0),
+                'remaining_balance' => $invoice ? $invoice->remaining : ($visit->remaining_balance ?: 0),
+                'billing_status' => $this->getBillingStatus($invoice, $visit),
+            ];
+        });
+        
+        return response()->json($transformedData);
     }
 
     public function store(Request $request)
@@ -84,7 +104,7 @@ class VisitController extends Controller
 
     public function show($id)
     {
-        $visit = Visit::with(['patient', 'visitTests.labTest', 'invoice.payments', 'labRequest'])
+        $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest'])
             ->findOrFail($id);
         
         return response()->json($visit);
@@ -143,11 +163,9 @@ class VisitController extends Controller
 
         $patients = Patient::where('name', 'LIKE', "%{$query}%")
             ->orWhere('phone', 'LIKE', "%{$query}%")
-            ->orWhere('email', 'LIKE', "%{$query}%")
-            ->orWhere('national_id', 'LIKE', "%{$query}%")
-            ->orWhere('username', 'LIKE', "%{$query}%")
+            ->orWhere('sender', 'LIKE', "%{$query}%")
             ->limit(10)
-            ->get(['id', 'name', 'phone', 'email', 'birth_date']);
+            ->get(['id', 'name', 'phone', 'age', 'gender', 'sender']);
 
         return response()->json(['patients' => $patients]);
     }
@@ -162,7 +180,7 @@ class VisitController extends Controller
     {
         \Log::info('Create Visit Request', $request->all());
         $request->validate([
-            'patient_id' => 'required|exists:patients,id',
+            'patient_id' => 'required|exists:patient,id',
             'tests' => 'required|array|min:1',
             'tests.*.lab_test_id' => 'required|exists:lab_tests,id',
             'notes' => 'nullable|string',
@@ -221,16 +239,51 @@ class VisitController extends Controller
 
     public function getVisits()
     {
-        $visits = Visit::with(['patient', 'visitTests.labTest', 'invoice', 'labRequest'])
-            ->orderBy('created_at', 'desc')
+        $visits = Visit::with(['patient', 'visitTests.labTest', 'labRequest'])
+            ->orderBy('id', 'desc')
             ->paginate(15);
 
-        return response()->json($visits);
+        // Transform the data to add receipt_number field and financial data for frontend compatibility
+        $transformedData = $visits->through(function ($visit) {
+            // Get the related invoice for financial data
+            $invoice = null;
+            if ($visit->labRequest) {
+                $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->lab_no)->first();
+            }
+            
+            return [
+                ...$visit->toArray(),
+                'receipt_number' => $visit->visit_number, // Use visit_number as receipt_number
+                'upfront_payment' => $invoice ? $invoice->paid : ($visit->upfront_payment ?: 0),
+                'remaining_balance' => $invoice ? $invoice->remaining : ($visit->remaining_balance ?: 0),
+                'billing_status' => $this->getBillingStatus($invoice, $visit),
+            ];
+        });
+
+        return response()->json($transformedData);
+    }
+
+    /**
+     * Get billing status based on invoice data
+     */
+    private function getBillingStatus($invoice, $visit)
+    {
+        if (!$invoice) {
+            return 'pending';
+        }
+        
+        if ($invoice->remaining <= 0) {
+            return 'paid';
+        } elseif ($invoice->paid > 0) {
+            return 'partial';
+        } else {
+            return 'pending';
+        }
     }
 
     public function getVisit($id)
     {
-        $visit = Visit::with(['patient', 'tests.labTest', 'invoice.payments', 'labRequest'])
+        $visit = Visit::with(['patient', 'tests.labTest', 'labRequest'])
             ->findOrFail($id);
 
         return response()->json($visit);
@@ -323,15 +376,16 @@ class VisitController extends Controller
         }
 
         // Create sample tracking if not exists
-        if (!$visitTest->sampleTracking) {
-            \App\Models\SampleTracking::create([
-                'visit_test_id' => $visitTest->id,
-                'sample_id' => \App\Models\SampleTracking::generateSampleId(),
-                'status' => 'collected',
-                'collected_at' => now(),
-                'collected_by' => auth()->id(),
-            ]);
-        }
+        // Note: sample_tracking table doesn't exist, so this is disabled
+        // if (!$visitTest->sampleTracking) {
+        //     \App\Models\SampleTracking::create([
+        //         'visit_test_id' => $visitTest->id,
+        //         'sample_id' => \App\Models\SampleTracking::generateSampleId(),
+        //         'status' => 'collected',
+        //         'collected_at' => now(),
+        //         'collected_by' => auth()->id(),
+        //     ]);
+        // }
 
         // Send result notification if requested
         if ($request->send_notification) {
@@ -340,7 +394,7 @@ class VisitController extends Controller
 
         return response()->json([
             'message' => 'Test result updated successfully',
-            'test' => $visitTest->load(['labTest', 'sampleTracking']),
+            'test' => $visitTest->load(['labTest']), // Removed sampleTracking as table doesn't exist
             'critical_alert' => $criticalType ? "Critical {$criticalType} value detected" : null,
         ]);
     }

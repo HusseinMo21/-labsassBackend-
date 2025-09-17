@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\SampleTracking;
+use App\Models\Sample;
 use App\Models\VisitTest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -12,7 +12,7 @@ class SampleTrackingController extends Controller
 {
     public function index(Request $request)
     {
-        $query = SampleTracking::with(['visitTest.labTest', 'visitTest.visit.patient', 'collectedBy', 'receivedBy', 'processedBy', 'analyzedBy']);
+        $query = Sample::with(['labRequest.patient', 'collectedBy', 'receivedBy', 'processedBy', 'analyzedBy']);
 
         if ($request->has('status')) {
             $query->where('status', $request->status);
@@ -22,7 +22,8 @@ class SampleTrackingController extends Controller
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('sample_id', 'like', "%{$search}%")
-                  ->orWhereHas('visitTest.visit.patient', function ($q) use ($search) {
+                  ->orWhere('sample_type', 'like', "%{$search}%")
+                  ->orWhereHas('labRequest.patient', function ($q) use ($search) {
                       $q->where('name', 'like', "%{$search}%");
                   });
             });
@@ -34,9 +35,8 @@ class SampleTrackingController extends Controller
 
     public function show($id)
     {
-        $sample = SampleTracking::with([
-            'visitTest.labTest', 
-            'visitTest.visit.patient', 
+        $sample = Sample::with([
+            'labRequest.patient', 
             'collectedBy', 
             'receivedBy', 
             'processedBy', 
@@ -47,24 +47,26 @@ class SampleTrackingController extends Controller
         return response()->json($sample);
     }
 
-    public function createSample($visitTestId)
+    public function createSample($labRequestId)
     {
-        $visitTest = VisitTest::findOrFail($visitTestId);
+        $labRequest = \App\Models\LabRequest::findOrFail($labRequestId);
         
-        // Check if sample already exists
-        if ($visitTest->sampleTracking) {
-            return response()->json(['message' => 'Sample already exists for this test'], 400);
+        // Check if sample already exists for this lab request
+        $existingSample = Sample::where('lab_request_id', $labRequestId)->first();
+        if ($existingSample) {
+            return response()->json(['message' => 'Sample already exists for this lab request'], 400);
         }
 
-        $sample = SampleTracking::create([
-            'visit_test_id' => $visitTestId,
-            'sample_id' => SampleTracking::generateSampleId(),
+        $sample = Sample::create([
+            'lab_request_id' => $labRequestId,
+            'sample_id' => Sample::generateSampleId(),
+            'sample_type' => 'Pathology', // Default sample type
             'status' => 'collected',
-            'collected_at' => now(),
+            'collection_date' => now(),
             'collected_by' => auth()->id(),
         ]);
 
-        return response()->json($sample->load(['visitTest.labTest', 'visitTest.visit.patient', 'collectedBy']));
+        return response()->json($sample->load(['labRequest.patient', 'collectedBy']));
     }
 
     public function updateStatus(Request $request, $id)
@@ -82,7 +84,7 @@ class SampleTrackingController extends Controller
             ], 422);
         }
 
-        $sample = SampleTracking::findOrFail($id);
+        $sample = Sample::findOrFail($id);
         $sample->updateStatus($request->status, auth()->id());
         
         if ($request->has('location')) {
@@ -95,20 +97,19 @@ class SampleTrackingController extends Controller
         
         $sample->save();
 
-        return response()->json($sample->load(['visitTest.labTest', 'visitTest.visit.patient', 'collectedBy', 'receivedBy', 'processedBy', 'analyzedBy', 'disposedBy']));
+        return response()->json($sample->load(['labRequest.patient', 'collectedBy', 'receivedBy', 'processedBy', 'analyzedBy', 'disposedBy']));
     }
 
-    public function getSampleByVisitTest($visitTestId)
+    public function getSampleByLabRequest($labRequestId)
     {
-        $sample = SampleTracking::with([
-            'visitTest.labTest', 
-            'visitTest.visit.patient', 
+        $sample = Sample::with([
+            'labRequest.patient', 
             'collectedBy', 
             'receivedBy', 
             'processedBy', 
             'analyzedBy',
             'disposedBy'
-        ])->where('visit_test_id', $visitTestId)->first();
+        ])->where('lab_request_id', $labRequestId)->first();
 
         if (!$sample) {
             return response()->json(['message' => 'Sample not found'], 404);
@@ -120,15 +121,15 @@ class SampleTrackingController extends Controller
     public function getStats()
     {
         $stats = [
-            'total_samples' => SampleTracking::count(),
-            'collected' => SampleTracking::where('status', 'collected')->count(),
-            'received' => SampleTracking::where('status', 'received')->count(),
-            'processing' => SampleTracking::where('status', 'processing')->count(),
-            'analyzing' => SampleTracking::where('status', 'analyzing')->count(),
-            'completed' => SampleTracking::where('status', 'completed')->count(),
-            'disposed' => SampleTracking::where('status', 'disposed')->count(),
-            'lost' => SampleTracking::where('status', 'lost')->count(),
-            'rejected' => SampleTracking::where('status', 'rejected')->count(),
+            'total_samples' => Sample::count(),
+            'collected' => Sample::where('status', 'collected')->count(),
+            'received' => Sample::where('status', 'received')->count(),
+            'processing' => Sample::where('status', 'processing')->count(),
+            'analyzing' => Sample::where('status', 'analyzing')->count(),
+            'completed' => Sample::where('status', 'completed')->count(),
+            'disposed' => Sample::where('status', 'disposed')->count(),
+            'lost' => Sample::where('status', 'lost')->count(),
+            'rejected' => Sample::where('status', 'rejected')->count(),
         ];
 
         return response()->json($stats);

@@ -31,20 +31,22 @@ class User extends Authenticatable
         'is_active' => 'boolean',
     ];
 
-    public function visits()
-    {
-        return $this->hasMany(Visit::class, 'created_by');
-    }
+    // Note: visits() relationship removed as visits table doesn't have created_by column
+    // public function visits()
+    // {
+    //     return $this->hasMany(Visit::class, 'created_by');
+    // }
 
     public function visitTests()
     {
         return $this->hasMany(VisitTest::class, 'performed_by');
     }
 
-    public function invoices()
-    {
-        return $this->hasMany(Invoice::class, 'created_by');
-    }
+    // Note: invoices() relationship removed as invoices table doesn't have created_by column
+    // public function invoices()
+    // {
+    //     return $this->hasMany(Invoice::class, 'created_by');
+    // }
 
     public function inventoryItems()
     {
@@ -100,8 +102,9 @@ class User extends Authenticatable
         return $this->hasMany(RefreshToken::class);
     }
 
-    public function patient()
-    {
-        return $this->hasOne(Patient::class, 'user_id');
-    }
+    // Note: Patient relationship removed as patient table doesn't have user_id column
+    // public function patient()
+    // {
+    //     return $this->hasOne(Patient::class, 'user_id');
+    // }
 } 

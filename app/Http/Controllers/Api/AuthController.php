@@ -62,7 +62,7 @@ class AuthController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
-                'role' => $user->role,
+                'role' => $this->mapRole($user->role),
                 'phone' => $user->phone,
             ],
             'access_token' => $accessToken,
@@ -164,9 +164,26 @@ class AuthController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
-                'role' => $user->role,
+                'role' => $this->mapRole($user->role),
                 'phone' => $user->phone,
             ],
         ]);
+    }
+
+    /**
+     * Map old role values to new role values for frontend compatibility
+     */
+    private function mapRole($role)
+    {
+        $roleMapping = [
+            'admin' => 'admin',
+            'staff' => 'staff',
+            'doctor' => 'doctor',
+            'lab_tech' => 'staff',
+            'accountant' => 'staff',
+            'patient' => 'patient',
+        ];
+
+        return $roleMapping[$role] ?? 'staff';
     }
 } 

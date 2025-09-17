@@ -65,10 +65,11 @@ class Visit extends Model
         return $this->hasMany(VisitTest::class);
     }
 
-    public function invoice()
-    {
-        return $this->hasOne(Invoice::class);
-    }
+    // Note: Invoice table doesn't have visit_id column, so this relationship is disabled
+    // public function invoice()
+    // {
+    //     return $this->hasOne(Invoice::class);
+    // }
 
     public function labRequest()
     {
@@ -84,18 +85,13 @@ class Visit extends Model
     {
         $prefix = 'RCP';
         $date = now()->format('Ymd');
-        $lastReceipt = self::where('receipt_number', 'like', $prefix . $date . '%')
-                           ->orderBy('receipt_number', 'desc')
-                           ->first();
         
-        if ($lastReceipt) {
-            $lastNumber = intval(substr($lastReceipt->receipt_number, -4));
-            $newNumber = $lastNumber + 1;
-        } else {
-            $newNumber = 1;
-        }
+        // Since receipt_number column doesn't exist, generate a simple receipt number
+        // based on the current timestamp and a random number
+        $timestamp = now()->format('His');
+        $random = str_pad(rand(1, 999), 3, '0', STR_PAD_LEFT);
         
-        return $prefix . $date . str_pad($newNumber, 4, '0', STR_PAD_LEFT);
+        return $prefix . $date . $timestamp . $random;
     }
 
     public static function generateBarcode()
@@ -154,21 +150,21 @@ class Visit extends Model
 
     public function calculateMinimumUpfront()
     {
-        return ($this->final_amount * $this->minimum_upfront_percentage) / 100;
+        // Default to 20% if minimum_upfront_percentage doesn't exist
+        $percentage = $this->minimum_upfront_percentage ?? 20;
+        return ($this->final_amount * $percentage) / 100;
     }
 
     public function processPayment($amountPaid, $paymentMethod = 'cash')
     {
-        $this->upfront_payment = $amountPaid;
-        $this->remaining_balance = $this->final_amount - $amountPaid;
-        $this->payment_method = $paymentMethod;
-        
-        if ($this->remaining_balance <= 0) {
-            $this->billing_status = 'paid';
-        } elseif ($this->upfront_payment > 0) {
-            $this->billing_status = 'partial';
+        // Since upfront_payment, remaining_balance, payment_method, and billing_status columns
+        // don't exist in the actual table, we'll just update the status
+        if ($amountPaid >= $this->final_amount) {
+            $this->status = 'paid';
+        } elseif ($amountPaid > 0) {
+            $this->status = 'partial';
         } else {
-            $this->billing_status = 'pending';
+            $this->status = 'pending';
         }
         
         $this->save();

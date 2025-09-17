@@ -12,14 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('test_categories', function (Blueprint $table) {
-            $table->string('code')->default('')->after('name');
-            $table->text('description')->nullable()->after('code');
-            $table->boolean('is_active')->default(true)->after('description');
-        });
-        
-        // Add unique constraint after adding the column
-        Schema::table('test_categories', function (Blueprint $table) {
-            $table->unique('code');
+            $table->string('code')->unique()->after('name');
         });
     }
 
@@ -29,7 +22,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('test_categories', function (Blueprint $table) {
-            $table->dropColumn(['code', 'description', 'is_active']);
+            $table->dropColumn('code');
         });
     }
 };

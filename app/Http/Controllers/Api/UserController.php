@@ -30,7 +30,38 @@ class UserController extends Controller
             $query->where('is_active', $request->status === 'active');
         }
 
-        $users = $query->with('patient')->latest()->paginate(15);
+        $users = $query->latest()->paginate(15);
+
+        // Transform the data to show real patient names for patient users
+        $users->getCollection()->transform(function ($user) {
+            if ($user->role === 'patient') {
+                // Try to get the real patient name from patient_credentials
+                $username = str_replace('@patients.local', '', $user->email);
+                $credential = \DB::table('patient_credentials')
+                    ->where('username', $username)
+                    ->first();
+                
+                if ($credential) {
+                    $patient = \App\Models\Patient::find($credential->patient_id);
+                    if ($patient && !empty($patient->name)) {
+                        $user->display_name = $patient->name;
+                        $user->real_name = $patient->name;
+                        $user->patient_id = $patient->id;
+                    } else {
+                        $user->display_name = $user->name;
+                        $user->real_name = null;
+                    }
+                } else {
+                    $user->display_name = $user->name;
+                    $user->real_name = null;
+                }
+            } else {
+                $user->display_name = $user->name;
+                $user->real_name = null;
+            }
+            
+            return $user;
+        });
 
         return response()->json($users);
     }
@@ -41,7 +72,7 @@ class UserController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'phone' => 'nullable|string|max:20',
-            'role' => 'required|in:admin,lab_tech,accountant',
+            'role' => 'required|in:admin,staff,doctor,patient',
             'password' => 'required|string|min:8|confirmed',
             'is_active' => 'boolean',
         ]);
@@ -79,7 +110,7 @@ class UserController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users,email,' . $user->id,
             'phone' => 'nullable|string|max:20',
-            'role' => 'required|in:admin,lab_tech,accountant',
+            'role' => 'required|in:admin,staff,doctor,patient',
             'password' => 'nullable|string|min:8|confirmed',
             'is_active' => 'boolean',
         ]);
@@ -122,9 +153,34 @@ class UserController extends Controller
         }
 
         // Check if user has any related data
-        if ($user->visits()->count() > 0 || $user->invoices()->count() > 0) {
+        $hasRelatedData = false;
+        $relatedDataInfo = [];
+        
+        // Check visit tests
+        $visitTestsCount = $user->visitTests()->count();
+        if ($visitTestsCount > 0) {
+            $hasRelatedData = true;
+            $relatedDataInfo[] = "Visit Tests: {$visitTestsCount}";
+        }
+        
+        // Check inventory items
+        $inventoryCount = $user->inventoryItems()->count();
+        if ($inventoryCount > 0) {
+            $hasRelatedData = true;
+            $relatedDataInfo[] = "Inventory Items: {$inventoryCount}";
+        }
+        
+        // Check refresh tokens
+        $refreshTokensCount = $user->refreshTokens()->count();
+        if ($refreshTokensCount > 0) {
+            $hasRelatedData = true;
+            $relatedDataInfo[] = "Refresh Tokens: {$refreshTokensCount}";
+        }
+        
+        if ($hasRelatedData) {
             return response()->json([
                 'message' => 'Cannot delete user with existing data. Consider deactivating instead.',
+                'related_data' => $relatedDataInfo,
             ], 422);
         }
 
