@@ -34,8 +34,8 @@ return new class extends Migration
             $table->boolean('print')->default(false)->comment('Print status');
             
             // Enhanced fields (new improvements)
-            $table->foreignId('patient_id')->nullable()->constrained()->onDelete('set null');
-            $table->foreignId('lab_request_id')->nullable()->constrained()->onDelete('set null');
+            $table->foreignId('patient_id')->nullable()->constrained('patient')->onDelete('set null');
+            $table->foreignId('lab_request_id')->nullable()->constrained('lab_requests')->onDelete('set null');
             $table->foreignId('created_by')->nullable()->constrained('users')->onDelete('set null');
             $table->foreignId('reviewed_by')->nullable()->constrained('users')->onDelete('set null');
             $table->foreignId('approved_by')->nullable()->constrained('users')->onDelete('set null');

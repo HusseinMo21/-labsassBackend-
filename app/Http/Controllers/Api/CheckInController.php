@@ -277,7 +277,7 @@ class CheckInController extends Controller
 
                 // Create invoice for this visit
                 $invoice = Invoice::create([
-                    'lab' => $labRequest->lab_no,
+                    'lab' => $labRequest->full_lab_no,
                     'total' => $finalAmount,
                     'paid' => $request->upfront_payment,
                     'remaining' => $finalAmount - $request->upfront_payment,
@@ -319,6 +319,27 @@ class CheckInController extends Controller
                 }
                 
                 \Log::info('Samples added to lab request: ' . $labRequest->id);
+                
+                // Create initial report automatically for each visit test
+                foreach ($visit->visitTests as $visitTest) {
+                    $existingReport = \App\Models\Report::where('lab_request_id', $labRequest->id)
+                        ->where('visit_test_id', $visitTest->id)
+                        ->first();
+                    
+                    if (!$existingReport) {
+                        \App\Models\Report::create([
+                            'lab_request_id' => $labRequest->id,
+                            'title' => 'Lab Report - ' . $visitTest->labTest->name ?? 'Test Report',
+                            'content' => 'Report generated automatically for ' . $patient->name,
+                            'status' => 'pending',
+                            'generated_by' => auth()->id() ?? 1,
+                            'generated_at' => now(),
+                            'created_at' => now(),
+                        ]);
+                        
+                        \Log::info('Report created automatically for visit test: ' . $visitTest->id);
+                    }
+                }
             } catch (\Exception $e) {
                 \Log::error('Failed to create/update lab request for visit: ' . $e->getMessage());
                 // Don't fail the visit creation if lab request creation fails
@@ -406,22 +427,102 @@ class CheckInController extends Controller
         // Get the related invoice for financial data
         $invoice = null;
         $payments = collect();
+        
+        // Try multiple ways to find the invoice
         if ($visit->labRequest) {
+            // First try with lab_no
             $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->lab_no)->first();
+            
+            // If not found, try with full_lab_no
+            if (!$invoice && $visit->labRequest->full_lab_no) {
+                $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->full_lab_no)->first();
+            }
+            
+            // If still not found, try with lab_request_id
+            if (!$invoice) {
+                $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
+            }
+            
             if ($invoice) {
                 $payments = \App\Models\Payment::where('invoice_id', $invoice->id)->get();
             }
         }
         
+        // If still no invoice found, try to find by patient lab number
+        if (!$invoice && $visit->patient && $visit->patient->lab) {
+            $invoice = \App\Models\Invoice::where('lab', $visit->patient->lab)->first();
+            if ($invoice) {
+                $payments = \App\Models\Payment::where('invoice_id', $invoice->id)->get();
+            }
+        }
+        
+        // If still no invoice found, try to find by visit number
+        if (!$invoice) {
+            $invoice = \App\Models\Invoice::where('lab', $visit->visit_number)->first();
+            if ($invoice) {
+                $payments = \App\Models\Payment::where('invoice_id', $invoice->id)->get();
+            }
+        }
+        
+        // Get current user who is printing the receipt
+        $currentUser = auth()->user();
+        $printedBy = $currentUser ? $currentUser->name : 'System';
+        
+        // Generate barcode for the lab number
+        $barcodeData = null;
+        $barcodeText = null;
+        
+        // Try different lab number sources for barcode
+        if ($visit->labRequest && $visit->labRequest->full_lab_no) {
+            $barcodeText = $visit->labRequest->full_lab_no;
+        } elseif ($visit->labRequest && $visit->labRequest->lab_no) {
+            $barcodeText = $visit->labRequest->lab_no;
+        } elseif ($visit->patient && $visit->patient->lab) {
+            $barcodeText = $visit->patient->lab;
+        }
+        
+        if ($barcodeText) {
+            try {
+                // Generate base64 barcode image
+                $barcodeData = $this->generateBase64Barcode($barcodeText);
+            } catch (\Exception $e) {
+                \Log::warning('Failed to generate barcode for receipt', [
+                    'barcode_text' => $barcodeText,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+        
+        // Debug logging
+        \Log::info('Receipt data debug', [
+            'visit_id' => $visit->id,
+            'lab_request_id' => $visit->labRequest ? $visit->labRequest->id : null,
+            'lab_no' => $visit->labRequest ? $visit->labRequest->lab_no : null,
+            'full_lab_no' => $visit->labRequest ? $visit->labRequest->full_lab_no : null,
+            'patient_lab' => $visit->patient ? $visit->patient->lab : null,
+            'invoice_found' => $invoice ? true : false,
+            'invoice_total' => $invoice ? $invoice->total : null,
+            'invoice_paid' => $invoice ? $invoice->paid : null,
+            'invoice_remaining' => $invoice ? $invoice->remaining : null,
+            'barcode_text' => $barcodeText,
+            'barcode_generated' => $barcodeData ? true : false,
+        ]);
+        
+        // Get patient age - calculate from birth_date if available, otherwise use age field
+        $patientAge = $visit->patient->age;
+        if (!$patientAge && $visit->patient->birth_date) {
+            $patientAge = $visit->patient->birth_date->age;
+        }
+        
         return response()->json([
             'visit' => $visit,
             'receipt_data' => [
-                'receipt_number' => $visit->visit_number, // Use visit_number instead of receipt_number
-                'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : 'N/A',
-                'date' => $visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : 'N/A',
-                'patient_name' => $visit->patient->name,
-                'patient_age' => $visit->patient->age,
-                'patient_phone' => $visit->patient->phone,
+                'receipt_number' => $visit->visit_number,
+                'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?: 'N/A'),
+                'date' => $visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : now()->format('Y-m-d'),
+                'patient_name' => $visit->patient->name ?: 'N/A',
+                'patient_age' => $patientAge ?: 'N/A',
+                'patient_phone' => $visit->patient->phone ?: 'N/A',
                 'tests' => $visit->visitTests->map(function ($visitTest) {
                     return [
                         'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
@@ -437,13 +538,139 @@ class CheckInController extends Controller
                 'payment_method' => $this->getPaymentMethod($visit, $payments),
                 'billing_status' => $this->getPaymentStatus($invoice),
                 'expected_delivery_date' => $visit->expected_delivery_date ?: 'N/A',
-                'barcode' => $visit->labRequest ? $this->barcodeService->generateReceiptBarcode($visit->labRequest->full_lab_no) : ($visit->barcode ?: 'N/A'),
+                'barcode' => $barcodeData,
+                'barcode_text' => $barcodeText ?: 'N/A',
                 'check_in_by' => $visit->check_in_by ?: 'N/A',
                 'check_in_at' => $visit->check_in_at ?: 'N/A',
                 'visit_id' => $visit->id,
                 'patient_credentials' => $visit->patient->getPortalCredentials(),
+                'printed_by' => $printedBy,
+                'printed_at' => now()->format('Y-m-d H:i:s'),
             ],
         ]);
+    }
+
+    /**
+     * Generate base64 barcode image
+     */
+    private function generateBase64Barcode($text)
+    {
+        try {
+            $generator = new \Milon\Barcode\DNS1D();
+            
+            // Clean the text for barcode generation - keep hyphens for lab numbers
+            $cleanText = str_replace(['_', ' '], '', $text);
+            $alphanumericText = preg_replace('/[^A-Za-z0-9]/', '', $text);
+            
+            // Try different barcode types
+            $barcodeTypes = ['C128', 'C39', 'C39+', 'C93'];
+            
+            foreach ($barcodeTypes as $type) {
+                try {
+                    // Try to generate barcode as PNG
+                    $barcodePng = $generator->getBarcodePNG($text, $type, 2, 50);
+                    
+                    if ($barcodePng && strlen($barcodePng) > 100) { // Check if we got actual image data
+                        \Log::info('Successfully generated PNG barcode', [
+                            'text' => $text,
+                            'type' => $type,
+                            'size' => strlen($barcodePng)
+                        ]);
+                        return base64_encode($barcodePng);
+                    }
+                    
+                    // Try with cleaned text (keeping hyphens)
+                    $barcodePng = $generator->getBarcodePNG($cleanText, $type, 2, 50);
+                    if ($barcodePng && strlen($barcodePng) > 100) {
+                        \Log::info('Successfully generated PNG barcode with cleaned text', [
+                            'text' => $text,
+                            'clean_text' => $cleanText,
+                            'type' => $type,
+                            'size' => strlen($barcodePng)
+                        ]);
+                        return base64_encode($barcodePng);
+                    }
+                    
+                    // Try with alphanumeric only text
+                    if (!empty($alphanumericText)) {
+                        $barcodePng = $generator->getBarcodePNG($alphanumericText, $type, 2, 50);
+                        if ($barcodePng && strlen($barcodePng) > 100) {
+                            \Log::info('Successfully generated PNG barcode with alphanumeric text', [
+                                'text' => $text,
+                                'alphanumeric_text' => $alphanumericText,
+                                'type' => $type,
+                                'size' => strlen($barcodePng)
+                            ]);
+                            return base64_encode($barcodePng);
+                        }
+                    }
+                } catch (\Exception $e) {
+                    \Log::debug('PNG barcode generation failed for type ' . $type, [
+                        'text' => $text,
+                        'error' => $e->getMessage()
+                    ]);
+                    continue;
+                }
+            }
+            
+            // If PNG fails, try SVG (prioritize SVG since it works better)
+            foreach ($barcodeTypes as $type) {
+                try {
+                    // Try original text first
+                    $barcodeSvg = $generator->getBarcodeSVG($text, $type, 2, 50);
+                    if ($barcodeSvg && str_contains($barcodeSvg, '<svg')) {
+                        \Log::info('Successfully generated SVG barcode with original text', [
+                            'text' => $text,
+                            'type' => $type
+                        ]);
+                        return $barcodeSvg; // Return SVG directly, not base64 encoded
+                    }
+                    
+                    // Try with cleaned text
+                    $barcodeSvg = $generator->getBarcodeSVG($cleanText, $type, 2, 50);
+                    if ($barcodeSvg && str_contains($barcodeSvg, '<svg')) {
+                        \Log::info('Successfully generated SVG barcode with cleaned text', [
+                            'text' => $text,
+                            'clean_text' => $cleanText,
+                            'type' => $type
+                        ]);
+                        return $barcodeSvg; // Return SVG directly, not base64 encoded
+                    }
+                    
+                    // Try with alphanumeric text
+                    if (!empty($alphanumericText)) {
+                        $barcodeSvg = $generator->getBarcodeSVG($alphanumericText, $type, 2, 50);
+                        if ($barcodeSvg && str_contains($barcodeSvg, '<svg')) {
+                            \Log::info('Successfully generated SVG barcode with alphanumeric text', [
+                                'text' => $text,
+                                'alphanumeric_text' => $alphanumericText,
+                                'type' => $type
+                            ]);
+                            return $barcodeSvg; // Return SVG directly, not base64 encoded
+                        }
+                    }
+                } catch (\Exception $e) {
+                    \Log::debug('SVG barcode generation failed for type ' . $type, [
+                        'text' => $text,
+                        'error' => $e->getMessage()
+                    ]);
+                    continue;
+                }
+            }
+            
+            \Log::warning('Failed to generate barcode with any method', [
+                'text' => $text,
+                'clean_text' => $cleanText
+            ]);
+            
+            return null;
+        } catch (\Exception $e) {
+            \Log::error('Failed to generate base64 barcode', [
+                'text' => $text,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
     }
 
     /**

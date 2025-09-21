@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::create('patient_credentials', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('patient_id')->constrained()->onDelete('cascade');
+            $table->foreignId('patient_id')->constrained('patient')->onDelete('cascade');
             $table->string('username')->unique();
             $table->string('original_password'); // Store original password for receipts
             $table->string('hashed_password'); // Store hashed password for authentication

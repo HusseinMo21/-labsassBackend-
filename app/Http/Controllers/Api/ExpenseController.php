@@ -21,7 +21,8 @@ class ExpenseController extends Controller
         if ($request->has('search') && !empty($request->search)) {
             $searchTerm = $request->search;
             $query->where(function ($q) use ($searchTerm) {
-                $q->where('name', 'like', "%{$searchTerm}%")
+                $q->where('description', 'like', "%{$searchTerm}%")
+                  ->orWhere('category', 'like', "%{$searchTerm}%")
                   ->orWhere('amount', 'like', "%{$searchTerm}%")
                   ->orWhereHas('author', function ($authorQuery) use ($searchTerm) {
                       $authorQuery->where('name', 'like', "%{$searchTerm}%");
@@ -31,14 +32,14 @@ class ExpenseController extends Controller
 
         // Date range filter
         if ($request->has('start_date') && !empty($request->start_date)) {
-            $query->where('date', '>=', $request->start_date);
+            $query->where('expense_date', '>=', $request->start_date);
         }
 
         if ($request->has('end_date') && !empty($request->end_date)) {
-            $query->where('date', '<=', $request->end_date);
+            $query->where('expense_date', '<=', $request->end_date);
         }
 
-        $expenses = $query->orderBy('date', 'desc')->paginate(15);
+        $expenses = $query->orderBy('expense_date', 'desc')->paginate(15);
 
         return response()->json($expenses);
     }
@@ -49,9 +50,13 @@ class ExpenseController extends Controller
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
+            'description' => 'required|string|max:255',
             'amount' => 'required|numeric|min:0',
-            'date' => 'required|date',
+            'category' => 'required|string|max:100',
+            'expense_date' => 'required|date',
+            'payment_method' => 'nullable|string|max:50',
+            'reference_number' => 'nullable|string|max:100',
+            'notes' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -62,10 +67,14 @@ class ExpenseController extends Controller
         }
 
         $expense = Expense::create([
-            'name' => $request->name,
+            'description' => $request->description,
             'amount' => $request->amount,
-            'date' => $request->date,
-            'author' => Auth::id(),
+            'category' => $request->category,
+            'expense_date' => $request->expense_date,
+            'payment_method' => $request->payment_method,
+            'reference_number' => $request->reference_number,
+            'notes' => $request->notes,
+            'created_by' => Auth::id(),
         ]);
 
         return response()->json([
@@ -91,9 +100,13 @@ class ExpenseController extends Controller
         $expense = Expense::findOrFail($id);
 
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
+            'description' => 'required|string|max:255',
             'amount' => 'required|numeric|min:0',
-            'date' => 'required|date',
+            'category' => 'required|string|max:100',
+            'expense_date' => 'required|date',
+            'payment_method' => 'nullable|string|max:50',
+            'reference_number' => 'nullable|string|max:100',
+            'notes' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -104,9 +117,13 @@ class ExpenseController extends Controller
         }
 
         $expense->update([
-            'name' => $request->name,
+            'description' => $request->description,
             'amount' => $request->amount,
-            'date' => $request->date,
+            'category' => $request->category,
+            'expense_date' => $request->expense_date,
+            'payment_method' => $request->payment_method,
+            'reference_number' => $request->reference_number,
+            'notes' => $request->notes,
         ]);
 
         return response()->json([
@@ -136,10 +153,10 @@ class ExpenseController extends Controller
         $stats = [
             'total_expenses' => Expense::count(),
             'total_amount' => Expense::sum('amount'),
-            'this_month' => Expense::whereMonth('date', now()->month)
-                ->whereYear('date', now()->year)
+            'this_month' => Expense::whereMonth('expense_date', now()->month)
+                ->whereYear('expense_date', now()->year)
                 ->sum('amount'),
-            'this_year' => Expense::whereYear('date', now()->year)
+            'this_year' => Expense::whereYear('expense_date', now()->year)
                 ->sum('amount'),
         ];
 

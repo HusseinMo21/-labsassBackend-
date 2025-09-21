@@ -19,6 +19,12 @@ class Report extends Model
         'generated_by',
         'generated_at',
         'template_id',
+        'image_path',
+        'image_filename',
+        'image_mime_type',
+        'image_size',
+        'image_uploaded_at',
+        'image_uploaded_by',
     ];
 
     protected $casts = [
@@ -31,7 +37,17 @@ class Report extends Model
     protected static function booted()
     {
         static::created(function ($report) {
-            $report->createEnhancedReport();
+            // Only create Enhanced Report if the report is completed
+            if ($report->status === 'completed') {
+                $report->createEnhancedReport();
+            }
+        });
+        
+        static::updated(function ($report) {
+            // Create Enhanced Report when report status changes to completed
+            if ($report->isDirty('status') && $report->status === 'completed') {
+                $report->createEnhancedReport();
+            }
         });
     }
 

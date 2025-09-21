@@ -31,7 +31,7 @@ return new class extends Migration
                 // Foreign key constraint
                 $table->foreign('patient_id')
                       ->references('id')
-                      ->on('patients')
+                      ->on('patient')
                       ->onDelete('set null');
 
                 // Unique constraint for lab_no + suffix combination

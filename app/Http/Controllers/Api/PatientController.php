@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Patient;
+use App\Models\LabRequest;
 use App\Models\Doctor;
 use App\Models\Organization;
-use App\Models\LabRequest;
 use App\Services\LabNoGenerator;
 use App\Services\BarcodeGenerator;
 use Illuminate\Http\Request;
@@ -51,6 +51,7 @@ class PatientController extends Controller
         );
     }
 
+
     public function index(Request $request)
     {
         $query = Patient::query();
@@ -65,28 +66,69 @@ class PatientController extends Controller
             });
         }
 
-        $patients = $query->with(['doctor', 'organization'])
-        ->orderBy('id', 'desc')
-        ->paginate(15);
+        $patients = $query->orderBy('id', 'desc')->paginate(15);
         
-        // Add computed birth_date and doctor name for each patient
+        // Transform the data to ensure proper formatting and avoid N/A values
         $patients->getCollection()->transform(function ($patient) {
-            if ($patient->age && !isset($patient->birth_date)) {
+            // Calculate birth_date from age if not set
+            if ($patient->age && !$patient->birth_date) {
                 $patient->birth_date = now()->subYears($patient->age)->format('Y-m-d');
             }
-            // Add doctor name from sender field
-            $patient->doctor_name = $patient->sender ?: 'N/A';
+            
+            // Handle address - prioritize address_required or address_optional
+            if (!$patient->address) {
+                if ($patient->address_required) {
+                    $patient->address = $patient->address_required;
+                } elseif ($patient->address_optional) {
+                    $patient->address = $patient->address_optional;
+                }
+            }
+            
+            // Handle doctor name - prioritize sender, then doctor_id
+            if (!$patient->sender && $patient->doctor_id) {
+                $patient->sender = $patient->doctor_id;
+            }
+            
+            // Handle organization - use organization_id if available
+            if (!$patient->organization && $patient->organization_id) {
+                $patient->organization = $patient->organization_id;
+            }
+            
             return $patient;
         });
         
-        // Convert to array and back to ensure properties are accessible
+        // Convert to array and ensure proper formatting
         $patientsArray = $patients->toArray();
         foreach ($patientsArray['data'] as &$patient) {
-            if ($patient['age'] && !isset($patient['birth_date'])) {
+            // Calculate birth_date from age if not set
+            if ($patient['age'] && !$patient['birth_date']) {
                 $patient['birth_date'] = now()->subYears($patient['age'])->format('Y-m-d');
             }
-            // Add doctor name from sender field
-            $patient['doctor_name'] = $patient['sender'] ?: 'N/A';
+            
+            // Handle address - prioritize address_required or address_optional
+            if (!$patient['address']) {
+                if (isset($patient['address_required']) && $patient['address_required']) {
+                    $patient['address'] = $patient['address_required'];
+                } elseif (isset($patient['address_optional']) && $patient['address_optional']) {
+                    $patient['address'] = $patient['address_optional'];
+                }
+            }
+            
+            // Handle doctor name - prioritize sender, then doctor_id
+            if (!$patient['sender'] && isset($patient['doctor_id']) && $patient['doctor_id']) {
+                $patient['sender'] = $patient['doctor_id'];
+            }
+            
+            // Handle organization - use organization_id if available
+            if (!$patient['organization'] && isset($patient['organization_id']) && $patient['organization_id']) {
+                $patient['organization'] = $patient['organization_id'];
+            }
+            
+            // Ensure we don't have empty strings showing as N/A
+            $patient['address'] = $patient['address'] ?: null;
+            $patient['sender'] = $patient['sender'] ?: null;
+            $patient['organization'] = $patient['organization'] ?: null;
+            $patient['emergency_contact'] = $patient['emergency_contact'] ?: null;
         }
 
         return response()->json($patientsArray);
@@ -96,15 +138,23 @@ class PatientController extends Controller
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'gender' => 'required|in:male,female,other',
-            'age' => 'required|integer|min:0|max:150',
-            'phone' => 'required|string|max:20',
+            'name' => 'nullable|string|max:255',
+            'gender' => 'nullable|in:male,female,other',
+            'birth_date' => 'nullable|date|before:today',
+            'phone' => 'nullable|string|max:20',
             'whatsapp_number' => 'nullable|string|max:20',
-            'address' => 'required|string',
+            'address' => 'nullable|string',
+            'address_required' => 'nullable|string',
+            'address_optional' => 'nullable|string',
+            'emergency_contact' => 'nullable|string|max:255',
+            'emergency_phone' => 'nullable|string|max:20',
+            'medical_history' => 'nullable|string',
+            'allergies' => 'nullable|string',
             'doctor' => 'nullable|string|max:255',
             'organization' => 'nullable|string|max:255',
             'sender' => 'nullable|string|max:255', // Doctor name
+            'status' => 'nullable|string|max:255',
+            'age' => 'nullable|integer|min:0|max:150',
         ]);
 
         if ($validator->fails()) {
@@ -128,21 +178,41 @@ class PatientController extends Controller
         $patientData = $validator->validated();
         $patientData['user_id'] = $user->id;
         
-        // Handle doctor and organization relationships with dual saving
+        // Handle address - use address_required if available, otherwise use address
+        if (isset($patientData['address_required']) && !empty($patientData['address_required'])) {
+            $patientData['address'] = $patientData['address_required'];
+        } elseif (isset($patientData['address_optional']) && !empty($patientData['address_optional'])) {
+            $patientData['address'] = $patientData['address_optional'];
+        }
+        
+        // Handle doctor - use sender if available, otherwise use doctor field
+        $doctorName = null;
         if (isset($patientData['sender']) && !empty($patientData['sender'])) {
-            // Save doctor name to both sender field and create Doctor record
-            $doctor = $this->findOrCreateDoctor($patientData['sender']);
-            $patientData['doctor_id'] = $doctor ? $doctor->id : null;
-            // Keep sender field as is (it already contains the doctor name)
+            $doctorName = $patientData['sender'];
+        } elseif (isset($patientData['doctor']) && !empty($patientData['doctor'])) {
+            $doctorName = $patientData['doctor'];
+        }
+        
+        if ($doctorName) {
+            // Create doctor record and store name as string in doctor_id field
+            $doctor = $this->findOrCreateDoctor($doctorName);
+            $patientData['doctor_id'] = trim($doctorName); // Store name as string
         }
         
         if (isset($patientData['organization']) && !empty($patientData['organization'])) {
-            // Save organization name to Organization table and link via organization_id
+            // Create organization record and store name as string in organization_id field
             $organization = $this->findOrCreateOrganization($patientData['organization']);
-            $patientData['organization_id'] = $organization ? $organization->id : null;
-            // Remove organization field from data since it doesn't exist in DB
-            unset($patientData['organization']);
+            $patientData['organization_id'] = trim($patientData['organization']); // Store name as string
         }
+        
+        // Clean up fields that don't exist in the patient table
+        unset($patientData['doctor']);
+        unset($patientData['organization']);
+        unset($patientData['sender']);
+        unset($patientData['address_required']);
+        unset($patientData['address_optional']);
+        unset($patientData['status']);
+        unset($patientData['age']);
         
         $patient = Patient::create($patientData);
 
@@ -170,16 +240,46 @@ class PatientController extends Controller
         // Update patient with lab number
         $patient->update(['lab' => $labNoData['full']]);
 
-        return response()->json([
-            'message' => 'Patient created successfully',
-            'patient' => $patient->load('visits', 'user', 'credentials', 'labRequests'),
-            'lab_request' => $labRequest,
-            'lab_number' => $labNoData['full'],
-            'user_credentials' => [
-                'username' => $username,
-                'password' => $password,
-            ],
-        ], 201);
+        // Create initial report automatically for the patient
+        try {
+            \App\Models\Report::create([
+                'lab_request_id' => $labRequest->id,
+                'title' => 'Lab Report - ' . $patient->name,
+                'content' => 'Report generated automatically for patient ' . $patient->name,
+                'status' => 'pending',
+                'generated_by' => auth()->id() ?? 1,
+                'generated_at' => now(),
+                'created_at' => now(),
+            ]);
+            
+            \Log::info('Report created automatically for patient: ' . $patient->id);
+        } catch (\Exception $e) {
+            \Log::error('Failed to create report for patient: ' . $e->getMessage());
+            // Don't fail patient creation if report creation fails
+        }
+
+        try {
+            return response()->json([
+                'message' => 'Patient created successfully',
+                'patient_id' => $patient->id,
+                'lab_number' => $labNoData['full'],
+                'user_credentials' => [
+                    'username' => $username,
+                    'password' => $password,
+                ],
+            ], 201);
+        } catch (\Exception $e) {
+            \Log::error('Error in patient creation response', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'message' => 'Patient created successfully',
+                'patient_id' => $patient->id,
+                'lab_number' => $labNoData['full'],
+            ], 201);
+        }
     }
 
     public function show(Patient $patient)
@@ -197,12 +297,14 @@ class PatientController extends Controller
     public function update(Request $request, Patient $patient)
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'gender' => 'required|in:male,female,other',
-            'birth_date' => 'required|date|before:today',
-            'phone' => 'required|string|max:20',
+            'name' => 'nullable|string|max:255',
+            'gender' => 'nullable|in:male,female,other',
+            'birth_date' => 'nullable|date|before:today',
+            'phone' => 'nullable|string|max:20',
             'whatsapp_number' => 'nullable|string|max:20',
-            'address' => 'required|string',
+            'address' => 'nullable|string',
+            'address_required' => 'nullable|string',
+            'address_optional' => 'nullable|string',
             'emergency_contact' => 'nullable|string|max:255',
             'emergency_phone' => 'nullable|string|max:20',
             'medical_history' => 'nullable|string',
@@ -210,6 +312,8 @@ class PatientController extends Controller
             'doctor' => 'nullable|string|max:255',
             'organization' => 'nullable|string|max:255',
             'sender' => 'nullable|string|max:255', // Doctor name
+            'status' => 'nullable|string|max:255',
+            'age' => 'nullable|integer|min:0|max:150',
         ]);
 
         if ($validator->fails()) {
@@ -221,21 +325,41 @@ class PatientController extends Controller
 
         $patientData = $validator->validated();
         
-        // Handle doctor and organization relationships with dual saving
+        // Handle address - use address_required if available, otherwise use address
+        if (isset($patientData['address_required']) && !empty($patientData['address_required'])) {
+            $patientData['address'] = $patientData['address_required'];
+        } elseif (isset($patientData['address_optional']) && !empty($patientData['address_optional'])) {
+            $patientData['address'] = $patientData['address_optional'];
+        }
+        
+        // Handle doctor - use sender if available, otherwise use doctor field
+        $doctorName = null;
         if (isset($patientData['sender']) && !empty($patientData['sender'])) {
-            // Save doctor name to both sender field and create Doctor record
-            $doctor = $this->findOrCreateDoctor($patientData['sender']);
-            $patientData['doctor_id'] = $doctor ? $doctor->id : null;
-            // Keep sender field as is (it already contains the doctor name)
+            $doctorName = $patientData['sender'];
+        } elseif (isset($patientData['doctor']) && !empty($patientData['doctor'])) {
+            $doctorName = $patientData['doctor'];
+        }
+        
+        if ($doctorName) {
+            // Create doctor record and store name as string in doctor_id field
+            $doctor = $this->findOrCreateDoctor($doctorName);
+            $patientData['doctor_id'] = trim($doctorName); // Store name as string
         }
         
         if (isset($patientData['organization']) && !empty($patientData['organization'])) {
-            // Save organization name to Organization table and link via organization_id
+            // Create organization record and store name as string in organization_id field
             $organization = $this->findOrCreateOrganization($patientData['organization']);
-            $patientData['organization_id'] = $organization ? $organization->id : null;
-            // Remove organization field from data since it doesn't exist in DB
-            unset($patientData['organization']);
+            $patientData['organization_id'] = trim($patientData['organization']); // Store name as string
         }
+        
+        // Clean up fields that don't exist in the patient table
+        unset($patientData['doctor']);
+        unset($patientData['organization']);
+        unset($patientData['sender']);
+        unset($patientData['address_required']);
+        unset($patientData['address_optional']);
+        unset($patientData['status']);
+        unset($patientData['age']);
         
         $patient->update($patientData);
 

@@ -149,4 +149,54 @@ class VisitTest extends Model
     {
         return $this->labTest && $this->labTest->category ? $this->labTest->category->name : 'Unknown';
     }
+
+    /**
+     * Boot method to handle model events
+     */
+    protected static function booted()
+    {
+        static::updated(function ($visitTest) {
+            // Check if status changed to completed
+            if ($visitTest->isDirty('status') && $visitTest->status === 'completed') {
+                $visitTest->checkAndCompleteReports();
+            }
+        });
+    }
+
+    /**
+     * Check if all tests in the visit are completed and mark reports as completed
+     */
+    public function checkAndCompleteReports()
+    {
+        $visit = $this->visit;
+        if (!$visit || !$visit->labRequest) {
+            return;
+        }
+
+        // Check if all tests in this visit are completed
+        $totalTests = $visit->visitTests()->count();
+        $completedTests = $visit->visitTests()->where('status', 'completed')->count();
+
+        if ($totalTests > 0 && $totalTests === $completedTests) {
+            // All tests are completed, mark the visit as completed
+            if ($visit->status !== 'completed') {
+                $visit->update([
+                    'status' => 'completed',
+                    'completed_at' => now()
+                ]);
+                \Log::info('Visit marked as completed: ' . $visit->id);
+            }
+            
+            // Mark the report as completed
+            $report = \App\Models\Report::where('lab_request_id', $visit->labRequest->id)->first();
+            if ($report && $report->status !== 'completed') {
+                $report->update([
+                    'status' => 'completed',
+                    'generated_at' => now(),
+                ]);
+                
+                \Log::info('Report marked as completed for lab request: ' . $visit->labRequest->id);
+            }
+        }
+    }
 } 

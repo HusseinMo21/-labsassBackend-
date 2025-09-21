@@ -28,6 +28,8 @@ class Visit extends Model
         'check_in_by',
         'check_in_at',
         'billing_status',
+        'checked_by_doctors',
+        'last_checked_at',
         'status',
         'remarks',
         'completed_at',
@@ -61,6 +63,8 @@ class Visit extends Model
         'completed_at' => 'datetime',
         'image_uploaded_at' => 'datetime',
         'image_size' => 'integer',
+        'checked_by_doctors' => 'array',
+        'last_checked_at' => 'datetime',
     ];
 
     protected $appends = ['lab_number'];

@@ -17,7 +17,8 @@ class UnpaidInvoicesController extends Controller
         $query = $request->get('query', '');
         $status = $request->get('status', 'all'); // all, pending, partial, paid
         
-        $invoices = Invoice::with(['labRequest.patient'])
+        // Get invoices with labRequest relationship (legacy invoices)
+        $invoicesWithLabRequest = Invoice::with(['labRequest.patient'])
             ->whereHas('labRequest.patient', function ($q) use ($query) {
                 if ($query) {
                     $q->where('name', 'like', "%{$query}%")
@@ -25,34 +26,115 @@ class UnpaidInvoicesController extends Controller
                 }
             });
 
-        // Filter by payment status
+        // Get invoices without labRequest (direct invoices from Patient Registration)
+        $invoicesWithoutLabRequest = Invoice::whereNull('lab_request_id')
+            ->whereNotNull('lab')
+            ->where(function ($q) use ($query) {
+                if ($query) {
+                    // Find patient by lab number
+                    $q->where('lab', 'like', "%{$query}%");
+                }
+            });
+
+        // Apply payment status filters
         if ($status !== 'all') {
             switch ($status) {
                 case 'pending':
-                    $invoices->where('paid', 0);
+                    $invoicesWithLabRequest->where('paid', 0);
+                    $invoicesWithoutLabRequest->where('paid', 0);
                     break;
                 case 'partial':
-                    $invoices->where('paid', '>', 0)
-                             ->whereRaw('paid < total');
+                    $invoicesWithLabRequest->where('paid', '>', 0)->whereRaw('paid < total');
+                    $invoicesWithoutLabRequest->where('paid', '>', 0)->whereRaw('paid < total');
                     break;
                 case 'paid':
-                    $invoices->whereRaw('paid >= total');
+                    $invoicesWithLabRequest->whereRaw('paid >= total');
+                    $invoicesWithoutLabRequest->whereRaw('paid >= total');
                     break;
             }
         }
 
-        $invoices = $invoices->orderBy('id', 'desc')
-                            ->paginate(15);
+        // Use a more efficient approach - get recent invoices first
+        $perPage = 15;
+        $currentPage = $request->get('page', 1);
+        
+        // Get recent invoices (last 1000) to avoid memory issues
+        $recentInvoices = Invoice::orderBy('id', 'desc')
+            ->limit(1000)
+            ->get();
+        
+        // Filter by payment status and search
+        $filteredInvoices = $recentInvoices->filter(function ($invoice) use ($status, $query) {
+            // Apply payment status filter
+            if ($status !== 'all') {
+                switch ($status) {
+                    case 'pending':
+                        if ($invoice->paid != 0) return false;
+                        break;
+                    case 'partial':
+                        if ($invoice->paid <= 0 || $invoice->paid >= $invoice->total) return false;
+                        break;
+                    case 'paid':
+                        if ($invoice->paid < $invoice->total) return false;
+                        break;
+                }
+            }
+            
+            // Apply search filter
+            if ($query) {
+                // Check if lab number matches
+                if (strpos($invoice->lab, $query) !== false) {
+                    return true;
+                }
+                
+                // Check if patient name/phone matches (for invoices with labRequest)
+                if ($invoice->labRequest && $invoice->labRequest->patient) {
+                    $patient = $invoice->labRequest->patient;
+                    if (strpos($patient->name, $query) !== false || strpos($patient->phone, $query) !== false) {
+                        return true;
+                    }
+                } else {
+                    // For direct invoices, find patient by lab number
+                    $patient = \App\Models\Patient::where('lab', $invoice->lab)->first();
+                    if ($patient && (strpos($patient->name, $query) !== false || strpos($patient->phone, $query) !== false)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            
+            return true;
+        });
+        
+        // Sort and paginate
+        $filteredInvoices = $filteredInvoices->sortByDesc('id');
+        $offset = ($currentPage - 1) * $perPage;
+        $paginatedInvoices = $filteredInvoices->slice($offset, $perPage)->values();
 
         // Transform the data to match frontend expectations
-        $transformedData = $invoices->through(function ($invoice) {
-            // Find the actual visit ID for this patient
+        $transformedData = $paginatedInvoices->map(function ($invoice) {
+            $patient = null;
             $visitId = null;
+            $visitDate = null;
+
             if ($invoice->labRequest && $invoice->labRequest->patient) {
-                $visit = \App\Models\Visit::where('patient_id', $invoice->labRequest->patient->id)
+                // Legacy invoice with labRequest
+                $patient = $invoice->labRequest->patient;
+                $visit = \App\Models\Visit::where('patient_id', $patient->id)
                     ->orderBy('id', 'desc')
                     ->first();
                 $visitId = $visit ? $visit->id : null;
+                $visitDate = $invoice->labRequest->created_at ? $invoice->labRequest->created_at->format('Y-m-d') : null;
+            } else {
+                // Direct invoice from Patient Registration - find patient by lab number
+                $patient = \App\Models\Patient::where('lab', $invoice->lab)->first();
+                if ($patient) {
+                    $visit = \App\Models\Visit::where('patient_id', $patient->id)
+                        ->orderBy('id', 'desc')
+                        ->first();
+                    $visitId = $visit ? $visit->id : null;
+                    $visitDate = $visit ? $visit->visit_date : null;
+                }
             }
             
             return [
@@ -61,19 +143,31 @@ class UnpaidInvoicesController extends Controller
                 'total_amount' => $invoice->total,
                 'amount_paid' => $invoice->paid,
                 'remaining_balance' => $invoice->remaining,
-                'visit' => $invoice->labRequest ? [
-                    'id' => $visitId, // Use actual visit ID instead of lab request ID
-                    'visit_date' => $invoice->labRequest->created_at ? $invoice->labRequest->created_at->format('Y-m-d') : null,
-                    'patient' => $invoice->labRequest->patient ? [
-                        'id' => $invoice->labRequest->patient->id,
-                        'name' => $invoice->labRequest->patient->name,
-                        'phone' => $invoice->labRequest->patient->phone,
-                    ] : null,
+                'visit' => $patient ? [
+                    'id' => $visitId,
+                    'visit_date' => $visitDate,
+                    'patient' => [
+                        'id' => $patient->id,
+                        'name' => $patient->name,
+                        'phone' => $patient->phone,
+                    ],
                 ] : null,
             ];
         });
 
-        return response()->json($transformedData);
+        // Create pagination response
+        $total = $filteredInvoices->count();
+        $lastPage = ceil($total / $perPage);
+
+        return response()->json([
+            'data' => $transformedData,
+            'current_page' => $currentPage,
+            'last_page' => $lastPage,
+            'per_page' => $perPage,
+            'total' => $total,
+            'from' => $offset + 1,
+            'to' => min($offset + $perPage, $total),
+        ]);
     }
 
     public function getPatientBalance($patientId)

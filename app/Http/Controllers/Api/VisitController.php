@@ -15,7 +15,18 @@ class VisitController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Visit::with(['patient', 'visitTests.labTest', 'labRequest']);
+        // Optimize: Use select to only fetch needed columns and eager load relationships
+        $query = Visit::select([
+            'id', 'visit_number', 'visit_date', 'status', 'created_at', 'updated_at',
+            'patient_id', 'lab_request_id', 'total_amount', 'final_amount'
+        ])
+        ->with([
+            'patient:id,name,phone,gender,birth_date,age',
+            'visitTests:id,visit_id,lab_test_id,status,result_value,result_status,result_notes,price',
+            'visitTests.labTest:id,name,code,reference_range',
+            'labRequest:id,lab_no,suffix',
+            'labRequest.invoice:id,lab_request_id,paid,remaining' // Eager load invoice to avoid N+1
+        ]);
         
         // Filter to only include visits with receipts if requested
         // Note: receipt_number column doesn't exist in original visits table
@@ -73,23 +84,36 @@ class VisitController extends Controller
             $query->whereDate('visit_date', '<=', $request->end_date);
         }
         
+        // Exclude completed visits if requested (for Reports & Analytics)
+        if ($request->has('exclude_completed') && $request->exclude_completed === 'true') {
+            $query->where('status', '!=', 'completed');
+        }
+        
         // Pagination
         $perPage = $request->get('per_page', 15);
-        $visits = $query->orderBy('id', 'desc')->paginate($perPage);
+        $visits = $query->orderBy('created_at', 'desc')->paginate($perPage);
         
-        // Transform the data to add receipt_number field and financial data for frontend compatibility
+        // Optimize: Transform data more efficiently without N+1 queries
         $transformedData = $visits->through(function ($visit) {
-            // Get the related invoice for financial data
-            $invoice = null;
-            if ($visit->labRequest) {
-                $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->lab_no)->first();
-            }
+            $invoice = $visit->labRequest?->invoice;
             
             return [
-                ...$visit->toArray(),
-                'receipt_number' => $visit->visit_number, // Use visit_number as receipt_number
-                'upfront_payment' => $invoice ? $invoice->paid : ($visit->upfront_payment ?: 0),
-                'remaining_balance' => $invoice ? $invoice->remaining : ($visit->remaining_balance ?: 0),
+                'id' => $visit->id,
+                'visit_number' => $visit->visit_number,
+                'visit_date' => $visit->visit_date,
+                'status' => $visit->status,
+                'test_status' => $this->getTestStatus($visit),
+                'created_at' => $visit->created_at,
+                'updated_at' => $visit->updated_at,
+                'patient' => $visit->patient,
+                'visit_tests' => $visit->visitTests,
+                'labRequest' => $visit->labRequest,
+                'receipt_number' => $visit->visit_number,
+                'lab_number' => $visit->labRequest?->full_lab_no ?? 'N/A',
+                'total_amount' => $visit->total_amount ?? 0,
+                'final_amount' => $visit->final_amount ?? 0,
+                'upfront_payment' => $invoice?->paid ?? 0,
+                'remaining_balance' => $invoice?->remaining ?? 0,
                 'billing_status' => $this->getBillingStatus($invoice, $visit),
             ];
         });
@@ -104,7 +128,7 @@ class VisitController extends Controller
 
     public function show($id)
     {
-        $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest'])
+        $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest.reports'])
             ->findOrFail($id);
         
         return response()->json($visit);
@@ -224,6 +248,25 @@ class VisitController extends Controller
                 'final_amount' => $totalAmount, // If you have discounts, update this accordingly
             ]);
 
+            // Create initial report automatically for each visit test
+            foreach ($visit->visitTests as $visitTest) {
+                try {
+                    \App\Models\Report::create([
+                        'title' => 'Lab Report - ' . $visitTest->labTest->name ?? 'Test Report',
+                        'content' => 'Report generated automatically for visit ' . $visit->visit_number,
+                        'status' => 'pending',
+                        'generated_by' => auth()->id() ?? 1,
+                        'generated_at' => now(),
+                        'created_at' => now(),
+                    ]);
+                    
+                    \Log::info('Report created automatically for visit test: ' . $visitTest->id);
+                } catch (\Exception $e) {
+                    \Log::error('Failed to create report for visit test: ' . $e->getMessage());
+                    // Don't fail visit creation if report creation fails
+                }
+            }
+
             DB::commit();
 
             return response()->json([
@@ -240,7 +283,7 @@ class VisitController extends Controller
     public function getVisits()
     {
         $visits = Visit::with(['patient', 'visitTests.labTest', 'labRequest'])
-            ->orderBy('id', 'desc')
+            ->orderBy('created_at', 'desc')
             ->paginate(15);
 
         // Transform the data to add receipt_number field and financial data for frontend compatibility
@@ -248,12 +291,13 @@ class VisitController extends Controller
             // Get the related invoice for financial data
             $invoice = null;
             if ($visit->labRequest) {
-                $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->lab_no)->first();
+                $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
             }
             
             return [
                 ...$visit->toArray(),
                 'receipt_number' => $visit->visit_number, // Use visit_number as receipt_number
+                'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?: 'N/A'),
                 'upfront_payment' => $invoice ? $invoice->paid : ($visit->upfront_payment ?: 0),
                 'remaining_balance' => $invoice ? $invoice->remaining : ($visit->remaining_balance ?: 0),
                 'billing_status' => $this->getBillingStatus($invoice, $visit),
@@ -276,6 +320,26 @@ class VisitController extends Controller
             return 'paid';
         } elseif ($invoice->paid > 0) {
             return 'partial';
+        } else {
+            return 'pending';
+        }
+    }
+
+    /**
+     * Get test status based on visit tests
+     */
+    private function getTestStatus($visit)
+    {
+        if (!$visit->visitTests || $visit->visitTests->isEmpty()) {
+            return 'pending';
+        }
+
+        $statuses = $visit->visitTests->pluck('status')->unique();
+        
+        if ($statuses->contains('completed')) {
+            return 'completed';
+        } elseif ($statuses->contains('under_review')) {
+            return 'under_review';
         } else {
             return 'pending';
         }
@@ -698,5 +762,33 @@ class VisitController extends Controller
                 'completed_at' => now()
             ]);
         }
+    }
+
+    public function markAsChecked(Request $request, $visitId)
+    {
+        $visit = Visit::findOrFail($visitId);
+        
+        $request->validate([
+            'doctor_name' => 'required|string|max:255',
+        ]);
+
+        $doctorName = $request->doctor_name;
+        $currentDoctors = $visit->checked_by_doctors ?? [];
+        
+        // Add doctor if not already in the list
+        if (!in_array($doctorName, $currentDoctors)) {
+            $currentDoctors[] = $doctorName;
+        }
+        
+        $visit->update([
+            'checked_by_doctors' => $currentDoctors,
+            'last_checked_at' => now()
+        ]);
+
+        return response()->json([
+            'message' => 'Report marked as checked successfully',
+            'checked_by_doctors' => $currentDoctors,
+            'last_checked_at' => $visit->last_checked_at
+        ]);
     }
 } 

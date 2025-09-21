@@ -13,6 +13,9 @@ class Sample extends Model
     protected $fillable = [
         'lab_request_id',
         'sample_type',
+        'case_type',
+        'sample_size',
+        'number_of_samples',
         'sample_id',
         'collection_date',
         'received_date',
@@ -41,6 +44,7 @@ class Sample extends Model
         'analysis_started_at' => 'datetime',
         'completed_at' => 'datetime',
         'disposed_at' => 'datetime',
+        'number_of_samples' => 'integer',
     ];
 
     /**

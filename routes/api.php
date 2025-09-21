@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\DoctorController;
 use App\Http\Controllers\Api\OrganizationController;
 use App\Http\Controllers\Api\LabRequestController;
 use App\Http\Controllers\Api\TestCategoryController;
+use App\Http\Controllers\Api\PatientRegistrationController;
 
 /*
 |--------------------------------------------------------------------------
@@ -86,6 +87,7 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
     Route::get('/lab-requests-search', [LabRequestController::class, 'search']);
     Route::get('/lab-requests-stats', [LabRequestController::class, 'getStats']);
     Route::get('/lab-requests-patient-details', [LabRequestController::class, 'getPatientDetailsByLabNo']);
+    Route::get('/lab-requests/{labRequest}/visit', [LabRequestController::class, 'getVisitByLabRequest']);
 
     // Barcode routes
     Route::post('/barcode/scan', [App\Http\Controllers\Api\BarcodeController::class, 'scan']);
@@ -111,6 +113,7 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
     Route::put('/visits/{visit}/results', [VisitController::class, 'updateVisitResults']);
     Route::put('/visits/{visit}/tests/{visitTest}/result', [VisitController::class, 'updateTestResult']);
     Route::put('/visits/{visit}/complete', [VisitController::class, 'completeVisit']);
+    Route::post('/visits/{visit}/mark-checked', [VisitController::class, 'markAsChecked']);
     Route::get('/visits/{visit}/report', [VisitController::class, 'generateReport']);
     Route::post('/visits/{visit}/upload-image', [VisitController::class, 'uploadImage']);
     Route::delete('/visits/{visit}/remove-image', [VisitController::class, 'removeImage']);
@@ -177,6 +180,14 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
         Route::get('/reports/financial', [ReportController::class, 'financial']);
         Route::get('/reports/export', [ReportController::class, 'export']);
     });
+    
+    // PDF Report generation
+    Route::get('/visits/{visitId}/report/pdf', [ReportController::class, 'generateProfessionalReport']);
+    Route::get('/visits/{visitId}/report/pdf/with-header', [ReportController::class, 'generateReportWithHeader']);
+    Route::get('/visits/{visitId}/report/pdf/without-header', [ReportController::class, 'generateReportWithoutHeader']);
+    
+    // Report data saving
+    Route::post('/visits/{visitId}/report', [ReportController::class, 'saveReport']);
 
     // Sample Tracking routes (admin and staff only)
     Route::middleware(['role:admin,staff'])->group(function () {
@@ -215,6 +226,14 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
         Route::get('/check-in/visits/{visitId}/receipt', [CheckInController::class, 'getReceipt']);
         Route::get('/check-in/visits/{visitId}/sample-label', [CheckInController::class, 'getSampleLabel']);
         Route::get('/check-in/visits/{visitId}/final-payment-receipt', [CheckInController::class, 'getFinalPaymentReceipt']);
+    });
+
+    // Patient Registration routes
+    Route::middleware(['auth:api', 'role:admin,staff'])->group(function () {
+        Route::get('/patient-registration/search', [PatientRegistrationController::class, 'search']);
+        Route::get('/patient-registration/next-lab-number', [PatientRegistrationController::class, 'getNextLabNumber']);
+        Route::post('/patient-registration/submit', [PatientRegistrationController::class, 'submit']);
+        Route::get('/patient-registration/test-categories', [PatientRegistrationController::class, 'getTestCategories']);
     });
 
     // Unpaid Invoices and Patient Balance routes (admin and staff only)

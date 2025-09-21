@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::create('notifications', function (Blueprint $table) {
             $table->id();
             $table->foreignId('visit_test_id')->nullable()->constrained('visit_tests')->onDelete('cascade');
-            $table->foreignId('patient_id')->nullable()->constrained('patients')->onDelete('cascade');
+            $table->foreignId('patient_id')->nullable()->constrained('patient')->onDelete('cascade');
             $table->string('type'); // 'sms', 'email', 'critical_alert'
             $table->string('recipient_type'); // 'patient', 'doctor', 'lab_staff'
             $table->string('recipient_contact'); // phone or email

@@ -14,7 +14,7 @@ class EnhancedReportApiController extends Controller
 {
     public function index(Request $request)
     {
-        $query = EnhancedReport::with(['patient', 'createdBy', 'reviewedBy', 'approvedBy']);
+        $query = EnhancedReport::with(['patient', 'createdBy', 'reviewedBy', 'approvedBy', 'labRequest.visit']);
 
         // Role-based filtering
         $user = Auth::user();
@@ -22,8 +22,8 @@ class EnhancedReportApiController extends Controller
             // Staff can only see approved, printed, and delivered reports
             $query->whereIn('status', ['approved', 'printed', 'delivered']);
         } elseif ($user->role === 'doctor') {
-            // Doctors can see under_review and approved reports
-            $query->whereIn('status', ['under_review', 'approved', 'printed', 'delivered']);
+            // Doctors can see draft, under_review, approved, printed, and delivered reports
+            $query->whereIn('status', ['draft', 'under_review', 'approved', 'printed', 'delivered']);
         }
         // Admins can see all reports
 
@@ -54,20 +54,68 @@ class EnhancedReportApiController extends Controller
             $query->whereDate('report_date', '<=', $request->date_to);
         }
 
-        $reports = $query->orderByRaw("CASE 
-            WHEN status = 'approved' THEN 1 
-            WHEN status = 'printed' THEN 2 
-            WHEN status = 'delivered' THEN 3 
-            WHEN status = 'under_review' THEN 4 
-            WHEN status = 'draft' THEN 5 
-            ELSE 6 
-        END")
-        ->orderBy('created_at', 'desc')
+        $reports = $query->orderBy('created_at', 'desc')
+        ->orderBy('report_date', 'desc')
         ->paginate(20);
+
+        // Transform the data to ensure correct lab number is returned
+        $transformedData = $reports->through(function ($report) {
+            // Use the lab number from labRequest if available, otherwise use the report's lab_no
+            $correctLabNo = $report->labRequest?->full_lab_no ?? $report->lab_no;
+            
+            return [
+                'id' => $report->id,
+                'nos' => $report->nos,
+                'reff' => $report->reff,
+                'clinical' => $report->clinical,
+                'nature' => $report->nature,
+                'report_date' => $report->report_date,
+                'lab_no' => $correctLabNo, // Use the correct lab number
+                'age' => $report->age,
+                'gross' => $report->gross,
+                'micro' => $report->micro,
+                'conc' => $report->conc,
+                'reco' => $report->reco,
+                'type' => $report->type,
+                'sex' => $report->sex,
+                'recieving' => $report->recieving,
+                'discharge' => $report->discharge,
+                'confirm' => $report->confirm,
+                'print' => $report->print,
+                'patient_id' => $report->patient_id,
+                'lab_request_id' => $report->lab_request_id,
+                'created_by' => $report->created_by,
+                'reviewed_by' => $report->reviewed_by,
+                'approved_by' => $report->approved_by,
+                'status' => $report->status,
+                'priority' => $report->priority,
+                'examination_details' => $report->examination_details,
+                'quality_control' => $report->quality_control,
+                'barcode' => $report->barcode,
+                'digital_signature' => $report->digital_signature,
+                'reviewed_at' => $report->reviewed_at,
+                'approved_at' => $report->approved_at,
+                'printed_at' => $report->printed_at,
+                'delivered_at' => $report->delivered_at,
+                'image_path' => $report->image_path,
+                'image_filename' => $report->image_filename,
+                'image_mime_type' => $report->image_mime_type,
+                'image_size' => $report->image_size,
+                'image_uploaded_at' => $report->image_uploaded_at,
+                'image_uploaded_by' => $report->image_uploaded_by,
+                'created_at' => $report->created_at,
+                'updated_at' => $report->updated_at,
+                'patient' => $report->patient,
+                'labRequest' => $report->labRequest,
+                'createdBy' => $report->createdBy,
+                'reviewedBy' => $report->reviewedBy,
+                'approvedBy' => $report->approvedBy,
+            ];
+        });
 
         return response()->json([
             'success' => true,
-            'data' => $reports
+            'data' => $transformedData
         ]);
     }
 

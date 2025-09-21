@@ -86,6 +86,10 @@ class LabRequestController extends Controller
         $validator = Validator::make($request->all(), [
             'patient_id' => 'nullable|exists:patient,id',
             'samples' => 'required|array|min:1',
+            'samples.*.sample_type' => 'nullable|string|max:255',
+            'samples.*.case_type' => 'nullable|string|max:255',
+            'samples.*.sample_size' => 'nullable|string|max:255',
+            'samples.*.number_of_samples' => 'nullable|integer|min:1',
             'samples.*.tsample' => 'nullable|string|max:255',
             'samples.*.nsample' => 'nullable|string|max:255',
             'samples.*.isample' => 'nullable|string|max:255',
@@ -355,6 +359,34 @@ class LabRequestController extends Controller
     }
 
     /**
+     * Get visit by lab request ID.
+     */
+    public function getVisitByLabRequest(LabRequest $labRequest): JsonResponse
+    {
+        try {
+            $visit = $labRequest->visit;
+            
+            if (!$visit) {
+                return response()->json([
+                    'error' => 'Visit not found for this lab request'
+                ], 404);
+            }
+            
+            return response()->json($visit);
+        } catch (\Exception $e) {
+            Log::error('Error fetching visit by lab request', [
+                'lab_request_id' => $labRequest->id,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to fetch visit',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Get comprehensive patient information by lab number.
      */
     public function getPatientDetailsByLabNo(Request $request): JsonResponse
@@ -471,9 +503,13 @@ class LabRequestController extends Controller
                 'samples' => $labRequest->samples->map(function($sample) {
                     return [
                         'id' => $sample->id,
-                        'tsample' => $sample->sample_type, // Map sample_type to tsample
-                        'nsample' => $sample->sample_id,   // Map sample_id to nsample
-                        'isample' => $sample->notes,       // Map notes to isample
+                        'sample_type' => $sample->sample_type,
+                        'case_type' => $sample->case_type,
+                        'sample_size' => $sample->sample_size,
+                        'number_of_samples' => $sample->number_of_samples,
+                        'tsample' => $sample->tsample,
+                        'nsample' => $sample->nsample,
+                        'isample' => $sample->isample,
                         'notes' => $sample->notes,
                         'created_at' => $sample->created_at,
                     ];

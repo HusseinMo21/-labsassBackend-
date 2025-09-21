@@ -8,14 +8,18 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Expense extends Model
 {
     protected $fillable = [
-        'name',
+        'description',
         'amount',
-        'date',
-        'author',
+        'category',
+        'expense_date',
+        'payment_method',
+        'reference_number',
+        'notes',
+        'created_by',
     ];
 
     protected $casts = [
-        'date' => 'date',
+        'expense_date' => 'date',
         'amount' => 'decimal:2',
     ];
 
@@ -24,7 +28,7 @@ class Expense extends Model
      */
     public function author(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'author');
+        return $this->belongsTo(User::class, 'created_by');
     }
 
     /**

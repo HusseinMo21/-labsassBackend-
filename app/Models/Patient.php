@@ -10,18 +10,45 @@ class Patient extends Model
     use HasFactory;
 
     protected $table = 'patient';
-    public $timestamps = false;
+    public $timestamps = true;
 
     protected $fillable = [
+        // Modern fields
         'name',
         'gender',
-        'age',
+        'birth_date',
         'phone',
         'whatsapp_number',
         'address',
+        'emergency_contact',
+        'emergency_phone',
+        'medical_history',
+        'allergies',
+        'address_required',
+        'address_optional',
+        'organization',
+        'status',
+        'user_id',
+        'doctor_id', // Store doctor name as string
+        'organization_id', // Store organization name as string
+        
+        // Patient Registration fields
+        'sample_type',
+        'case_type',
+        'sample_size',
+        'number_of_samples',
+        'day_of_week',
+        'previous_tests',
+        'attendance_date',
+        'delivery_date',
+        'total_amount',
+        'amount_paid',
+        
+        // Legacy fields
         'entry',
         'deli',
         'time',
+        'age',
         'tsample',
         'nsample',
         'isample',
@@ -34,16 +61,19 @@ class Patient extends Model
         'entryday',
         'deliday',
         'type',
-        'doctor_id',
-        'organization_id',
-        'organization', // For form handling (not stored in DB)
     ];
 
     protected $casts = [
+        'birth_date' => 'date',
         'age' => 'integer',
         'paid' => 'integer',
         'pleft' => 'integer',
         'total' => 'integer',
+        'number_of_samples' => 'integer',
+        'attendance_date' => 'date',
+        'delivery_date' => 'date',
+        'total_amount' => 'decimal:2',
+        'amount_paid' => 'decimal:2',
     ];
 
     public function visits()
@@ -61,15 +91,16 @@ class Patient extends Model
         return $this->belongsTo(User::class, 'user_id');
     }
 
-    public function doctor()
-    {
-        return $this->belongsTo(Doctor::class);
-    }
+        // Custom relationships that work with string-based storage
+        public function doctor()
+        {
+            return $this->belongsTo(Doctor::class, 'doctor_id', 'name');
+        }
 
-    public function organization()
-    {
-        return $this->belongsTo(Organization::class);
-    }
+        public function organization()
+        {
+            return $this->belongsTo(Organization::class, 'organization_id', 'name');
+        }
 
     public function credentials()
     {

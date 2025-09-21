@@ -44,7 +44,7 @@ return new class extends Migration
         
         Schema::table('lab_requests', function (Blueprint $table) {
             // Restore the original foreign key constraint pointing to 'patients' table
-            $table->foreign('patient_id')->references('id')->on('patients')->onDelete('set null');
+            $table->foreign('patient_id')->references('id')->on('patient')->onDelete('set null');
         });
     }
 };
