@@ -261,6 +261,12 @@ class PatientRegistrationController extends Controller
                     $paymentStatus = 'partial';
                 }
                 
+                // Get current staff shift
+                $currentShift = \App\Models\Shift::where('staff_id', auth()->id())
+                    ->where('status', 'open')
+                    ->whereDate('opened_at', today())
+                    ->first();
+
                 $visit = Visit::create([
                     'patient_id' => $patient->id,
                     'visit_number' => 'VIS-' . date('Ymd') . '-' . str_pad($patient->id, 6, '0', STR_PAD_LEFT),
@@ -270,6 +276,8 @@ class PatientRegistrationController extends Controller
                     'final_amount' => $totalAmount,
                     'status' => 'registered',
                     'remarks' => 'Created via Patient Registration - Payment Status: ' . $paymentStatus,
+                    'shift_id' => $currentShift?->id,
+                    'processed_by_staff' => auth()->id(),
                 ]);
                 
                 // Create visit test based on case type
@@ -299,6 +307,26 @@ class PatientRegistrationController extends Controller
                     ]),
                 ]);
                 
+                // Create sample records from patient registration data
+                if (isset($data['sample_type']) || isset($data['case_type']) || isset($data['sample_size']) || isset($data['number_of_samples'])) {
+                    $numberOfSamples = intval($data['number_of_samples'] ?? 1);
+                    
+                    // Create multiple sample records based on number_of_samples
+                    for ($i = 1; $i <= $numberOfSamples; $i++) {
+                        \App\Models\Sample::create([
+                            'lab_request_id' => $labRequest->id,
+                            'sample_type' => $data['sample_type'] ?? null,
+                            'case_type' => $data['case_type'] ?? null,
+                            'sample_size' => $data['sample_size'] ?? null,
+                            'number_of_samples' => 1, // Each individual sample record represents 1 sample
+                            'sample_id' => 'SMP-' . str_pad($labRequest->id, 6, '0', STR_PAD_LEFT) . '-' . date('Ymd') . '-' . str_pad($i, 2, '0', STR_PAD_LEFT),
+                            'status' => 'collected',
+                            'notes' => 'Sample ' . $i . ' of ' . $numberOfSamples . ' - from patient registration',
+                            'created_at' => now(),
+                        ]);
+                    }
+                }
+                
                 // Create initial report automatically
                 if ($visitTest) {
                     \App\Models\Report::create([
@@ -319,7 +347,21 @@ class PatientRegistrationController extends Controller
                     'paid' => $amountPaid,
                     'remaining' => $totalAmount - $amountPaid,
                     'lab_request_id' => $labRequest->id, // Link to lab request
+                    'shift_id' => $currentShift?->id,
                 ]);
+                
+                // Create payment record if amount was paid during registration
+                if ($amountPaid > 0) {
+                    \App\Models\Payment::create([
+                        'invoice_id' => $invoice->id,
+                        'paid' => $amountPaid,
+                        'comment' => 'Payment made during patient registration',
+                        'date' => now()->toDateString(),
+                        'author' => auth()->id() ?? 1,
+                        'income' => 1,
+                        'shift_id' => $currentShift?->id,
+                    ]);
+                }
                 
                 // If partial or no payment, add to unpaid invoices tracking
                 if ($paymentStatus !== 'paid') {

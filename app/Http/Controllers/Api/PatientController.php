@@ -723,35 +723,59 @@ class PatientController extends Controller
         $patient = Patient::where('user_id', $user->id)->first();
         
         if (!$patient) {
+            \Log::warning('Patient not found for user', ['user_id' => $user->id]);
             return response()->json(['message' => 'Patient not found'], 404);
         }
 
+        // Log patient access for security audit
+        \Log::info('Patient accessing their reports', [
+            'patient_id' => $patient->id,
+            'patient_name' => $patient->name,
+            'user_id' => $user->id,
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+        ]);
+
         $reports = [];
-        $visits = $patient->visits()->with(['visitTests.labTest.category'])->get();
         
-        foreach ($visits as $visit) {
-            foreach ($visit->visitTests as $test) {
-                // Only show completed reports that are fully paid
-                if ($test->status === 'completed' && $visit->payment_status === 'paid') {
-                    $reports[] = [
-                        'id' => $test->id,
-                        'visit_id' => $visit->visit_id,
-                        'test_name' => $test->labTest->name ?? '',
-                        'test_category' => $test->labTest->category->name ?? '',
-                        'result_value' => $test->result_value,
-                        'result_status' => $test->result_status,
-                        'visit_date' => $visit->visit_date,
-                        'report_date' => $test->updated_at,
-                        'status' => $test->status,
-                        'patient_name' => $patient->name,
-                        'clinical_data' => $visit->clinical_data,
-                        'microscopic_description' => $visit->microscopic_description,
-                        'diagnosis' => $visit->diagnosis,
-                        'recommendations' => $visit->recommendations,
-                    ];
-                }
-            }
+        // ONLY get Enhanced Reports that have been delivered (sent by staff)
+        // Double security: ensure patient_id matches the authenticated patient
+        $enhancedReports = \App\Models\EnhancedReport::where('patient_id', $patient->id)
+            ->where('status', 'delivered')
+            ->with(['labRequest.visit'])
+            ->get();
+        
+        foreach ($enhancedReports as $enhancedReport) {
+            $reports[] = [
+                'id' => $enhancedReport->id,
+                'type' => 'enhanced',
+                'visit_id' => $enhancedReport->labRequest?->visit?->id,
+                'lab_no' => $enhancedReport->lab_no,
+                'test_name' => 'Pathology Report',
+                'test_category' => $enhancedReport->type ?: 'PATH',
+                'result_value' => $enhancedReport->conc,
+                'result_status' => $enhancedReport->status,
+                'visit_date' => $enhancedReport->labRequest?->visit?->visit_date,
+                'report_date' => $enhancedReport->report_date,
+                'delivered_at' => $enhancedReport->delivered_at,
+                'status' => $enhancedReport->status,
+                'patient_name' => $patient->name,
+                'clinical_data' => $enhancedReport->clinical,
+                'microscopic_description' => $enhancedReport->micro,
+                'diagnosis' => $enhancedReport->conc,
+                'recommendations' => $enhancedReport->reco,
+                'gross_examination' => $enhancedReport->gross,
+                'nature_of_specimen' => $enhancedReport->nature,
+                'barcode' => $enhancedReport->barcode,
+            ];
         }
+
+        // Sort reports by report date (newest first)
+        usort($reports, function($a, $b) {
+            $dateA = $a['report_date'] ? strtotime($a['report_date']) : 0;
+            $dateB = $b['report_date'] ? strtotime($b['report_date']) : 0;
+            return $dateB - $dateA;
+        });
 
         return response()->json(['reports' => $reports]);
     }
@@ -762,26 +786,62 @@ class PatientController extends Controller
         $patient = Patient::where('user_id', $user->id)->first();
         
         if (!$patient) {
+            \Log::warning('Patient not found for user', ['user_id' => $user->id]);
             return response()->json(['message' => 'Patient not found'], 404);
         }
 
-        $test = \App\Models\VisitTest::with(['labTest.category', 'visit'])
-            ->where('id', $reportId)
-            ->whereHas('visit', function($q) use ($patient) {
-                $q->where('patient_id', $patient->id);
-            })
+        // Log specific report access for security audit
+        \Log::info('Patient accessing specific report', [
+            'patient_id' => $patient->id,
+            'patient_name' => $patient->name,
+            'user_id' => $user->id,
+            'report_id' => $reportId,
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+        ]);
+
+        // ONLY get Enhanced Reports that have been delivered (sent by staff)
+        // Triple security: ensure report ID, patient_id, and delivered status
+        $enhancedReport = \App\Models\EnhancedReport::where('id', $reportId)
+            ->where('patient_id', $patient->id)
+            ->where('status', 'delivered')
+            ->with(['labRequest.visit'])
             ->first();
 
-        if (!$test) {
-            return response()->json(['message' => 'Report not found'], 404);
+        if (!$enhancedReport) {
+            \Log::warning('Patient attempted to access unauthorized report', [
+                'patient_id' => $patient->id,
+                'report_id' => $reportId,
+                'user_id' => $user->id,
+                'ip_address' => $request->ip(),
+            ]);
+            return response()->json(['message' => 'Report not found or not available yet'], 404);
         }
 
-        // Check if report is completed and fully paid
-        if ($test->status !== 'completed' || $test->visit->payment_status !== 'paid') {
-            return response()->json(['message' => 'Report not available yet'], 403);
-        }
-
-        return response()->json(['report' => $test]);
+        return response()->json([
+            'report' => [
+                'id' => $enhancedReport->id,
+                'type' => 'enhanced',
+                'visit_id' => $enhancedReport->labRequest?->visit?->id,
+                'lab_no' => $enhancedReport->lab_no,
+                'test_name' => 'Pathology Report',
+                'test_category' => $enhancedReport->type ?: 'PATH',
+                'result_value' => $enhancedReport->conc,
+                'result_status' => $enhancedReport->status,
+                'visit_date' => $enhancedReport->labRequest?->visit?->visit_date,
+                'report_date' => $enhancedReport->report_date,
+                'delivered_at' => $enhancedReport->delivered_at,
+                'status' => $enhancedReport->status,
+                'patient_name' => $patient->name,
+                'clinical_data' => $enhancedReport->clinical,
+                'microscopic_description' => $enhancedReport->micro,
+                'diagnosis' => $enhancedReport->conc,
+                'recommendations' => $enhancedReport->reco,
+                'gross_examination' => $enhancedReport->gross,
+                'nature_of_specimen' => $enhancedReport->nature,
+                'barcode' => $enhancedReport->barcode,
+            ]
+        ]);
     }
 
     public function myVisits(Request $request)

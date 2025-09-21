@@ -330,10 +330,11 @@ class UnpaidInvoicesController extends Controller
         
         $patient = $invoice->labRequest ? $invoice->labRequest->patient : null;
         
-        // Get the visit data to retrieve expected delivery date
+        // Get the visit data to retrieve expected delivery date and tests
         $visit = null;
         if ($invoice->labRequest) {
-            $visit = \App\Models\Visit::where('lab_request_id', $invoice->lab_request_id)
+            $visit = \App\Models\Visit::with(['visitTests.testCategory', 'visitTests.labTest'])
+                ->where('lab_request_id', $invoice->lab_request_id)
                 ->orderBy('id', 'desc')
                 ->first();
         }
@@ -371,7 +372,13 @@ class UnpaidInvoicesController extends Controller
             'patient_name' => $patient->name,
             'patient_age' => $patient->age,
             'patient_phone' => $patient->phone,
-            'tests' => [], // No visit tests available without visit relationship
+            'tests' => $visit ? $visit->visitTests->map(function ($visitTest) {
+                return [
+                    'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
+                    'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
+                    'price' => $visitTest->final_price ?: $visitTest->price,
+                ];
+            }) : [],
             'total_amount' => $invoice->total,
             'discount_amount' => 0, // No discount in original table
             'final_amount' => $invoice->total,
@@ -379,7 +386,7 @@ class UnpaidInvoicesController extends Controller
             'paid_now' => $paidNow,
             'remaining_balance' => $invoice->remaining,
             'payment_method' => 'cash', // Default since payments table doesn't have payment_method field
-            'expected_delivery_date' => $visit ? $visit->expected_delivery_date : null,
+            'expected_delivery_date' => $visit ? $visit->getExpectedDeliveryDate() : now()->addDays(1)->toDateString(),
             'lab_number' => $invoice->labRequest ? $invoice->labRequest->full_lab_no : 'N/A',
             'processed_by' => $processedBy,
             'visit_id' => $invoice->labRequest ? $invoice->labRequest->id : null,

@@ -17,6 +17,7 @@ class Invoice extends Model
         'paid',
         'remaining',
         'lab_request_id',
+        'shift_id',
     ];
 
     protected $casts = [
@@ -41,6 +42,11 @@ class Invoice extends Model
     public function payments()
     {
         return $this->hasMany(Payment::class);
+    }
+
+    public function shift()
+    {
+        return $this->belongsTo(Shift::class);
     }
 
     public function getRemainingBalanceAttribute()
@@ -81,6 +87,12 @@ class Invoice extends Model
             throw new \Exception('Payment amount exceeds remaining balance');
         }
 
+        // Get current staff shift
+        $currentShift = \App\Models\Shift::where('staff_id', auth()->id())
+            ->where('status', 'open')
+            ->whereDate('opened_at', today())
+            ->first();
+
         $this->payments()->create([
             'paid' => $amount,
             'comment' => $notes,
@@ -88,6 +100,7 @@ class Invoice extends Model
             'author' => auth()->id() ?? 1, // Default to user ID 1 if not authenticated
             'income' => 1,
             'invoice_id' => $this->id,
+            'shift_id' => $currentShift?->id,
         ]);
 
         // Update invoice totals

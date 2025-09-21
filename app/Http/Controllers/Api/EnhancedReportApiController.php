@@ -19,8 +19,8 @@ class EnhancedReportApiController extends Controller
         // Role-based filtering
         $user = Auth::user();
         if ($user->role === 'staff') {
-            // Staff can only see approved, printed, and delivered reports
-            $query->whereIn('status', ['approved', 'printed', 'delivered']);
+            // Staff can see approved, printed, delivered, and completed reports
+            $query->whereIn('status', ['approved', 'printed', 'delivered', 'completed']);
         } elseif ($user->role === 'doctor') {
             // Doctors can see draft, under_review, approved, printed, and delivered reports
             $query->whereIn('status', ['draft', 'under_review', 'approved', 'printed', 'delivered']);
@@ -76,7 +76,7 @@ class EnhancedReportApiController extends Controller
                 'micro' => $report->micro,
                 'conc' => $report->conc,
                 'reco' => $report->reco,
-                'type' => $report->type,
+                'type' => $report->type ?: 'PATH',
                 'sex' => $report->sex,
                 'recieving' => $report->recieving,
                 'discharge' => $report->discharge,
@@ -623,5 +623,46 @@ class EnhancedReportApiController extends Controller
                 'message' => 'Failed to remove image: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Send report to patient dashboard
+     */
+    public function sendToPatient(EnhancedReport $report)
+    {
+        // Role-based access control - only staff can send reports to patients
+        $user = Auth::user();
+        if ($user->role !== 'staff') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only staff members can send reports to patients'
+            ], 403);
+        }
+
+        // Check if report is in a state that can be sent to patients
+        if (!in_array($report->status, ['completed', 'approved', 'printed'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Report must be completed, approved, or printed before sending to patient'
+            ], 422);
+        }
+
+        // Update the report status to delivered and set delivered_at timestamp
+        $report->markAsDelivered();
+
+        // Log the action
+        \Log::info('Report sent to patient dashboard', [
+            'report_id' => $report->id,
+            'lab_no' => $report->lab_no,
+            'patient_id' => $report->patient_id,
+            'sent_by' => $user->id,
+            'sent_at' => now(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Report sent to patient dashboard successfully',
+            'data' => $report->load(['patient', 'labRequest', 'createdBy', 'reviewedBy', 'approvedBy'])
+        ]);
     }
 }

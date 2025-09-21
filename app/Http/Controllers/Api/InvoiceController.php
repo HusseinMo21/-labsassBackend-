@@ -143,6 +143,12 @@ class InvoiceController extends Controller
         DB::beginTransaction();
         try {
             $invoice = Invoice::findOrFail($invoiceId);
+            // Get current staff shift
+            $currentShift = \App\Models\Shift::where('staff_id', auth()->id())
+                ->where('status', 'open')
+                ->whereDate('opened_at', today())
+                ->first();
+
             $payment = Payment::create([
                 'invoice_id' => $invoiceId,
                 'paid' => $request->amount,
@@ -150,6 +156,7 @@ class InvoiceController extends Controller
                 'date' => now()->toDateString(),
                 'author' => auth()->id() ?? 1, // Default to user ID 1 if not authenticated
                 'income' => 1,
+                'shift_id' => $currentShift?->id,
             ]);
             
             // Update invoice totals

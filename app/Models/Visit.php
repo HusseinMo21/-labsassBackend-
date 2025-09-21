@@ -47,6 +47,8 @@ class Visit extends Model
         'image_uploaded_by',
         'specimen_information',
         'gross_examination',
+        'shift_id',
+        'processed_by_staff',
     ];
 
     protected $casts = [
@@ -93,6 +95,16 @@ class Visit extends Model
     public function reports()
     {
         return $this->hasManyThrough(Report::class, LabRequest::class, 'id', 'lab_request_id', 'lab_request_id', 'id');
+    }
+
+    public function shift()
+    {
+        return $this->belongsTo(Shift::class);
+    }
+
+    public function processedByStaff()
+    {
+        return $this->belongsTo(User::class, 'processed_by_staff');
     }
 
     public static function generateReceiptNumber()

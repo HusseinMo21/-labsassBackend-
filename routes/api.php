@@ -272,6 +272,15 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
         Route::get('/patient/my-invoices', [PatientController::class, 'myInvoices']);
     });
 
+    // Shift Management routes (staff only)
+    Route::middleware(['role:staff'])->group(function () {
+        Route::get('/shifts/current', [App\Http\Controllers\Api\ShiftController::class, 'getCurrentShift']);
+        Route::post('/shifts/open', [App\Http\Controllers\Api\ShiftController::class, 'openShift']);
+        Route::post('/shifts/close', [App\Http\Controllers\Api\ShiftController::class, 'closeShift']);
+        Route::get('/shifts/history', [App\Http\Controllers\Api\ShiftController::class, 'getShiftHistory']);
+        Route::get('/shifts/{shiftId}/report', [App\Http\Controllers\Api\ShiftController::class, 'getShiftReport']);
+    });
+
 
 
     // Enhanced Report Generation routes
@@ -287,6 +296,7 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
         Route::post('/enhanced-reports/{report}/submit-review', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'submitForReview']);
         Route::post('/enhanced-reports/{report}/approve', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'approve']);
         Route::post('/enhanced-reports/{report}/deliver', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'deliver']);
+        Route::post('/enhanced-reports/{report}/send-to-patient', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'sendToPatient']);
         Route::get('/enhanced-reports-statistics', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'statistics']);
         Route::post('/enhanced-reports/{report}/upload-image', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'uploadImage']);
         Route::delete('/enhanced-reports/{report}/remove-image', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'removeImage']);

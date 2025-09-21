@@ -95,7 +95,28 @@ class VisitController extends Controller
         
         // Optimize: Transform data more efficiently without N+1 queries
         $transformedData = $visits->through(function ($visit) {
-            $invoice = $visit->labRequest?->invoice;
+            // Try multiple ways to find the invoice (same logic as CheckInController)
+            $invoice = null;
+            
+            if ($visit->labRequest) {
+                // First try with lab_no
+                $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->lab_no)->first();
+                
+                // If not found, try with full_lab_no
+                if (!$invoice && $visit->labRequest->full_lab_no) {
+                    $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->full_lab_no)->first();
+                }
+                
+                // If still not found, try with lab_request_id
+                if (!$invoice) {
+                    $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
+                }
+            }
+            
+            // If still no invoice found, try to find by patient lab number
+            if (!$invoice && $visit->patient && $visit->patient->lab) {
+                $invoice = \App\Models\Invoice::where('lab', $visit->patient->lab)->first();
+            }
             
             return [
                 'id' => $visit->id,
@@ -288,10 +309,27 @@ class VisitController extends Controller
 
         // Transform the data to add receipt_number field and financial data for frontend compatibility
         $transformedData = $visits->through(function ($visit) {
-            // Get the related invoice for financial data
+            // Try multiple ways to find the invoice (same logic as CheckInController)
             $invoice = null;
+            
             if ($visit->labRequest) {
-                $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
+                // First try with lab_no
+                $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->lab_no)->first();
+                
+                // If not found, try with full_lab_no
+                if (!$invoice && $visit->labRequest->full_lab_no) {
+                    $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->full_lab_no)->first();
+                }
+                
+                // If still not found, try with lab_request_id
+                if (!$invoice) {
+                    $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
+                }
+            }
+            
+            // If still no invoice found, try to find by patient lab number
+            if (!$invoice && $visit->patient && $visit->patient->lab) {
+                $invoice = \App\Models\Invoice::where('lab', $visit->patient->lab)->first();
             }
             
             return [

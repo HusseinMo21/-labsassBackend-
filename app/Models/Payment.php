@@ -18,6 +18,7 @@ class Payment extends Model
         'author',
         'income',
         'invoice_id',
+        'shift_id',
     ];
 
     protected $casts = [
@@ -35,5 +36,10 @@ class Payment extends Model
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function shift()
+    {
+        return $this->belongsTo(Shift::class);
     }
 } 

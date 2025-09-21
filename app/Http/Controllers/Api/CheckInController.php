@@ -197,6 +197,12 @@ class CheckInController extends Controller
             \Log::info('Generated visit number: ' . $visitNumber);
             
             // Create visit
+            // Get current staff shift
+            $currentShift = \App\Models\Shift::where('staff_id', auth()->id())
+                ->where('status', 'open')
+                ->whereDate('opened_at', today())
+                ->first();
+
             $visit = Visit::create([
                 'patient_id' => $patient->id,
                 'visit_number' => $visitNumber,
@@ -208,6 +214,8 @@ class CheckInController extends Controller
                 'status' => 'registered',
                 'remarks' => $this->buildRemarks($request),
                 'expected_delivery_date' => $request->expected_delivery_date,
+                'shift_id' => $currentShift?->id,
+                'processed_by_staff' => auth()->id(),
             ]);
             
             \Log::info('Visit created successfully with ID: ' . $visit->id);
@@ -282,6 +290,7 @@ class CheckInController extends Controller
                     'paid' => $request->upfront_payment,
                     'remaining' => $finalAmount - $request->upfront_payment,
                     'lab_request_id' => $labRequest->id,
+                    'shift_id' => $currentShift?->id,
                 ]);
                 
                 \Log::info('Invoice created successfully with ID: ' . $invoice->id);
@@ -370,7 +379,7 @@ class CheckInController extends Controller
                     'upfront_payment' => $request->upfront_payment,
                     'remaining_balance' => $finalAmount - $request->upfront_payment,
                     'payment_method' => $request->payment_method,
-                    'expected_delivery_date' => $visit->expected_delivery_date,
+                    'expected_delivery_date' => $visit->getExpectedDeliveryDate(),
                     'barcode' => $visit->barcode,
                     'check_in_by' => auth()->user() ? auth()->user()->name : 'System',
                     'check_in_at' => now(),
@@ -537,7 +546,7 @@ class CheckInController extends Controller
                 'remaining_balance' => $invoice ? $invoice->remaining : ($visit->remaining_balance ?: 0),
                 'payment_method' => $this->getPaymentMethod($visit, $payments),
                 'billing_status' => $this->getPaymentStatus($invoice),
-                'expected_delivery_date' => $visit->expected_delivery_date ?: 'N/A',
+                'expected_delivery_date' => $visit->getExpectedDeliveryDate(),
                 'barcode' => $barcodeData,
                 'barcode_text' => $barcodeText ?: 'N/A',
                 'check_in_by' => $visit->check_in_by ?: 'N/A',
@@ -807,7 +816,7 @@ class CheckInController extends Controller
                 'paid_now' => $paidNow,
                 'remaining_balance' => $remainingBalance,
                 'payment_method' => $paymentMethod,
-                'expected_delivery_date' => $visit->expected_delivery_date,
+                'expected_delivery_date' => $visit->getExpectedDeliveryDate(),
                 'barcode' => $visit->labRequest ? $this->barcodeService->generateReceiptBarcode($visit->labRequest->full_lab_no) : ($visit->barcode ?: 'N/A'),
                 'check_in_by' => auth()->user()->name,
                 'check_in_at' => now(),
