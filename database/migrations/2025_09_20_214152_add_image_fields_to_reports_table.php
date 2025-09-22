@@ -12,12 +12,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('reports', function (Blueprint $table) {
-            $table->string('image_path')->nullable()->after('content');
-            $table->string('image_filename')->nullable()->after('image_path');
-            $table->string('image_mime_type')->nullable()->after('image_filename');
-            $table->bigInteger('image_size')->nullable()->after('image_mime_type');
-            $table->timestamp('image_uploaded_at')->nullable()->after('image_size');
-            $table->unsignedBigInteger('image_uploaded_by')->nullable()->after('image_uploaded_at');
+            $table->string('image_path')->nullable();
+            $table->string('image_filename')->nullable();
+            $table->string('image_mime_type')->nullable();
+            $table->bigInteger('image_size')->nullable();
+            $table->timestamp('image_uploaded_at')->nullable();
+            $table->unsignedBigInteger('image_uploaded_by')->nullable();
             
             $table->foreign('image_uploaded_by')->references('id')->on('users')->onDelete('set null');
         });

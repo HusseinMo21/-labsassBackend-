@@ -13,7 +13,7 @@ return new class extends Migration
     {
         if (Schema::hasTable('visits') && !Schema::hasColumn('visits', 'lab_request_id')) {
             Schema::table('visits', function (Blueprint $table) {
-                $table->unsignedBigInteger('lab_request_id')->nullable()->after('patient_id');
+                $table->unsignedBigInteger('lab_request_id')->nullable();
                 
                 $table->foreign('lab_request_id')
                       ->references('id')

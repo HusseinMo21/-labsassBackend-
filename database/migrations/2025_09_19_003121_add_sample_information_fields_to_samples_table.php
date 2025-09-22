@@ -13,9 +13,9 @@ return new class extends Migration
     {
         Schema::table('samples', function (Blueprint $table) {
             // Add sample information fields
-            $table->string('case_type')->nullable()->comment('نوع الحالة - Case Type')->after('sample_type');
-            $table->string('sample_size')->nullable()->comment('حجم العينة - Sample Size')->after('case_type');
-            $table->integer('number_of_samples')->nullable()->comment('عدد العينات - Number of Samples')->after('sample_size');
+            $table->string('case_type')->nullable()->comment('نوع الحالة - Case Type');
+            $table->string('sample_size')->nullable()->comment('حجم العينة - Sample Size');
+            $table->integer('number_of_samples')->nullable()->comment('عدد العينات - Number of Samples');
         });
     }
 

@@ -28,7 +28,7 @@ return new class extends Migration
             // Add location field for sample tracking
             $table->string('location')->nullable();
             
-            // Update status enum to include more tracking states
+            // Add status enum to include tracking states
             $table->enum('status', [
                 'collected', 
                 'received', 
@@ -38,7 +38,7 @@ return new class extends Migration
                 'disposed', 
                 'lost', 
                 'rejected'
-            ])->default('collected')->change();
+            ])->default('collected');
             
             // Add indexes for better performance
             $table->index(['status']);
@@ -62,7 +62,8 @@ return new class extends Migration
                 'processed_by',
                 'analyzed_by',
                 'disposed_by',
-                'location'
+                'location',
+                'status'
             ]);
             
             $table->dropIndex(['status']);

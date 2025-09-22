@@ -12,8 +12,8 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('visits', function (Blueprint $table) {
-            $table->json('checked_by_doctors')->nullable()->after('status');
-            $table->timestamp('last_checked_at')->nullable()->after('checked_by_doctors');
+            $table->json('checked_by_doctors')->nullable();
+            $table->timestamp('last_checked_at')->nullable();
         });
     }
 

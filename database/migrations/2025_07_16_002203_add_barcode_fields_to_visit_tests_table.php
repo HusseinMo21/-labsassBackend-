@@ -12,8 +12,8 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('visit_tests', function (Blueprint $table) {
-            $table->string('barcode')->nullable()->after('lab_test_id');
-            $table->string('sample_code')->nullable()->after('barcode');
+            $table->string('barcode')->nullable();
+            $table->string('sample_code')->nullable();
         });
     }
 

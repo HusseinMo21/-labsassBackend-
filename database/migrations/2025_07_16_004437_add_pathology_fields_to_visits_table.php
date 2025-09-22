@@ -12,12 +12,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('visits', function (Blueprint $table) {
-            $table->text('clinical_data')->nullable()->after('remarks');
-            $table->text('microscopic_description')->nullable()->after('clinical_data');
-            $table->text('diagnosis')->nullable()->after('microscopic_description');
-            $table->text('recommendations')->nullable()->after('diagnosis');
-            $table->string('referred_doctor')->nullable()->after('recommendations');
-            $table->enum('test_status', ['pending', 'under_review', 'completed'])->default('pending')->after('referred_doctor');
+            $table->text('clinical_data')->nullable();
+            $table->text('microscopic_description')->nullable();
+            $table->text('diagnosis')->nullable();
+            $table->text('recommendations')->nullable();
+            $table->string('referred_doctor')->nullable();
+            $table->enum('test_status', ['pending', 'under_review', 'completed'])->default('pending');
         });
     }
 
