@@ -13,20 +13,20 @@ return new class extends Migration
     {
         Schema::table('samples', function (Blueprint $table) {
             // Add tracking timestamps
-            $table->timestamp('processing_started_at')->nullable()->after('received_date');
-            $table->timestamp('analysis_started_at')->nullable()->after('processing_started_at');
-            $table->timestamp('completed_at')->nullable()->after('analysis_started_at');
-            $table->timestamp('disposed_at')->nullable()->after('completed_at');
+            $table->timestamp('processing_started_at')->nullable();
+            $table->timestamp('analysis_started_at')->nullable();
+            $table->timestamp('completed_at')->nullable();
+            $table->timestamp('disposed_at')->nullable();
             
             // Add user tracking fields
-            $table->foreignId('collected_by')->nullable()->constrained('users')->onDelete('set null')->after('disposed_at');
-            $table->foreignId('received_by')->nullable()->constrained('users')->onDelete('set null')->after('collected_by');
-            $table->foreignId('processed_by')->nullable()->constrained('users')->onDelete('set null')->after('received_by');
-            $table->foreignId('analyzed_by')->nullable()->constrained('users')->onDelete('set null')->after('processed_by');
-            $table->foreignId('disposed_by')->nullable()->constrained('users')->onDelete('set null')->after('analyzed_by');
+            $table->foreignId('collected_by')->nullable()->constrained('users')->onDelete('set null');
+            $table->foreignId('received_by')->nullable()->constrained('users')->onDelete('set null');
+            $table->foreignId('processed_by')->nullable()->constrained('users')->onDelete('set null');
+            $table->foreignId('analyzed_by')->nullable()->constrained('users')->onDelete('set null');
+            $table->foreignId('disposed_by')->nullable()->constrained('users')->onDelete('set null');
             
             // Add location field for sample tracking
-            $table->string('location')->nullable()->after('disposed_by');
+            $table->string('location')->nullable();
             
             // Update status enum to include more tracking states
             $table->enum('status', [
