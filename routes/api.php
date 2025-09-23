@@ -228,8 +228,8 @@ Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
         Route::get('/check-in/visits/{visitId}/final-payment-receipt', [CheckInController::class, 'getFinalPaymentReceipt']);
     });
 
-    // Patient Registration routes
-    Route::middleware(['auth:api', 'role:admin,staff'])->group(function () {
+    // Patient Registration routes (admin and staff only)
+    Route::middleware(['role:admin,staff'])->group(function () {
         Route::get('/patient-registration/search', [PatientRegistrationController::class, 'search']);
         Route::get('/patient-registration/next-lab-number', [PatientRegistrationController::class, 'getNextLabNumber']);
         Route::post('/patient-registration/submit', [PatientRegistrationController::class, 'submit']);
