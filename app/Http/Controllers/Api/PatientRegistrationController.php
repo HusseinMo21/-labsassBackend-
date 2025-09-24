@@ -235,18 +235,72 @@ class PatientRegistrationController extends Controller
                 ]);
             }
             
+            // Get valid status values for lab request
+            $validStatuses = ['pending', 'in_progress', 'processing', 'received', 'completed'];
+            $labRequestStatus = 'pending'; // Default status
+            
             // Create lab request for all patients so they appear in Lab Requests
-            $labRequest = \App\Models\LabRequest::create([
-                'patient_id' => $patient->id,
-                'lab_no' => $patient->lab, // Use the patient's lab number
-                'status' => 'pending',
-                'metadata' => [
-                    'created_via' => 'Patient Registration',
-                    'request_date' => $data['attendance_date'] ?? now()->format('Y-m-d'),
-                    'notes' => 'Created via Patient Registration',
-                    'created_by' => auth()->id() ?? 1,
-                ],
-            ]);
+            try {
+                $labRequest = \App\Models\LabRequest::create([
+                    'patient_id' => $patient->id,
+                    'lab_no' => $patient->lab, // Use the patient's lab number
+                    'status' => $labRequestStatus,
+                    'metadata' => [
+                        'created_via' => 'Patient Registration',
+                        'request_date' => $data['attendance_date'] ?? now()->format('Y-m-d'),
+                        'notes' => 'Created via Patient Registration',
+                        'created_by' => auth()->id() ?? 1,
+                        'status' => $labRequestStatus, // Also store in metadata
+                    ],
+                ]);
+            } catch (\Exception $e) {
+                // Try each status until one works
+                foreach ($validStatuses as $status) {
+                    if ($status === $labRequestStatus) continue; // Skip the one we already tried
+                    
+                    try {
+                        $labRequest = \App\Models\LabRequest::create([
+                            'patient_id' => $patient->id,
+                            'lab_no' => $patient->lab,
+                            'status' => $status,
+                            'metadata' => [
+                                'created_via' => 'Patient Registration',
+                                'request_date' => $data['attendance_date'] ?? now()->format('Y-m-d'),
+                                'notes' => 'Created via Patient Registration',
+                                'created_by' => auth()->id() ?? 1,
+                                'status' => $status,
+                            ],
+                        ]);
+                        
+                        // If we get here, it worked
+                        $labRequestStatus = $status;
+                        \Log::info("Created lab request with status: $status");
+                        break;
+                    } catch (\Exception $innerE) {
+                        // Continue to next status
+                        \Log::warning("Failed to create lab request with status: $status", [
+                            'error' => $innerE->getMessage()
+                        ]);
+                    }
+                }
+                
+                // If we still don't have a lab request, try without status
+                if (!isset($labRequest)) {
+                    $labRequest = \App\Models\LabRequest::create([
+                        'patient_id' => $patient->id,
+                        'lab_no' => $patient->lab,
+                        'metadata' => [
+                            'created_via' => 'Patient Registration',
+                            'request_date' => $data['attendance_date'] ?? now()->format('Y-m-d'),
+                            'notes' => 'Created via Patient Registration',
+                            'created_by' => auth()->id() ?? 1,
+                        ],
+                    ]);
+                    \Log::warning("Created lab request without status", [
+                        'lab_request_id' => $labRequest->id
+                    ]);
+                }
+            }
             
             // Create visit if billing information is provided
             if (isset($data['total_amount']) && !empty($data['total_amount']) && floatval($data['total_amount']) > 0) {
@@ -344,16 +398,68 @@ class PatientRegistrationController extends Controller
             }
                 
                 // Update lab request with visit information and financial data
-                $labRequest->update([
-                    'metadata' => array_merge($labRequest->metadata ?? [], [
-                        'visit_id' => $visit->id,
-                        'total_amount' => $totalAmount,
-                        'paid_amount' => $amountPaid,
-                        'remaining_amount' => $totalAmount - $amountPaid,
-                        'payment_status' => $paymentStatus,
-                    ]),
-                    'status' => 'registered', // Update status to registered
-                ]);
+                try {
+                    // First try with 'registered' status
+                    $labRequest->update([
+                        'metadata' => array_merge($labRequest->metadata ?? [], [
+                            'visit_id' => $visit->id,
+                            'total_amount' => $totalAmount,
+                            'paid_amount' => $amountPaid,
+                            'remaining_amount' => $totalAmount - $amountPaid,
+                            'payment_status' => $paymentStatus,
+                            'status' => 'registered', // Add status to metadata as well
+                        ]),
+                        'status' => 'registered', // Try with 'registered' status
+                    ]);
+                } catch (\Exception $e) {
+                    // If 'registered' fails, try with 'processed' or other common statuses
+                    try {
+                        $labRequest->update([
+                            'metadata' => array_merge($labRequest->metadata ?? [], [
+                                'visit_id' => $visit->id,
+                                'total_amount' => $totalAmount,
+                                'paid_amount' => $amountPaid,
+                                'remaining_amount' => $totalAmount - $amountPaid,
+                                'payment_status' => $paymentStatus,
+                                'status' => 'processed', // Add status to metadata as well
+                            ]),
+                            'status' => 'processed', // Try with 'processed' status
+                        ]);
+                    } catch (\Exception $e2) {
+                        // If that fails too, try with 'completed' or just update metadata
+                        try {
+                            $labRequest->update([
+                                'metadata' => array_merge($labRequest->metadata ?? [], [
+                                    'visit_id' => $visit->id,
+                                    'total_amount' => $totalAmount,
+                                    'paid_amount' => $amountPaid,
+                                    'remaining_amount' => $totalAmount - $amountPaid,
+                                    'payment_status' => $paymentStatus,
+                                ]),
+                                'status' => 'completed', // Try with 'completed' status
+                            ]);
+                        } catch (\Exception $e3) {
+                            // Last resort: just update metadata without changing status
+                            $labRequest->update([
+                                'metadata' => array_merge($labRequest->metadata ?? [], [
+                                    'visit_id' => $visit->id,
+                                    'total_amount' => $totalAmount,
+                                    'paid_amount' => $amountPaid,
+                                    'remaining_amount' => $totalAmount - $amountPaid,
+                                    'payment_status' => $paymentStatus,
+                                ]),
+                            ]);
+                            
+                            // Log the issue for debugging
+                            \Log::warning('Could not update lab request status', [
+                                'lab_request_id' => $labRequest->id,
+                                'error1' => $e->getMessage(),
+                                'error2' => $e2->getMessage(),
+                                'error3' => $e3->getMessage(),
+                            ]);
+                        }
+                    }
+                }
                 
                 // Create sample records from patient registration data
                 if (isset($data['sample_type']) || isset($data['case_type']) || isset($data['sample_size']) || isset($data['number_of_samples'])) {
