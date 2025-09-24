@@ -13,6 +13,88 @@ use Illuminate\Support\Facades\DB;
 
 class VisitController extends Controller
 {
+    /**
+     * Get receipt details for any visit (works for both check-in and patient registration visits)
+     */
+    public function getReceiptDetails($visitId)
+    {
+        try {
+            $visit = Visit::with([
+                'patient',
+                'labRequest',
+                'labRequest.invoice',
+                'visitTests.labTest'
+            ])->find($visitId);
+
+            if (!$visit) {
+                return response()->json(['error' => 'Visit not found'], 404);
+            }
+
+            // Get financial data from visit metadata or invoice
+            $metadata = $visit->metadata ?? [];
+            $totalAmount = $metadata['total_amount'] ?? $visit->total_amount ?? 0;
+            $paidAmount = $metadata['paid_amount'] ?? $visit->paid_amount ?? 0;
+            $remainingAmount = $metadata['remaining_amount'] ?? $visit->remaining_amount ?? 0;
+            $paymentStatus = $metadata['payment_status'] ?? ($remainingAmount > 0 ? 'partial' : 'paid');
+
+            // If no metadata, try to get from invoice
+            if ($totalAmount == 0 && $visit->labRequest && $visit->labRequest->invoice) {
+                $invoice = $visit->labRequest->invoice;
+                $totalAmount = $invoice->total ?? $invoice->amount ?? 0;
+                $paidAmount = $invoice->paid ?? $invoice->paid_amount ?? 0;
+                $remainingAmount = $invoice->remaining ?? $invoice->remaining_amount ?? 0;
+                $paymentStatus = $remainingAmount > 0 ? 'partial' : 'paid';
+            }
+
+            // Generate receipt number if not exists
+            $receiptNumber = $visit->receipt_number ?? 'RCP-' . date('Ymd') . '-' . str_pad($visit->id, 6, '0', STR_PAD_LEFT);
+
+            $receiptData = [
+                'receipt_number' => $receiptNumber,
+                'visit_number' => $visit->visit_number,
+                'visit_date' => $visit->visit_date,
+                'visit_time' => $visit->visit_time ?? $visit->created_at->format('H:i:s'),
+                'total_amount' => $totalAmount,
+                'final_amount' => $totalAmount,
+                'upfront_payment' => $paidAmount,
+                'remaining_balance' => $remainingAmount,
+                'payment_method' => 'cash',
+                'billing_status' => $paymentStatus,
+                'status' => $visit->status,
+                'patient' => [
+                    'id' => $visit->patient->id,
+                    'name' => $visit->patient->name,
+                    'phone' => $visit->patient->phone,
+                    'email' => $visit->patient->email ?? null,
+                ],
+                'visitTests' => $visit->visitTests->map(function($visitTest) {
+                    return [
+                        'id' => $visitTest->id,
+                        'labTest' => $visitTest->labTest ? [
+                            'id' => $visitTest->labTest->id,
+                            'name' => $visitTest->labTest->name,
+                            'price' => $visitTest->price ?? $visitTest->labTest->price ?? 0,
+                        ] : null,
+                        'status' => $visitTest->status,
+                    ];
+                }),
+                'barcode' => $visit->labRequest ? $visit->labRequest->barcode_url : null,
+            ];
+
+            return response()->json([
+                'receipt_data' => $receiptData
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Failed to get receipt details', [
+                'visit_id' => $visitId,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json(['error' => 'Failed to get receipt details'], 500);
+        }
+    }
+
     public function index(Request $request)
     {
         // Optimize: Use select to only fetch needed columns and eager load relationships

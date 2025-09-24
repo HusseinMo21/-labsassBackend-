@@ -152,6 +152,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::put('/visits/{visit}/complete', [VisitController::class, 'completeVisit']);
     Route::post('/visits/{visit}/mark-checked', [VisitController::class, 'markAsChecked']);
     Route::get('/visits/{visit}/report', [VisitController::class, 'generateReport']);
+    Route::get('/visits/{visit}/receipt', [VisitController::class, 'getReceiptDetails']);
     Route::post('/visits/{visit}/upload-image', [VisitController::class, 'uploadImage']);
     Route::delete('/visits/{visit}/remove-image', [VisitController::class, 'removeImage']);
     

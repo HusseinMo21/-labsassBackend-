@@ -439,18 +439,35 @@ class LabRequestController extends Controller
                 }
             }
 
-            // Get payment history from lab request's invoice
+            // Get payment history from lab request's invoice or metadata
             $paymentHistory = collect();
-            if ($labRequest->invoice) {
+            
+            // First try to get financial data from metadata (from patient registration)
+            $metadata = $labRequest->metadata ?? [];
+            $totalAmount = $metadata['total_amount'] ?? 0;
+            $paidAmount = $metadata['paid_amount'] ?? 0;
+            $remainingAmount = $metadata['remaining_amount'] ?? 0;
+            $paymentStatus = $metadata['payment_status'] ?? 'unpaid';
+            
+            // If no metadata, try to get from invoice
+            if ($totalAmount == 0 && $labRequest->invoice) {
                 $invoice = $labRequest->invoice;
+                $totalAmount = $invoice->total ?? 0;
+                $paidAmount = $invoice->paid ?? 0;
+                $remainingAmount = $invoice->remaining ?? 0;
+                $paymentStatus = $remainingAmount > 0 ? 'partial' : 'paid';
+            }
+            
+            // Add payment history entry if we have financial data
+            if ($totalAmount > 0) {
                 $paymentHistory->push([
                     'visit_id' => $visits->first() ? $visits->first()->id : null,
                     'visit_date' => $visits->first() ? $visits->first()->visit_date : null,
-                    'invoice_number' => $invoice->lab, // Using lab number as invoice number
-                    'total_amount' => $invoice->total,
-                    'amount_paid' => $invoice->paid,
-                    'balance' => $invoice->remaining,
-                    'status' => $invoice->remaining > 0 ? 'partial' : 'paid',
+                    'invoice_number' => $labRequest->full_lab_no, // Using lab number as invoice number
+                    'total_amount' => $totalAmount,
+                    'amount_paid' => $paidAmount,
+                    'balance' => $remainingAmount,
+                    'status' => $paymentStatus,
                     'payment_method' => 'cash', // Default method
                     'created_at' => $visits->first() ? $visits->first()->created_at : now(),
                 ]);
@@ -528,9 +545,9 @@ class LabRequestController extends Controller
                 'visits_summary' => [
                     'total_visits' => $visits->count(),
                     'total_tests' => $allTests->count(),
-                    'total_amount' => $paymentHistory->sum('total_amount'),
-                    'total_paid' => $paymentHistory->sum('amount_paid'),
-                    'total_balance' => $paymentHistory->sum('balance'),
+                    'total_amount' => $totalAmount,
+                    'total_paid' => $paidAmount,
+                    'total_balance' => $remainingAmount,
                     'last_visit' => $visits->first() ? $visits->first()->visit_date : null,
                 ]
             ];
