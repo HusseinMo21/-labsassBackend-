@@ -267,18 +267,54 @@ class PatientRegistrationController extends Controller
                     ->whereDate('opened_at', today())
                     ->first();
 
-                $visit = Visit::create([
+                // Create visit with detailed information
+                $visitData = [
                     'patient_id' => $patient->id,
                     'visit_number' => 'VIS-' . date('Ymd') . '-' . str_pad($patient->id, 6, '0', STR_PAD_LEFT),
                     'visit_date' => $data['attendance_date'] ?? now(),
                     'visit_time' => now()->format('H:i:s'),
-                    'total_amount' => $totalAmount,
-                    'final_amount' => $totalAmount,
                     'status' => 'registered',
                     'remarks' => 'Created via Patient Registration - Payment Status: ' . $paymentStatus,
                     'shift_id' => $currentShift?->id,
                     'processed_by_staff' => auth()->id(),
-                ]);
+                ];
+                
+                // Add financial fields if they exist in the model
+                $visitModel = new Visit();
+                $fillable = $visitModel->getFillable();
+                
+                if (in_array('total_amount', $fillable)) {
+                    $visitData['total_amount'] = $totalAmount;
+                }
+                if (in_array('final_amount', $fillable)) {
+                    $visitData['final_amount'] = $totalAmount;
+                }
+                if (in_array('amount', $fillable)) {
+                    $visitData['amount'] = $totalAmount;
+                }
+                if (in_array('paid_amount', $fillable)) {
+                    $visitData['paid_amount'] = $amountPaid;
+                }
+                if (in_array('remaining_amount', $fillable)) {
+                    $visitData['remaining_amount'] = $totalAmount - $amountPaid;
+                }
+                if (in_array('payment_status', $fillable)) {
+                    $visitData['payment_status'] = $paymentStatus;
+                }
+                
+                // Add metadata with financial information
+                if (in_array('metadata', $fillable)) {
+                    $visitData['metadata'] = [
+                        'total_amount' => $totalAmount,
+                        'paid_amount' => $amountPaid,
+                        'remaining_amount' => $totalAmount - $amountPaid,
+                        'payment_status' => $paymentStatus,
+                        'lab_request_id' => $labRequest->id,
+                    ];
+                }
+                
+                // Create the visit
+                $visit = Visit::create($visitData);
                 
             // Create visit test based on case type
             $visitTest = null;
@@ -307,11 +343,16 @@ class PatientRegistrationController extends Controller
                 }
             }
                 
-                // Update lab request with visit information
+                // Update lab request with visit information and financial data
                 $labRequest->update([
                     'metadata' => array_merge($labRequest->metadata ?? [], [
                         'visit_id' => $visit->id,
+                        'total_amount' => $totalAmount,
+                        'paid_amount' => $amountPaid,
+                        'remaining_amount' => $totalAmount - $amountPaid,
+                        'payment_status' => $paymentStatus,
                     ]),
+                    'status' => 'registered', // Update status to registered
                 ]);
                 
                 // Create sample records from patient registration data
@@ -467,6 +508,66 @@ class PatientRegistrationController extends Controller
                     // Log the unpaid invoice for follow-up
                     \Log::info("Unpaid invoice created for patient {$patient->name} (Lab: {$patient->lab}) - Amount: $" . ($totalAmount - $amountPaid));
                 }
+                
+                // Try to create a receipt record if that model exists
+                try {
+                    if (class_exists('\\App\\Models\\Receipt')) {
+                        $receiptModel = new \App\Models\Receipt();
+                        $fillable = $receiptModel->getFillable();
+                        
+                        $receiptData = [];
+                        
+                        // Add fields that might exist in the Receipt model
+                        if (in_array('visit_id', $fillable)) {
+                            $receiptData['visit_id'] = $visit->id;
+                        }
+                        if (in_array('patient_id', $fillable)) {
+                            $receiptData['patient_id'] = $patient->id;
+                        }
+                        if (in_array('invoice_id', $fillable) && $invoice) {
+                            $receiptData['invoice_id'] = $invoice->id;
+                        }
+                        if (in_array('lab_request_id', $fillable)) {
+                            $receiptData['lab_request_id'] = $labRequest->id;
+                        }
+                        if (in_array('amount', $fillable)) {
+                            $receiptData['amount'] = $totalAmount;
+                        }
+                        if (in_array('total_amount', $fillable)) {
+                            $receiptData['total_amount'] = $totalAmount;
+                        }
+                        if (in_array('paid_amount', $fillable)) {
+                            $receiptData['paid_amount'] = $amountPaid;
+                        }
+                        if (in_array('remaining_amount', $fillable)) {
+                            $receiptData['remaining_amount'] = $totalAmount - $amountPaid;
+                        }
+                        if (in_array('payment_status', $fillable)) {
+                            $receiptData['payment_status'] = $paymentStatus;
+                        }
+                        if (in_array('receipt_number', $fillable)) {
+                            $receiptData['receipt_number'] = 'RCP-' . date('Ymd') . '-' . str_pad($visit->id, 6, '0', STR_PAD_LEFT);
+                        }
+                        if (in_array('receipt_date', $fillable)) {
+                            $receiptData['receipt_date'] = now();
+                        }
+                        if (in_array('status', $fillable)) {
+                            $receiptData['status'] = $paymentStatus;
+                        }
+                        
+                        // Create the receipt if we have data
+                        if (!empty($receiptData)) {
+                            \App\Models\Receipt::create($receiptData);
+                            \Log::info('Created receipt record', ['receipt_data' => $receiptData]);
+                        }
+                    }
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to create receipt record', [
+                        'error' => $e->getMessage(),
+                        'visit_id' => $visit->id ?? 'null'
+                    ]);
+                    // Continue without receipt
+                }
             }
             
             DB::commit();
@@ -481,6 +582,12 @@ class PatientRegistrationController extends Controller
                 'lab_request_id' => $labRequest->id ?? null,
                 'invoice_id' => $invoice->id ?? null,
                 'user_credentials' => $credentials,
+                'financial_data' => [
+                    'total_amount' => $totalAmount,
+                    'paid_amount' => $amountPaid,
+                    'remaining_amount' => $totalAmount - $amountPaid,
+                    'payment_status' => $paymentStatus,
+                ],
             ];
             
             // Add payment status information
