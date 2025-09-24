@@ -25,7 +25,7 @@ class CheckInController extends Controller
     protected $barcodeGenerator;
     protected $barcodeService;
 
-    public function __construct(LabNoGenerator $labNoGenerator, BarcodeGenerator $barcodeGenerator, BarcodeService $barcodeService)
+    public function __construct(LabNoGenerator $labNoGenerator = null, BarcodeGenerator $barcodeGenerator = null, BarcodeService $barcodeService = null)
     {
         $this->labNoGenerator = $labNoGenerator;
         $this->barcodeGenerator = $barcodeGenerator;
@@ -433,44 +433,21 @@ class CheckInController extends Controller
     {
         $visit = Visit::with(['patient', 'visitTests.testCategory', 'labRequest'])->findOrFail($visitId);
         
-        // Get the related invoice for financial data
+        // Get the related invoice for financial data (if exists)
         $invoice = null;
         $payments = collect();
         
-        // Try multiple ways to find the invoice
+        // Try to find invoice by lab_request_id or visit_id
         if ($visit->labRequest) {
-            // First try with lab_no
-            $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->lab_no)->first();
-            
-            // If not found, try with full_lab_no
-            if (!$invoice && $visit->labRequest->full_lab_no) {
-                $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->full_lab_no)->first();
-            }
-            
-            // If still not found, try with lab_request_id
-            if (!$invoice) {
-                $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
-            }
-            
-            if ($invoice) {
-                $payments = \App\Models\Payment::where('invoice_id', $invoice->id)->get();
-            }
+            $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
         }
         
-        // If still no invoice found, try to find by patient lab number
-        if (!$invoice && $visit->patient && $visit->patient->lab) {
-            $invoice = \App\Models\Invoice::where('lab', $visit->patient->lab)->first();
-            if ($invoice) {
-                $payments = \App\Models\Payment::where('invoice_id', $invoice->id)->get();
-            }
-        }
-        
-        // If still no invoice found, try to find by visit number
         if (!$invoice) {
-            $invoice = \App\Models\Invoice::where('lab', $visit->visit_number)->first();
-            if ($invoice) {
-                $payments = \App\Models\Payment::where('invoice_id', $invoice->id)->get();
-            }
+            $invoice = \App\Models\Invoice::where('visit_id', $visit->id)->first();
+        }
+        
+        if ($invoice) {
+            $payments = \App\Models\Payment::where('invoice_id', $invoice->id)->get();
         }
         
         // Get current user who is printing the receipt
@@ -539,13 +516,13 @@ class CheckInController extends Controller
                         'price' => $visitTest->final_price ?: $visitTest->price,
                     ];
                 }),
-                'total_amount' => $invoice ? $invoice->total : ($visit->total_amount ?: 0),
+                'total_amount' => $invoice ? $invoice->total_amount : ($visit->total_amount ?: 0),
                 'discount_amount' => $visit->discount_amount ?: 0,
-                'final_amount' => $invoice ? $invoice->total : ($visit->final_amount ?: 0),
-                'upfront_payment' => $invoice ? $invoice->paid : ($visit->upfront_payment ?: 0),
-                'remaining_balance' => $invoice ? $invoice->remaining : ($visit->remaining_balance ?: 0),
+                'final_amount' => $invoice ? $invoice->total_amount : ($visit->final_amount ?: 0),
+                'upfront_payment' => $invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0),
+                'remaining_balance' => $invoice ? $invoice->balance : (($visit->final_amount ?: 0) - ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0)),
                 'payment_method' => $this->getPaymentMethod($visit, $payments),
-                'billing_status' => $this->getPaymentStatus($invoice),
+                'billing_status' => $this->getPaymentStatus($invoice, $visit),
                 'expected_delivery_date' => $visit->getExpectedDeliveryDate(),
                 'barcode' => $barcodeData,
                 'barcode_text' => $barcodeText ?: 'N/A',
@@ -706,19 +683,34 @@ class CheckInController extends Controller
     /**
      * Get payment status based on invoice data
      */
-    private function getPaymentStatus($invoice)
+    private function getPaymentStatus($invoice, $visit = null)
     {
-        if (!$invoice) {
-            return 'Pending';
+        if ($invoice) {
+            if ($invoice->balance <= 0) {
+                return 'Paid';
+            } elseif ($invoice->amount_paid > 0) {
+                return 'Partial';
+            } else {
+                return 'Pending';
+            }
         }
         
-        if ($invoice->remaining <= 0) {
-            return 'Paid';
-        } elseif ($invoice->paid > 0) {
-            return 'Partial';
-        } else {
-            return 'Pending';
+        // If no invoice, use patient payment data
+        if ($visit && $visit->patient) {
+            $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
+            $remainingAmount = $totalAmount - $paidAmount;
+            
+            if ($remainingAmount <= 0) {
+                return 'Paid';
+            } elseif ($paidAmount > 0) {
+                return 'Partial';
+            } else {
+                return 'Pending';
+            }
         }
+        
+        return 'Pending';
     }
 
     public function getSampleLabel($visitId)

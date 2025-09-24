@@ -30,20 +30,20 @@ class VisitController extends Controller
                 return response()->json(['error' => 'Visit not found'], 404);
             }
 
-            // Get financial data from visit metadata or invoice
+            // Get financial data from visit metadata or patient data
             $metadata = $visit->metadata ?? [];
             $totalAmount = $metadata['total_amount'] ?? $visit->total_amount ?? 0;
-            $paidAmount = $metadata['paid_amount'] ?? $visit->paid_amount ?? 0;
-            $remainingAmount = $metadata['remaining_amount'] ?? $visit->remaining_amount ?? 0;
-            $paymentStatus = $metadata['payment_status'] ?? ($remainingAmount > 0 ? 'partial' : 'paid');
+            $paidAmount = $metadata['paid_amount'] ?? $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            $remainingAmount = $metadata['remaining_amount'] ?? ($totalAmount - $paidAmount);
+            $paymentStatus = $metadata['payment_status'] ?? ($remainingAmount <= 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'pending'));
 
             // If no metadata, try to get from invoice
             if ($totalAmount == 0 && $visit->labRequest && $visit->labRequest->invoice) {
                 $invoice = $visit->labRequest->invoice;
-                $totalAmount = $invoice->total ?? $invoice->amount ?? 0;
-                $paidAmount = $invoice->paid ?? $invoice->paid_amount ?? 0;
-                $remainingAmount = $invoice->remaining ?? $invoice->remaining_amount ?? 0;
-                $paymentStatus = $remainingAmount > 0 ? 'partial' : 'paid';
+                $totalAmount = $invoice->total_amount ?? $invoice->amount ?? 0;
+                $paidAmount = $invoice->amount_paid ?? $invoice->paid_amount ?? 0;
+                $remainingAmount = $invoice->balance ?? $invoice->remaining_amount ?? 0;
+                $paymentStatus = $remainingAmount <= 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'pending');
             }
 
             // Generate receipt number if not exists
@@ -103,11 +103,11 @@ class VisitController extends Controller
             'patient_id', 'lab_request_id', 'total_amount', 'final_amount'
         ])
         ->with([
-            'patient:id,name,phone,gender,birth_date,age',
+            'patient:id,name,phone,gender,birth_date,age,amount_paid,lab',
             'visitTests:id,visit_id,lab_test_id,status,result_value,result_status,result_notes,price',
             'visitTests.labTest:id,name,code,reference_range',
-            'labRequest:id,lab_no,suffix',
-            'labRequest.invoice:id,lab_request_id,paid,remaining' // Eager load invoice to avoid N+1
+            'labRequest:id,lab_no,suffix,full_lab_no',
+            'labRequest.invoice:id,lab_request_id,amount_paid,balance' // Eager load invoice to avoid N+1
         ]);
         
         // Filter to only include visits with receipts if requested
@@ -182,11 +182,11 @@ class VisitController extends Controller
             
             if ($visit->labRequest) {
                 // First try with lab_no
-                $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->lab_no)->first();
+                $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
                 
                 // If not found, try with full_lab_no
                 if (!$invoice && $visit->labRequest->full_lab_no) {
-                    $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->full_lab_no)->first();
+                    $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
                 }
                 
                 // If still not found, try with lab_request_id
@@ -197,7 +197,7 @@ class VisitController extends Controller
             
             // If still no invoice found, try to find by patient lab number
             if (!$invoice && $visit->patient && $visit->patient->lab) {
-                $invoice = \App\Models\Invoice::where('lab', $visit->patient->lab)->first();
+                $invoice = \App\Models\Invoice::where('visit_id', $visit->id)->first();
             }
             
             return [
@@ -212,11 +212,11 @@ class VisitController extends Controller
                 'visit_tests' => $visit->visitTests,
                 'labRequest' => $visit->labRequest,
                 'receipt_number' => $visit->visit_number,
-                'lab_number' => $visit->labRequest?->full_lab_no ?? 'N/A',
+                'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?: 'N/A'),
                 'total_amount' => $visit->total_amount ?? 0,
                 'final_amount' => $visit->final_amount ?? 0,
-                'upfront_payment' => $invoice?->paid ?? 0,
-                'remaining_balance' => $invoice?->remaining ?? 0,
+                'upfront_payment' => $invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0),
+                'remaining_balance' => $invoice ? $invoice->balance : (($visit->final_amount ?? $visit->total_amount ?? 0) - ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0)),
                 'billing_status' => $this->getBillingStatus($invoice, $visit),
             ];
         });
@@ -396,11 +396,11 @@ class VisitController extends Controller
             
             if ($visit->labRequest) {
                 // First try with lab_no
-                $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->lab_no)->first();
+                $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
                 
                 // If not found, try with full_lab_no
                 if (!$invoice && $visit->labRequest->full_lab_no) {
-                    $invoice = \App\Models\Invoice::where('lab', $visit->labRequest->full_lab_no)->first();
+                    $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
                 }
                 
                 // If still not found, try with lab_request_id
@@ -411,15 +411,15 @@ class VisitController extends Controller
             
             // If still no invoice found, try to find by patient lab number
             if (!$invoice && $visit->patient && $visit->patient->lab) {
-                $invoice = \App\Models\Invoice::where('lab', $visit->patient->lab)->first();
+                $invoice = \App\Models\Invoice::where('visit_id', $visit->id)->first();
             }
             
             return [
                 ...$visit->toArray(),
                 'receipt_number' => $visit->visit_number, // Use visit_number as receipt_number
                 'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?: 'N/A'),
-                'upfront_payment' => $invoice ? $invoice->paid : ($visit->upfront_payment ?: 0),
-                'remaining_balance' => $invoice ? $invoice->remaining : ($visit->remaining_balance ?: 0),
+                'upfront_payment' => $invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0),
+                'remaining_balance' => $invoice ? $invoice->balance : (($visit->final_amount ?? $visit->total_amount ?? 0) - ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0)),
                 'billing_status' => $this->getBillingStatus($invoice, $visit),
             ];
         });
@@ -432,13 +432,24 @@ class VisitController extends Controller
      */
     private function getBillingStatus($invoice, $visit)
     {
-        if (!$invoice) {
-            return 'pending';
+        if ($invoice) {
+            if ($invoice->balance <= 0) {
+                return 'paid';
+            } elseif ($invoice->amount_paid > 0) {
+                return 'partial';
+            } else {
+                return 'pending';
+            }
         }
         
-        if ($invoice->remaining <= 0) {
+        // If no invoice, use patient payment data
+        $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+        $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
+        $remainingAmount = $totalAmount - $paidAmount;
+        
+        if ($remainingAmount <= 0) {
             return 'paid';
-        } elseif ($invoice->paid > 0) {
+        } elseif ($paidAmount > 0) {
             return 'partial';
         } else {
             return 'pending';

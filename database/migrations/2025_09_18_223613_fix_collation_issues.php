@@ -12,16 +12,15 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Fix collation issues by ensuring all string fields use the same collation
-        DB::statement('ALTER TABLE doctors CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
-        DB::statement('ALTER TABLE organizations CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
-        DB::statement('ALTER TABLE patient CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+        // SQLite doesn't support character set and collation modifications
+        // These operations are not needed for SQLite as it handles UTF-8 natively
+        // and doesn't have the same collation issues as MySQL
         
-        // Specifically fix the name fields that are used in relationships
-        DB::statement('ALTER TABLE doctors MODIFY name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
-        DB::statement('ALTER TABLE organizations MODIFY name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
-        DB::statement('ALTER TABLE patient MODIFY doctor_id VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
-        DB::statement('ALTER TABLE patient MODIFY organization_id VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+        // For SQLite, we just ensure the tables exist and have the correct structure
+        // The original issue was likely related to MySQL collation conflicts
+        
+        // No-op for SQLite - the tables should already be properly structured
+        // from previous migrations
     }
 
     /**
@@ -29,9 +28,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        // Revert to general collation if needed
-        DB::statement('ALTER TABLE doctors CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci');
-        DB::statement('ALTER TABLE organizations CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci');
-        DB::statement('ALTER TABLE patient CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci');
+        // No-op for SQLite - no changes to revert
     }
 };

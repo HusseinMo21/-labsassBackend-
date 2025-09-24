@@ -34,7 +34,7 @@ class ShiftController extends Controller
             // Calculate real-time statistics
             $visitsCount = \App\Models\Visit::where('shift_id', $currentShift->id)->count();
             $paymentsCount = \App\Models\Payment::where('shift_id', $currentShift->id)->count();
-            $totalCollected = \App\Models\Payment::where('shift_id', $currentShift->id)->sum('paid');
+            $totalCollected = \App\Models\Payment::where('shift_id', $currentShift->id)->sum('amount');
             $patientsCount = \App\Models\Visit::where('shift_id', $currentShift->id)
                 ->distinct('patient_id')
                 ->count('patient_id');
@@ -148,7 +148,7 @@ class ShiftController extends Controller
 
         // Calculate final statistics
         $visits = $currentShift->visits()->count();
-        $payments = $currentShift->payments()->sum('paid');
+        $payments = $currentShift->payments()->sum('amount');
         $patients = $currentShift->visits()->distinct('patient_id')->count();
 
         $currentShift->update([

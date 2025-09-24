@@ -16,147 +16,84 @@ class UnpaidInvoicesController extends Controller
     {
         $query = $request->get('query', '');
         $status = $request->get('status', 'all'); // all, pending, partial, paid
-        
-        // Get invoices with labRequest relationship (legacy invoices)
-        $invoicesWithLabRequest = Invoice::with(['labRequest.patient'])
-            ->whereHas('labRequest.patient', function ($q) use ($query) {
-                if ($query) {
-                    $q->where('name', 'like', "%{$query}%")
-                      ->orWhere('phone', 'like', "%{$query}%");
-                }
-            });
-
-        // Get invoices without labRequest (direct invoices from Patient Registration)
-        $invoicesWithoutLabRequest = Invoice::whereNull('lab_request_id')
-            ->whereNotNull('lab')
-            ->where(function ($q) use ($query) {
-                if ($query) {
-                    // Find patient by lab number
-                    $q->where('lab', 'like', "%{$query}%");
-                }
-            });
-
-        // Apply payment status filters
-        if ($status !== 'all') {
-            switch ($status) {
-                case 'pending':
-                    $invoicesWithLabRequest->where('paid', 0);
-                    $invoicesWithoutLabRequest->where('paid', 0);
-                    break;
-                case 'partial':
-                    $invoicesWithLabRequest->where('paid', '>', 0)->whereRaw('paid < total');
-                    $invoicesWithoutLabRequest->where('paid', '>', 0)->whereRaw('paid < total');
-                    break;
-                case 'paid':
-                    $invoicesWithLabRequest->whereRaw('paid >= total');
-                    $invoicesWithoutLabRequest->whereRaw('paid >= total');
-                    break;
-            }
-        }
-
-        // Use a more efficient approach - get recent invoices first
         $perPage = 15;
         $currentPage = $request->get('page', 1);
         
-        // Get recent invoices (last 1000) to avoid memory issues
-        $recentInvoices = Invoice::orderBy('id', 'desc')
-            ->limit(1000)
-            ->get();
+        // Get visits with billing information instead of separate invoices
+        $visitsQuery = Visit::with(['patient', 'labRequest'])
+            ->where('total_amount', '>', 0); // Only visits with billing
         
-        // Filter by payment status and search
-        $filteredInvoices = $recentInvoices->filter(function ($invoice) use ($status, $query) {
-            // Apply payment status filter
-            if ($status !== 'all') {
-                switch ($status) {
-                    case 'pending':
-                        if ($invoice->paid != 0) return false;
-                        break;
-                    case 'partial':
-                        if ($invoice->paid <= 0 || $invoice->paid >= $invoice->total) return false;
-                        break;
-                    case 'paid':
-                        if ($invoice->paid < $invoice->total) return false;
-                        break;
-                }
-            }
+        // Apply search filter
+        if ($query) {
+            $visitsQuery->where(function ($q) use ($query) {
+                $q->where('visit_number', 'like', "%{$query}%")
+                  ->orWhereHas('patient', function ($patientQuery) use ($query) {
+                      $patientQuery->where('name', 'like', "%{$query}%")
+                                  ->orWhere('phone', 'like', "%{$query}%")
+                                  ->orWhere('id', 'like', "%{$query}%");
+                  })
+                  ->orWhereHas('labRequest', function ($labQuery) use ($query) {
+                      $labQuery->where('lab_no', 'like', "%{$query}%")
+                              ->orWhere('full_lab_no', 'like', "%{$query}%");
+                  });
+            });
+        }
+        
+        // Get all visits and filter by payment status
+        $visits = $visitsQuery->orderBy('id', 'desc')->get();
+        
+        // Filter by payment status
+        $filteredVisits = $visits->filter(function ($visit) use ($status) {
+            // Get paid amount from patient table (where the actual payment data is stored)
+            $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
+            $remainingAmount = $totalAmount - $paidAmount;
             
-            // Apply search filter
-            if ($query) {
-                // Check if lab number matches
-                if (strpos($invoice->lab, $query) !== false) {
+            switch ($status) {
+                case 'pending':
+                    return $paidAmount == 0;
+                case 'partial':
+                    return $paidAmount > 0 && $remainingAmount > 0;
+                case 'paid':
+                    return $remainingAmount <= 0;
+                default:
                     return true;
-                }
-                
-                // Check if patient name/phone matches (for invoices with labRequest)
-                if ($invoice->labRequest && $invoice->labRequest->patient) {
-                    $patient = $invoice->labRequest->patient;
-                    if (strpos($patient->name, $query) !== false || strpos($patient->phone, $query) !== false) {
-                        return true;
-                    }
-                } else {
-                    // For direct invoices, find patient by lab number
-                    $patient = \App\Models\Patient::where('lab', $invoice->lab)->first();
-                    if ($patient && (strpos($patient->name, $query) !== false || strpos($patient->phone, $query) !== false)) {
-                        return true;
-                    }
-                }
-                return false;
             }
-            
-            return true;
         });
         
         // Sort and paginate
-        $filteredInvoices = $filteredInvoices->sortByDesc('id');
+        $filteredVisits = $filteredVisits->sortByDesc('id');
         $offset = ($currentPage - 1) * $perPage;
-        $paginatedInvoices = $filteredInvoices->slice($offset, $perPage)->values();
+        $paginatedVisits = $filteredVisits->slice($offset, $perPage)->values();
 
         // Transform the data to match frontend expectations
-        $transformedData = $paginatedInvoices->map(function ($invoice) {
-            $patient = null;
-            $visitId = null;
-            $visitDate = null;
-
-            if ($invoice->labRequest && $invoice->labRequest->patient) {
-                // Legacy invoice with labRequest
-                $patient = $invoice->labRequest->patient;
-                $visit = \App\Models\Visit::where('patient_id', $patient->id)
-                    ->orderBy('id', 'desc')
-                    ->first();
-                $visitId = $visit ? $visit->id : null;
-                $visitDate = $invoice->labRequest->created_at ? $invoice->labRequest->created_at->format('Y-m-d') : null;
-            } else {
-                // Direct invoice from Patient Registration - find patient by lab number
-                $patient = \App\Models\Patient::where('lab', $invoice->lab)->first();
-                if ($patient) {
-                    $visit = \App\Models\Visit::where('patient_id', $patient->id)
-                        ->orderBy('id', 'desc')
-                        ->first();
-                    $visitId = $visit ? $visit->id : null;
-                    $visitDate = $visit ? $visit->visit_date : null;
-                }
-            }
+        $transformedData = $paginatedVisits->map(function ($visit) {
+            // Get paid amount from patient table (where the actual payment data is stored)
+            $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
+            $remainingAmount = $totalAmount - $paidAmount;
             
             return [
-                'id' => $invoice->id,
-                'invoice_number' => $invoice->lab, // Map lab to invoice_number
-                'total_amount' => $invoice->total,
-                'amount_paid' => $invoice->paid,
-                'remaining_balance' => $invoice->remaining,
-                'visit' => $patient ? [
-                    'id' => $visitId,
-                    'visit_date' => $visitDate,
+                'id' => $visit->id,
+                'invoice_number' => $visit->visit_number, // Use visit number as invoice number
+                'total_amount' => $totalAmount,
+                'amount_paid' => $paidAmount,
+                'remaining_balance' => $remainingAmount,
+                'status' => $remainingAmount <= 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'pending'),
+                'visit' => [
+                    'id' => $visit->id,
+                    'visit_date' => $visit->visit_date,
                     'patient' => [
-                        'id' => $patient->id,
-                        'name' => $patient->name,
-                        'phone' => $patient->phone,
+                        'id' => $visit->patient->id,
+                        'name' => $visit->patient->name,
+                        'phone' => $visit->patient->phone,
                     ],
-                ] : null,
+                ],
             ];
         });
 
         // Create pagination response
-        $total = $filteredInvoices->count();
+        $total = $filteredVisits->count();
         $lastPage = ceil($total / $perPage);
 
         return response()->json([
@@ -226,41 +163,53 @@ class UnpaidInvoicesController extends Controller
             ], 422);
         }
 
-        $invoice = Invoice::findOrFail($invoiceId);
+        // Find the visit instead of invoice
+        $visit = Visit::with('patient')->findOrFail($invoiceId);
         
-        if ($invoice->isFullyPaid()) {
+        // Get current paid amount from patient table (where the actual payment data is stored)
+        $currentPaidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+        $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
+        $remainingBalance = $totalAmount - $currentPaidAmount;
+        
+        if ($remainingBalance <= 0) {
             return response()->json([
-                'message' => 'Invoice is already fully paid',
+                'message' => 'Visit is already fully paid',
             ], 422);
         }
 
-        if ($request->amount > $invoice->remaining_balance) {
+        if ($request->amount > $remainingBalance) {
             return response()->json([
                 'message' => 'Payment amount exceeds remaining balance',
-                'remaining_balance' => $invoice->remaining_balance,
+                'remaining_balance' => $remainingBalance,
             ], 422);
         }
 
         DB::beginTransaction();
         try {
-            $invoice->addPayment($request->amount, $request->payment_method, $request->notes);
+            // Update the patient with the new payment (where the actual payment data is stored)
+            $newPaidAmount = $currentPaidAmount + $request->amount;
+            $newRemainingBalance = $totalAmount - $newPaidAmount;
             
-            // Note: Visit relationship is disabled, so we can't update visit billing status
-            // $visit = $invoice->visit;
-            // if ($visit) {
-            //     $visit->update([
-            //         'remaining_balance' => $invoice->remaining_balance,
-            //         'billing_status' => $invoice->isFullyPaid() ? 'paid' : 'partial',
-            //     ]);
-            // }
+            // Update patient's amount_paid field
+            $visit->patient->update([
+                'amount_paid' => $newPaidAmount,
+            ]);
+            
+            // Also update visit for consistency
+            $visit->update([
+                'upfront_payment' => $newPaidAmount,
+                'payment_status' => $newRemainingBalance <= 0 ? 'paid' : 'partial',
+                'payment_method' => $request->payment_method,
+                'payment_notes' => $request->notes,
+            ]);
             
             DB::commit();
 
             return response()->json([
                 'message' => 'Payment added successfully',
-                'invoice' => $invoice->load(['labRequest.patient', 'payments']),
-                'remaining_balance' => $invoice->remaining_balance,
-                'is_fully_paid' => $invoice->isFullyPaid(),
+                'visit' => $visit->fresh(['patient']),
+                'remaining_balance' => $newRemainingBalance,
+                'is_fully_paid' => $newRemainingBalance <= 0,
             ]);
 
         } catch (\Exception $e) {
@@ -279,17 +228,44 @@ class UnpaidInvoicesController extends Controller
 
     public function getUnpaidInvoicesSummary()
     {
-        $summary = DB::table('invoices')
-            ->selectRaw('
-                COUNT(*) as total_invoices,
-                SUM(total) as total_invoiced,
-                SUM(paid) as total_paid,
-                SUM(remaining) as total_remaining,
-                COUNT(CASE WHEN paid = 0 THEN 1 END) as pending_count,
-                COUNT(CASE WHEN paid > 0 AND paid < total THEN 1 END) as partial_count,
-                COUNT(CASE WHEN paid >= total THEN 1 END) as paid_count
-            ')
-            ->first();
+        // Get visits with billing information instead of separate invoices
+        $visits = Visit::where('total_amount', '>', 0)->get();
+        
+        $totalInvoices = $visits->count();
+        $totalInvoiced = $visits->sum(function ($visit) {
+            return $visit->final_amount ?? $visit->total_amount ?? 0;
+        });
+        $totalPaid = $visits->sum(function ($visit) {
+            return $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+        });
+        $totalRemaining = $totalInvoiced - $totalPaid;
+        
+        $pendingCount = $visits->filter(function ($visit) {
+            $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            return $paidAmount == 0;
+        })->count();
+        
+        $partialCount = $visits->filter(function ($visit) {
+            $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
+            return $paidAmount > 0 && $paidAmount < $totalAmount;
+        })->count();
+        
+        $paidCount = $visits->filter(function ($visit) {
+            $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
+            return $paidAmount >= $totalAmount;
+        })->count();
+
+        $summary = (object) [
+            'total_invoices' => $totalInvoices,
+            'total_invoiced' => $totalInvoiced,
+            'total_paid' => $totalPaid,
+            'total_remaining' => $totalRemaining,
+            'pending_count' => $pendingCount,
+            'partial_count' => $partialCount,
+            'paid_count' => $paidCount,
+        ];
 
         return response()->json($summary);
     }
