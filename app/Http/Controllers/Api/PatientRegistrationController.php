@@ -354,16 +354,24 @@ class PatientRegistrationController extends Controller
                     ]);
                 }
                 
-                // Create invoice for billing tracking (using legacy structure)
-                $invoice = \App\Models\Invoice::create([
-                    'lab' => $labRequest->full_lab_no,
-                    'total' => $totalAmount,
-                    'paid' => $amountPaid,
-                    'remaining' => $totalAmount - $amountPaid,
-                    'lab_request_id' => $labRequest->id, // Link to lab request
-                    'visit_id' => $visit->id, // Link to visit
-                    'shift_id' => $currentShift?->id,
-                ]);
+                // Create invoice for billing tracking
+                try {
+                    $invoice = \App\Models\Invoice::create([
+                        'total' => $totalAmount,
+                        'paid' => $amountPaid,
+                        'remaining' => $totalAmount - $amountPaid,
+                        'lab_request_id' => $labRequest->id, // Link to lab request
+                        'visit_id' => $visit->id, // Link to visit
+                        'shift_id' => $currentShift?->id,
+                    ]);
+                } catch (\Exception $e) {
+                    \Log::error('Failed to create invoice', [
+                        'error' => $e->getMessage(),
+                        'visit_id' => $visit->id ?? 'null',
+                        'lab_request_id' => $labRequest->id ?? 'null'
+                    ]);
+                    throw $e;
+                }
                 
                 // Create payment record if amount was paid during registration
                 if ($amountPaid > 0) {
