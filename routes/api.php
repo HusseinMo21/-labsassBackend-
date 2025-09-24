@@ -53,8 +53,8 @@ Route::group(['prefix' => 'invoices', 'middleware' => []], function () {
     Route::get('/{id}/preview', [App\Http\Controllers\Api\InvoiceController::class, 'previewInvoiceHtml']);
 });
 
-// Protected routes (authentication and CSRF protection required)
-Route::middleware(['auth:sanctum', 'api.csrf'])->group(function () {
+// Protected routes (authentication required)
+Route::middleware(['auth:sanctum'])->group(function () {
     // Auth routes
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/user', [AuthController::class, 'user']);

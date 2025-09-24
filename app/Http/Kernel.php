@@ -68,6 +68,5 @@ class Kernel extends HttpKernel
         'role' => \App\Http\Middleware\CheckRole::class,
         'audit.log' => \App\Http\Middleware\AuditLogMiddleware::class,
         'pdf.cors' => \App\Http\Middleware\PdfCorsMiddleware::class,
-        'api.csrf' => \App\Http\Middleware\ApiCsrfMiddleware::class,
     ];
 } 
