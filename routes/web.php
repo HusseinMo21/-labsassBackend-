@@ -26,13 +26,13 @@ Route::post('reports/{report}/submit-review', [App\Http\Controllers\EnhancedRepo
 Route::post('reports/{report}/approve', [App\Http\Controllers\EnhancedReportController::class, 'approve'])
     ->name('reports.approve');
 Route::post('reports/{report}/print', [App\Http\Controllers\EnhancedReportController::class, 'print'])
-    ->name('reports.print');
+    ->name('reports.print-post');
 Route::post('reports/{report}/deliver', [App\Http\Controllers\EnhancedReportController::class, 'deliver'])
     ->name('reports.deliver');
 
 // Report Print/Export Routes
 Route::get('reports/{report}/print', [App\Http\Controllers\EnhancedReportController::class, 'printReport'])
-    ->name('reports.print');
+    ->name('reports.print-get');
 Route::get('reports/{report}/pdf', [App\Http\Controllers\EnhancedReportController::class, 'exportPdf'])
     ->name('reports.pdf');
 
