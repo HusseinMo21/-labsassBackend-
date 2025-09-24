@@ -26,6 +26,43 @@ use App\Http\Controllers\Api\PatientRegistrationController;
 |--------------------------------------------------------------------------
 */
 
+// Debug routes (remove in production)
+Route::get('/debug/db', function () {
+    try {
+        DB::connection()->getPdo();
+        return response()->json(['status' => 'Database connected successfully']);
+    } catch (\Exception $e) {
+        return response()->json(['error' => $e->getMessage()], 500);
+    }
+});
+
+Route::get('/debug/patient-registration', function () {
+    try {
+        // Test if all required models exist
+        $models = [
+            'Patient' => \App\Models\Patient::class,
+            'User' => \App\Models\User::class,
+            'LabRequest' => \App\Models\LabRequest::class,
+            'Visit' => \App\Models\Visit::class,
+            'Invoice' => \App\Models\Invoice::class,
+        ];
+        
+        $results = [];
+        foreach ($models as $name => $class) {
+            try {
+                $count = $class::count();
+                $results[$name] = "OK (count: $count)";
+            } catch (\Exception $e) {
+                $results[$name] = "ERROR: " . $e->getMessage();
+            }
+        }
+        
+        return response()->json(['models' => $results]);
+    } catch (\Exception $e) {
+        return response()->json(['error' => $e->getMessage()], 500);
+    }
+});
+
 // Health check routes (no authentication required)
 Route::get('/health', [App\Http\Controllers\HealthCheckController::class, 'health']);
 Route::get('/health/detailed', [App\Http\Controllers\HealthCheckController::class, 'detailed']);

@@ -280,9 +280,10 @@ class PatientRegistrationController extends Controller
                     'processed_by_staff' => auth()->id(),
                 ]);
                 
-                // Create visit test based on case type
-                $visitTest = null;
-                if (isset($data['case_type']) && !empty($data['case_type'])) {
+            // Create visit test based on case type
+            $visitTest = null;
+            if (isset($data['case_type']) && !empty($data['case_type']) && $data['case_type'] !== null) {
+                try {
                     $testCategory = TestCategory::where('name', $data['case_type'])->first();
                     
                     if ($testCategory) {
@@ -298,7 +299,13 @@ class PatientRegistrationController extends Controller
                             ]);
                         }
                     }
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to create visit test', [
+                        'error' => $e->getMessage(),
+                        'case_type' => $data['case_type'] ?? 'null'
+                    ]);
                 }
+            }
                 
                 // Update lab request with visit information
                 $labRequest->update([
@@ -309,20 +316,27 @@ class PatientRegistrationController extends Controller
                 
                 // Create sample records from patient registration data
                 if (isset($data['sample_type']) || isset($data['case_type']) || isset($data['sample_size']) || isset($data['number_of_samples'])) {
-                    $numberOfSamples = intval($data['number_of_samples'] ?? 1);
-                    
-                    // Create multiple sample records based on number_of_samples
-                    for ($i = 1; $i <= $numberOfSamples; $i++) {
-                        \App\Models\Sample::create([
-                            'lab_request_id' => $labRequest->id,
-                            'sample_type' => $data['sample_type'] ?? null,
-                            'case_type' => $data['case_type'] ?? null,
-                            'sample_size' => $data['sample_size'] ?? null,
-                            'number_of_samples' => 1, // Each individual sample record represents 1 sample
-                            'sample_id' => 'SMP-' . str_pad($labRequest->id, 6, '0', STR_PAD_LEFT) . '-' . date('Ymd') . '-' . str_pad($i, 2, '0', STR_PAD_LEFT),
-                            'status' => 'collected',
-                            'notes' => 'Sample ' . $i . ' of ' . $numberOfSamples . ' - from patient registration',
-                            'created_at' => now(),
+                    try {
+                        $numberOfSamples = intval($data['number_of_samples'] ?? 1);
+                        
+                        // Create multiple sample records based on number_of_samples
+                        for ($i = 1; $i <= $numberOfSamples; $i++) {
+                            \App\Models\Sample::create([
+                                'lab_request_id' => $labRequest->id,
+                                'sample_type' => $data['sample_type'] ?? null,
+                                'case_type' => $data['case_type'] ?? null,
+                                'sample_size' => $data['sample_size'] ?? null,
+                                'number_of_samples' => 1, // Each individual sample record represents 1 sample
+                                'sample_id' => 'SMP-' . str_pad($labRequest->id, 6, '0', STR_PAD_LEFT) . '-' . date('Ymd') . '-' . str_pad($i, 2, '0', STR_PAD_LEFT),
+                                'status' => 'collected',
+                                'notes' => 'Sample ' . $i . ' of ' . $numberOfSamples . ' - from patient registration',
+                                'created_at' => now(),
+                            ]);
+                        }
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to create sample records', [
+                            'error' => $e->getMessage(),
+                            'lab_request_id' => $labRequest->id ?? 'null'
                         ]);
                     }
                 }
@@ -347,6 +361,7 @@ class PatientRegistrationController extends Controller
                     'paid' => $amountPaid,
                     'remaining' => $totalAmount - $amountPaid,
                     'lab_request_id' => $labRequest->id, // Link to lab request
+                    'visit_id' => $visit->id, // Link to visit
                     'shift_id' => $currentShift?->id,
                 ]);
                 
