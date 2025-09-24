@@ -65,8 +65,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/patients/{id}/reports', [PatientController::class, 'reportsList']);
     Route::get('/patients/{id}/payments', [PatientController::class, 'paymentsHistory']);
     Route::middleware('pdf.cors')->group(function () {
-        Route::get('/patients/{id}/print-reports', [PatientController::class, 'printAllReports']);
-        Route::get('/reports/{report_id}/print', [PatientController::class, 'printSingleReport']);
+        Route::get('/patients/{id}/print-reports', [PatientController::class, 'printAllReports'])->name('patients.print-reports');
+        Route::get('/reports/{report_id}/print', [PatientController::class, 'printSingleReport'])->name('reports.print-single');
     });
     Route::apiResource('patients', PatientController::class);
     Route::get('/patient/me', [PatientController::class, 'me']);
@@ -305,8 +305,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // Enhanced Reports PDF routes (with CORS support)
     Route::middleware(['role:admin,staff,doctor'])->group(function () {
         Route::middleware('pdf.cors')->group(function () {
-            Route::get('/enhanced-reports/{report}/print', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'print']);
-            Route::get('/enhanced-reports/{report}/print-view', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'printView']);
+            Route::get('/enhanced-reports/{report}/print', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'print'])->name('enhanced-reports.print');
+            Route::get('/enhanced-reports/{report}/print-view', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'printView'])->name('enhanced-reports.print-view');
         });
     });
 
