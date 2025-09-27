@@ -436,6 +436,15 @@ class LabRequestController extends Controller
 
             $patient = $labRequest->patient;
 
+            // Handle case where patient is null
+            if (!$patient) {
+                return response()->json([
+                    'error' => 'Patient not found for this lab request',
+                    'lab_request_id' => $labRequest->id,
+                    'lab_no' => $labNo
+                ], 404);
+            }
+
             // Get patient registration data from the latest visit's metadata
             $patientData = [];
             $numberOfSamples = 0;
@@ -455,10 +464,18 @@ class LabRequestController extends Controller
                 }
             }
 
-            // Get all visits for this patient
-            $visits = $patient->visits()->with([
-                'visitTests.labTest'
-            ])->orderBy('visit_date', 'desc')->get();
+            // Get all visits for this patient (handle potential null)
+            $visits = collect();
+            try {
+                $visits = $patient->visits()->with([
+                    'visitTests.labTest'
+                ])->orderBy('visit_date', 'desc')->get();
+            } catch (\Exception $e) {
+                \Log::warning('Error fetching visits for patient: ' . $e->getMessage(), [
+                    'patient_id' => $patient->id,
+                    'lab_request_id' => $labRequest->id
+                ]);
+            }
 
             // Create samples data from patient registration
             $samples = collect();
@@ -553,8 +570,16 @@ class LabRequestController extends Controller
                 ]);
             }
 
-            // Get reports
-            $reports = $patient->reports()->orderBy('created_at', 'desc')->get();
+            // Get reports (handle potential null)
+            $reports = collect();
+            try {
+                $reports = $patient->reports()->orderBy('created_at', 'desc')->get();
+            } catch (\Exception $e) {
+                \Log::warning('Error fetching reports for patient: ' . $e->getMessage(), [
+                    'patient_id' => $patient->id,
+                    'lab_request_id' => $labRequest->id
+                ]);
+            }
 
             $comprehensiveData = [
                 'lab_request' => [
