@@ -968,7 +968,8 @@ class VisitController extends Controller
         // Also check lab request metadata for patient registration data
         $labRequestData = [];
         if ($visit->labRequest && is_object($visit->labRequest) && !is_array($visit->labRequest) && !($visit->labRequest instanceof \Illuminate\Database\Eloquent\Collection) && isset($visit->labRequest->metadata)) {
-            $labRequestMetadata = json_decode($visit->labRequest->metadata, true);
+            // metadata is already cast as array in the model, no need to json_decode
+            $labRequestMetadata = is_string($visit->labRequest->metadata) ? json_decode($visit->labRequest->metadata, true) : $visit->labRequest->metadata;
             $labRequestData = $labRequestMetadata['patient_data'] ?? [];
         }
         

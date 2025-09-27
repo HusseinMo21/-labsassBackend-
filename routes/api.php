@@ -145,6 +145,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/visits/{visit}', [VisitController::class, 'show']);
     Route::put('/visits/{visit}', [VisitController::class, 'update']);
     Route::delete('/visits/{visit}', [VisitController::class, 'destroy']);
+    Route::get('/visits/{visitId}/receipt', [VisitController::class, 'getReceiptDetails']);
     Route::put('/visits/{visit}/results', [VisitController::class, 'updateVisitResults']);
     Route::put('/visits/{visit}/tests/{visitTest}/result', [VisitController::class, 'updateTestResult']);
     Route::put('/visits/{visit}/complete', [VisitController::class, 'completeVisit']);
