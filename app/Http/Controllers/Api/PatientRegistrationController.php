@@ -462,17 +462,24 @@ class PatientRegistrationController extends Controller
                 }
                 
                 // Create sample records from patient registration data
-                if (isset($data['sample_type']) || isset($data['case_type']) || isset($data['sample_size']) || isset($data['number_of_samples'])) {
+                // Get sample data from visit metadata (where it's actually stored)
+                $visitMetadata = json_decode($visit->metadata ?? '{}', true);
+                $patientData = $visitMetadata['patient_data'] ?? [];
+                
+                $sampleType = $patientData['sample_type'] ?? $data['sample_type'] ?? null;
+                $caseType = $patientData['case_type'] ?? $data['case_type'] ?? null;
+                $sampleSize = $patientData['sample_size'] ?? $data['sample_size'] ?? null;
+                $numberOfSamples = intval($patientData['number_of_samples'] ?? $data['number_of_samples'] ?? 1);
+                
+                if ($sampleType || $caseType || $sampleSize || $numberOfSamples > 0) {
                     try {
-                        $numberOfSamples = intval($data['number_of_samples'] ?? 1);
-                        
                         // Create multiple sample records based on number_of_samples
                         for ($i = 1; $i <= $numberOfSamples; $i++) {
                             \App\Models\Sample::create([
                                 'lab_request_id' => $labRequest->id,
-                                'sample_type' => $data['sample_type'] ?? null,
-                                'case_type' => $data['case_type'] ?? null,
-                                'sample_size' => $data['sample_size'] ?? null,
+                                'sample_type' => $sampleType,
+                                'case_type' => $caseType,
+                                'sample_size' => $sampleSize,
                                 'number_of_samples' => 1, // Each individual sample record represents 1 sample
                                 'sample_id' => 'SMP-' . str_pad($labRequest->id, 6, '0', STR_PAD_LEFT) . '-' . date('Ymd') . '-' . str_pad($i, 2, '0', STR_PAD_LEFT),
                                 'status' => 'collected',
@@ -480,10 +487,18 @@ class PatientRegistrationController extends Controller
                                 'created_at' => now(),
                             ]);
                         }
+                        
+                        \Log::info('Sample records created successfully', [
+                            'lab_request_id' => $labRequest->id,
+                            'number_of_samples' => $numberOfSamples,
+                            'sample_type' => $sampleType
+                        ]);
                     } catch (\Exception $e) {
                         \Log::warning('Failed to create sample records', [
                             'error' => $e->getMessage(),
-                            'lab_request_id' => $labRequest->id ?? 'null'
+                            'lab_request_id' => $labRequest->id ?? 'null',
+                            'sample_type' => $sampleType,
+                            'number_of_samples' => $numberOfSamples
                         ]);
                     }
                 }
