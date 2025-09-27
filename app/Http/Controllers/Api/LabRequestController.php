@@ -487,16 +487,48 @@ class LabRequestController extends Controller
             $paidAmount = 0;
             $remainingAmount = 0;
             $paymentStatus = 'unpaid';
+            $paymentHistory = [];
             
             if ($labRequest->visits && $labRequest->visits->count() > 0) {
                 $latestVisit = $labRequest->visits->sortByDesc('created_at')->first();
                 if ($latestVisit) {
-                    $totalAmount = $latestVisit->total_amount ?? 0;
-                    $paidAmount = $latestVisit->upfront_payment ?? 0; // Use upfront_payment as the actual paid amount
-                    $remainingAmount = $totalAmount - $paidAmount;
-                    $paymentStatus = $latestVisit->billing_status ?? ($remainingAmount > 0 ? 'partial' : 'paid');
+                    // Get payment data from visit metadata first
+                    $visitMetadata = json_decode($latestVisit->metadata ?? '{}', true);
+                    $paymentDetails = $visitMetadata['payment_details'] ?? [];
+                    $patientData = $visitMetadata['patient_data'] ?? [];
                     
-                    // Also try to get from patient's amount_paid if visit data is missing
+                    // Calculate amounts from metadata or direct fields
+                    $totalAmount = $patientData['total_amount'] ?? $latestVisit->total_amount ?? 0;
+                    $paidAmount = $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? $latestVisit->upfront_payment ?? 0;
+                    $remainingAmount = $totalAmount - $paidAmount;
+                    $paymentStatus = $visitMetadata['payment_status'] ?? ($remainingAmount > 0 ? 'partial' : 'paid');
+                    
+                    // Create payment history entry
+                    $paymentMethod = 'Cash';
+                    if (isset($paymentDetails['additional_payment_method'])) {
+                        $paymentMethod = $paymentDetails['additional_payment_method'];
+                    } elseif (isset($patientData['additional_payment_method'])) {
+                        $paymentMethod = $patientData['additional_payment_method'];
+                    } elseif ($latestVisit->payment_method) {
+                        $paymentMethod = $latestVisit->payment_method;
+                    }
+                    
+                    $paymentHistory[] = [
+                        'visit_date' => $latestVisit->visit_date,
+                        'invoice_number' => $latestVisit->invoice_number ?? 'N/A',
+                        'total_amount' => $totalAmount,
+                        'amount_paid' => $paidAmount,
+                        'balance' => $remainingAmount,
+                        'status' => $remainingAmount <= 0 ? 'Paid' : ($paidAmount > 0 ? 'Partial' : 'Unpaid'),
+                        'payment_method' => $paymentMethod,
+                        'payment_breakdown' => [
+                            'cash' => $paymentDetails['amount_paid_cash'] ?? $patientData['amount_paid_cash'] ?? 0,
+                            'card' => $paymentDetails['amount_paid_card'] ?? $patientData['amount_paid_card'] ?? 0,
+                            'card_method' => $paymentDetails['additional_payment_method'] ?? $patientData['additional_payment_method'] ?? null,
+                        ],
+                    ];
+                    
+                    // Fallback to patient data if visit data is missing
                     if ($totalAmount == 0) {
                         $totalAmount = $patient->total_amount ?? 0;
                         $paidAmount = $patient->amount_paid ?? 0;

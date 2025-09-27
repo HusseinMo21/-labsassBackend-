@@ -224,6 +224,11 @@ class PatientRegistrationController extends Controller
                 // Remove lab_number from data as it's stored in lab field
                 unset($data['lab_number']);
                 
+                // Ensure organization is properly stored in patient record
+                if (isset($data['organization']) && !empty($data['organization'])) {
+                    $data['organization'] = $data['organization'];
+                }
+                
                 $patient = Patient::create($data);
                 
                 // Create patient credentials
@@ -356,9 +361,48 @@ class PatientRegistrationController extends Controller
                     $visitData['payment_status'] = $paymentStatus;
                 }
                 
-                // Add metadata with financial information
+                // Add comprehensive metadata with all patient data
                 if (in_array('metadata', $fillable)) {
+                    // Prepare payment details for metadata
+                    $paymentDetails = [];
+                    if (isset($data['amount_paid_cash']) && $data['amount_paid_cash'] > 0) {
+                        $paymentDetails['amount_paid_cash'] = floatval($data['amount_paid_cash']);
+                    }
+                    if (isset($data['amount_paid_card']) && $data['amount_paid_card'] > 0) {
+                        $paymentDetails['amount_paid_card'] = floatval($data['amount_paid_card']);
+                        $paymentDetails['additional_payment_method'] = $data['additional_payment_method'] ?? 'Card';
+                    }
+                    $paymentDetails['total_paid'] = $amountPaid;
+                    
+                    // Prepare comprehensive patient data for metadata
+                    $patientData = [
+                        'name' => $data['name'] ?? $patient->name,
+                        'phone' => $data['phone'] ?? $patient->phone,
+                        'age' => $data['age'] ?? $patient->age,
+                        'gender' => $data['gender'] ?? $patient->gender,
+                        'organization' => $data['organization'] ?? $patient->organization,
+                        'doctor' => $data['doctor'] ?? $patient->doctor,
+                        'sample_type' => $data['sample_type'] ?? null,
+                        'sample_size' => $data['sample_size'] ?? null,
+                        'number_of_samples' => $data['number_of_samples'] ?? 1,
+                        'case_type' => $data['case_type'] ?? null,
+                        'day_of_week' => $data['day_of_week'] ?? null,
+                        'medical_history' => $data['medical_history'] ?? null,
+                        'previous_tests' => $data['previous_tests'] ?? null,
+                        'attendance_date' => $data['attendance_date'] ?? now()->format('Y-m-d'),
+                        'delivery_date' => $data['delivery_date'] ?? null,
+                        'total_amount' => $totalAmount,
+                        'amount_paid' => $amountPaid,
+                        'amount_paid_cash' => $data['amount_paid_cash'] ?? 0,
+                        'amount_paid_card' => $data['amount_paid_card'] ?? 0,
+                        'additional_payment_method' => $data['additional_payment_method'] ?? null,
+                        'lab_number' => $patient->lab,
+                    ];
+                    
                     $visitData['metadata'] = [
+                        'created_via' => 'patient_registration',
+                        'payment_details' => $paymentDetails,
+                        'patient_data' => $patientData,
                         'total_amount' => $totalAmount,
                         'paid_amount' => $amountPaid,
                         'remaining_amount' => $totalAmount - $amountPaid,
