@@ -112,7 +112,7 @@ class CheckInController extends Controller
             'tests.*.custom_price' => 'required|numeric|min:0',
             'tests.*.discount_percentage' => 'nullable|numeric|min:0|max:100',
             'upfront_payment' => 'required|numeric|min:0',
-            'payment_method' => 'required|in:cash,card,insurance,other',
+            'payment_method' => 'required|in:cash,card,Fawry,InstaPay,VodafoneCash,Other',
             'notes' => 'nullable|string',
             'expected_delivery_date' => 'nullable|date',
             'insurance_provider' => 'nullable|string|max:255',
@@ -499,6 +499,35 @@ class CheckInController extends Controller
             $patientAge = $visit->patient->birth_date->age;
         }
         
+        // Get payment breakdown from visit metadata
+        $metadata = json_decode($visit->metadata ?? '{}', true);
+        $paymentDetails = $metadata['payment_details'] ?? [];
+        
+        // Build payment breakdown
+        $paymentBreakdown = [];
+        if (isset($paymentDetails['amount_paid_cash']) && $paymentDetails['amount_paid_cash'] > 0) {
+            $paymentBreakdown['cash'] = $paymentDetails['amount_paid_cash'];
+        }
+        if (isset($paymentDetails['amount_paid_card']) && $paymentDetails['amount_paid_card'] > 0) {
+            $paymentBreakdown['card'] = $paymentDetails['amount_paid_card'];
+            $paymentBreakdown['card_method'] = $paymentDetails['additional_payment_method'] ?? 'Card';
+        }
+        
+        // If no breakdown exists but we have a payment method, create a simple breakdown
+        if (empty($paymentBreakdown)) {
+            $currentPaymentMethod = $this->getPaymentMethod($visit, $payments);
+            $paidAmount = $invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0);
+            
+            if ($paidAmount > 0) {
+                if ($currentPaymentMethod === 'cash') {
+                    $paymentBreakdown['cash'] = $paidAmount;
+                } else {
+                    $paymentBreakdown['card'] = $paidAmount;
+                    $paymentBreakdown['card_method'] = $currentPaymentMethod;
+                }
+            }
+        }
+        
         return response()->json([
             'visit' => $visit,
             'receipt_data' => [
@@ -508,13 +537,7 @@ class CheckInController extends Controller
                 'patient_name' => $visit->patient->name ?: 'N/A',
                 'patient_age' => $patientAge ?: 'N/A',
                 'patient_phone' => $visit->patient->phone ?: 'N/A',
-                'tests' => $visit->visitTests->map(function ($visitTest) {
-                    return [
-                        'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
-                        'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
-                        'price' => $visitTest->final_price ?: $visitTest->price,
-                    ];
-                }),
+                'tests' => $this->getTestsForReceipt($visit),
                 'total_amount' => $invoice ? $invoice->total_amount : ($visit->total_amount ?: 0),
                 'discount_amount' => $visit->discount_amount ?: 0,
                 'final_amount' => $invoice ? $invoice->total_amount : ($visit->final_amount ?: 0),
@@ -527,6 +550,7 @@ class CheckInController extends Controller
                 'barcode_text' => $barcodeText ?: 'N/A',
                 'check_in_by' => $visit->check_in_by ?: 'N/A',
                 'check_in_at' => $visit->check_in_at ?: 'N/A',
+                'payment_breakdown' => $paymentBreakdown,
                 'visit_id' => $visit->id,
                 'patient_credentials' => $visit->patient->getPortalCredentials(),
                 'printed_by' => $printedBy,
@@ -659,6 +683,52 @@ class CheckInController extends Controller
     }
 
     /**
+     * Get tests for receipt - handles both visitTests and patient registration sample_type
+     */
+    private function getTestsForReceipt($visit)
+    {
+        // First try to get from visitTests (for CheckIn visits)
+        if ($visit->visitTests && $visit->visitTests->count() > 0) {
+            return $visit->visitTests->map(function ($visitTest) {
+                return [
+                    'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
+                    'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
+                    'price' => $visitTest->final_price ?: $visitTest->price,
+                ];
+            });
+        }
+        
+        // If no visitTests, try to get from patient registration metadata
+        $metadata = json_decode($visit->metadata ?? '{}', true);
+        $patientData = $metadata['patient_data'] ?? [];
+        
+        // Also check lab request metadata for patient registration data
+        $labRequestData = [];
+        if ($visit->labRequest && is_object($visit->labRequest) && !is_array($visit->labRequest) && !($visit->labRequest instanceof \Illuminate\Database\Eloquent\Collection) && isset($visit->labRequest->metadata)) {
+            $labRequestMetadata = json_decode($visit->labRequest->metadata, true);
+            $labRequestData = $labRequestMetadata['patient_data'] ?? [];
+        }
+        
+        // Check both visit metadata and lab request metadata for sample_type
+        $sampleType = $patientData['sample_type'] ?? $labRequestData['sample_type'] ?? $metadata['sample_type'] ?? null;
+        
+        if (!empty($sampleType)) {
+            $totalAmount = $visit->total_amount ?? $visit->final_amount ?? 0;
+            
+            return collect([
+                [
+                    'name' => $sampleType,
+                    'category' => 'Sample Type',
+                    'price' => $totalAmount,
+                ]
+            ]);
+        }
+        
+        // Fallback - return empty collection
+        return collect([]);
+    }
+
+    /**
      * Get payment method from visit or payments
      */
     private function getPaymentMethod($visit, $payments)
@@ -725,10 +795,20 @@ class CheckInController extends Controller
             $metadata = json_decode($visit->metadata ?? '{}', true);
             $patientData = $metadata['patient_data'] ?? [];
             
-            // Get sample information from patient registration
-            $numberOfSamples = intval($patientData['number_of_samples'] ?? 1);
-            $sampleType = $patientData['sample_type'] ?? 'Pathology';
-            $sampleSize = $patientData['sample_size'] ?? 'صغيرة جدا';
+            // Also check lab request metadata for patient registration data
+            $labRequestData = [];
+            if ($visit->labRequest && is_object($visit->labRequest) && !is_array($visit->labRequest) && !($visit->labRequest instanceof \Illuminate\Database\Eloquent\Collection) && isset($visit->labRequest->metadata)) {
+                $labRequestMetadata = json_decode($visit->labRequest->metadata, true);
+                $labRequestData = $labRequestMetadata['patient_data'] ?? [];
+            }
+            
+            // Get sample information from patient registration (check both sources)
+            $numberOfSamples = intval($patientData['number_of_samples'] ?? $labRequestData['number_of_samples'] ?? 1);
+            $sampleType = $patientData['sample_type'] ?? $labRequestData['sample_type'] ?? 'Pathology';
+            $sampleSize = $patientData['sample_size'] ?? $labRequestData['sample_size'] ?? 'صغيرة جدا';
+            
+            \Log::info('Patient data from visit metadata: ' . json_encode($patientData));
+            \Log::info('Patient data from lab request metadata: ' . json_encode($labRequestData));
             
             \Log::info('Sample info - Number: ' . $numberOfSamples . ', Type: ' . $sampleType . ', Size: ' . $sampleSize);
             

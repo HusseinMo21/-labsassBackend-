@@ -148,7 +148,7 @@ class UnpaidInvoicesController extends Controller
         try {
             $request->validate([
                 'amount' => 'required|numeric|min:0.01',
-                'payment_method' => 'required|in:cash,card,insurance,other',
+                'payment_method' => 'required|in:cash,card,Fawry,InstaPay,VodafoneCash,Other',
                 'notes' => 'nullable|string',
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -190,6 +190,28 @@ class UnpaidInvoicesController extends Controller
             $newPaidAmount = $currentPaidAmount + $request->amount;
             $newRemainingBalance = $totalAmount - $newPaidAmount;
             
+            // Get existing payment details from visit metadata
+            $metadata = json_decode($visit->metadata ?? '{}', true);
+            $paymentDetails = $metadata['payment_details'] ?? [];
+            
+            // Update payment breakdown based on payment method
+            $paymentMethod = $request->payment_method;
+            $paymentAmount = $request->amount;
+            
+            if ($paymentMethod === 'cash') {
+                $paymentDetails['amount_paid_cash'] = ($paymentDetails['amount_paid_cash'] ?? 0) + $paymentAmount;
+            } else {
+                // For card, Fawry, InstaPay, VodafoneCash, Other
+                $paymentDetails['amount_paid_card'] = ($paymentDetails['amount_paid_card'] ?? 0) + $paymentAmount;
+                $paymentDetails['additional_payment_method'] = $paymentMethod;
+            }
+            
+            // Update total paid amount
+            $paymentDetails['total_paid'] = $newPaidAmount;
+            
+            // Update metadata with new payment details
+            $metadata['payment_details'] = $paymentDetails;
+            
             // Update patient's amount_paid field
             $visit->patient->update([
                 'amount_paid' => $newPaidAmount,
@@ -201,6 +223,7 @@ class UnpaidInvoicesController extends Controller
                 'payment_status' => $newRemainingBalance <= 0 ? 'paid' : 'partial',
                 'payment_method' => $request->payment_method,
                 'payment_notes' => $request->notes,
+                'metadata' => json_encode($metadata),
             ]);
             
             DB::commit();
@@ -317,6 +340,20 @@ class UnpaidInvoicesController extends Controller
         $totalPaid = $patient->amount_paid ?? $visit->upfront_payment ?? 0;
         $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
         
+        // Get payment breakdown from visit metadata
+        $metadata = json_decode($visit->metadata ?? '{}', true);
+        $paymentDetails = $metadata['payment_details'] ?? [];
+        
+        // Build payment breakdown
+        $paymentBreakdown = [];
+        if (isset($paymentDetails['amount_paid_cash']) && $paymentDetails['amount_paid_cash'] > 0) {
+            $paymentBreakdown['cash'] = $paymentDetails['amount_paid_cash'];
+        }
+        if (isset($paymentDetails['amount_paid_card']) && $paymentDetails['amount_paid_card'] > 0) {
+            $paymentBreakdown['card'] = $paymentDetails['amount_paid_card'];
+            $paymentBreakdown['card_method'] = $paymentDetails['additional_payment_method'] ?? 'Card';
+        }
+        
         // For final payment receipt, we assume the last payment was the final one
         $paidNow = $totalPaid; // All payments are considered as the final payment
         $paidBefore = 0; // No previous payments for simplicity
@@ -336,13 +373,7 @@ class UnpaidInvoicesController extends Controller
             'patient_name' => $patient->name,
             'patient_age' => $patient->age,
             'patient_phone' => $patient->phone,
-            'tests' => $visit->visitTests ? $visit->visitTests->map(function ($visitTest) {
-                return [
-                    'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
-                    'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
-                    'price' => $visitTest->final_price ?: $visitTest->price,
-                ];
-            }) : [],
+            'tests' => $this->getTestsForReceipt($visit),
             'total_amount' => $totalAmount,
             'discount_amount' => 0, // No discount in current system
             'final_amount' => $totalAmount,
@@ -355,6 +386,7 @@ class UnpaidInvoicesController extends Controller
             'processed_by' => $processedBy,
             'visit_id' => $visit->id,
             'patient_credentials' => $credentials,
+            'payment_breakdown' => $paymentBreakdown,
         ]);
         } catch (\Exception $e) {
             Log::error('Failed to get final payment receipt data', [
@@ -367,5 +399,51 @@ class UnpaidInvoicesController extends Controller
                 'message' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Get tests for receipt - handles both visitTests and patient registration sample_type
+     */
+    private function getTestsForReceipt($visit)
+    {
+        // First try to get from visitTests (for CheckIn visits)
+        if ($visit->visitTests && $visit->visitTests->count() > 0) {
+            return $visit->visitTests->map(function ($visitTest) {
+                return [
+                    'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
+                    'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
+                    'price' => $visitTest->final_price ?: $visitTest->price,
+                ];
+            });
+        }
+        
+        // If no visitTests, try to get from patient registration metadata
+        $metadata = json_decode($visit->metadata ?? '{}', true);
+        $patientData = $metadata['patient_data'] ?? [];
+        
+        // Also check lab request metadata for patient registration data
+        $labRequestData = [];
+        if ($visit->labRequest && is_object($visit->labRequest) && !is_array($visit->labRequest) && !($visit->labRequest instanceof \Illuminate\Database\Eloquent\Collection) && isset($visit->labRequest->metadata)) {
+            $labRequestMetadata = json_decode($visit->labRequest->metadata, true);
+            $labRequestData = $labRequestMetadata['patient_data'] ?? [];
+        }
+        
+        // Check both visit metadata and lab request metadata for sample_type
+        $sampleType = $patientData['sample_type'] ?? $labRequestData['sample_type'] ?? $metadata['sample_type'] ?? null;
+        
+        if (!empty($sampleType)) {
+            $totalAmount = $visit->total_amount ?? $visit->final_amount ?? 0;
+            
+            return collect([
+                [
+                    'name' => $sampleType,
+                    'category' => 'Sample Type',
+                    'price' => $totalAmount,
+                ]
+            ]);
+        }
+        
+        // Fallback - return empty collection
+        return collect([]);
     }
 } 

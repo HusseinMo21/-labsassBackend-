@@ -23,7 +23,8 @@ class VisitController extends Controller
                 'patient',
                 'labRequest',
                 'labRequest.invoice',
-                'visitTests.labTest'
+                'visitTests.labTest',
+                'visitTests.testCategory'
             ])->find($visitId);
 
             if (!$visit) {
@@ -55,6 +56,31 @@ class VisitController extends Controller
                 $processedBy = auth()->user()->name;
             }
 
+            // Build comprehensive payment breakdown
+            $paymentBreakdown = [];
+            
+            // Add cash payment if exists
+            if ($amountPaidCash > 0) {
+                $paymentBreakdown['cash'] = $amountPaidCash;
+            }
+            
+            // Add card/other payment method if exists
+            if ($amountPaidCard > 0) {
+                $paymentBreakdown['card'] = $amountPaidCard;
+                $paymentBreakdown['card_method'] = $additionalPaymentMethod;
+            }
+            
+            // If no breakdown exists but we have a payment method, create a simple breakdown
+            if (empty($paymentBreakdown) && $paidAmount > 0) {
+                $currentPaymentMethod = $visit->payment_method ?? $additionalPaymentMethod ?? 'cash';
+                if ($currentPaymentMethod === 'cash') {
+                    $paymentBreakdown['cash'] = $paidAmount;
+                } else {
+                    $paymentBreakdown['card'] = $paidAmount;
+                    $paymentBreakdown['card_method'] = $currentPaymentMethod;
+                }
+            }
+
             $receiptData = [
                 'receipt_number' => $receiptNumber,
                 'visit_number' => $visit->visit_number,
@@ -63,30 +89,20 @@ class VisitController extends Controller
                 'total_amount' => $totalAmount,
                 'final_amount' => $totalAmount,
                 'discount_amount' => $visit->discount_amount ?? 0,
-                'paid_now' => $paidAmount,
+                'upfront_payment' => $paidAmount,
                 'remaining_balance' => $remainingAmount,
-                'payment_method' => $visit->payment_method ?? 'cash',
+                'payment_method' => $visit->payment_method ?? $additionalPaymentMethod ?? 'cash',
                 'billing_status' => $paymentStatus,
                 'status' => $visit->status,
                 'patient_name' => $visit->patient->name,
                 'patient_age' => $visit->patient->age,
                 'patient_phone' => $visit->patient->phone,
-                'lab_number' => $visit->labRequest ? ($visit->labRequest->lab_no . ($visit->labRequest->suffix ? '-' . $visit->labRequest->suffix : '')) : ($visit->patient->lab ?? 'N/A'),
+                'lab_number' => $visit->labRequest && is_object($visit->labRequest) ? ($visit->labRequest->lab_no . ($visit->labRequest->suffix ? '-' . $visit->labRequest->suffix : '')) : ($visit->patient->lab ?? 'N/A'),
                 'processed_by' => $processedBy,
-                'tests' => $visit->visitTests->map(function($visitTest) {
-                    return [
-                        'name' => $visitTest->custom_test_name ?? ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
-                        'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
-                        'price' => $visitTest->final_price ?? $visitTest->price ?? 0,
-                    ];
-                }),
-                'barcode' => $visit->labRequest ? $visit->labRequest->barcode_url : null,
+                'tests' => $this->getTestsForReceipt($visit)->toArray(),
+                'barcode' => $visit->labRequest && is_object($visit->labRequest) ? $visit->labRequest->barcode_url : null,
                 // Payment breakdown
-                'payment_breakdown' => [
-                    'cash' => $amountPaidCash,
-                    'card' => $amountPaidCard,
-                    'card_method' => $additionalPaymentMethod,
-                ],
+                'payment_breakdown' => $paymentBreakdown,
             ];
 
             return response()->json($receiptData);
@@ -927,5 +943,51 @@ class VisitController extends Controller
             'checked_by_doctors' => $currentDoctors,
             'last_checked_at' => $visit->last_checked_at
         ]);
+    }
+
+    /**
+     * Get tests for receipt - handles both visitTests and patient registration sample_type
+     */
+    private function getTestsForReceipt($visit)
+    {
+        // First try to get from visitTests (for CheckIn visits)
+        if ($visit->visitTests && $visit->visitTests->count() > 0) {
+            return $visit->visitTests->map(function ($visitTest) {
+                return [
+                    'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
+                    'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
+                    'price' => $visitTest->final_price ?: $visitTest->price,
+                ];
+            });
+        }
+        
+        // If no visitTests, try to get from patient registration metadata
+        $metadata = json_decode($visit->metadata ?? '{}', true);
+        $patientData = $metadata['patient_data'] ?? [];
+        
+        // Also check lab request metadata for patient registration data
+        $labRequestData = [];
+        if ($visit->labRequest && is_object($visit->labRequest) && !is_array($visit->labRequest) && !($visit->labRequest instanceof \Illuminate\Database\Eloquent\Collection) && isset($visit->labRequest->metadata)) {
+            $labRequestMetadata = json_decode($visit->labRequest->metadata, true);
+            $labRequestData = $labRequestMetadata['patient_data'] ?? [];
+        }
+        
+        // Check both visit metadata and lab request metadata for sample_type
+        $sampleType = $patientData['sample_type'] ?? $labRequestData['sample_type'] ?? $metadata['sample_type'] ?? null;
+        
+        if (!empty($sampleType)) {
+            $totalAmount = $visit->total_amount ?? $visit->final_amount ?? 0;
+            
+            return collect([
+                [
+                    'name' => $sampleType,
+                    'category' => 'Sample Type',
+                    'price' => $totalAmount,
+                ]
+            ]);
+        }
+        
+        // Fallback - return empty collection
+        return collect([]);
     }
 } 

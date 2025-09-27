@@ -34,10 +34,12 @@ class ShiftController extends Controller
             // Calculate real-time statistics
             $visitsCount = \App\Models\Visit::where('shift_id', $currentShift->id)->count();
             $paymentsCount = \App\Models\Payment::where('shift_id', $currentShift->id)->count();
-            $totalCollected = \App\Models\Payment::where('shift_id', $currentShift->id)->sum('amount');
             $patientsCount = \App\Models\Visit::where('shift_id', $currentShift->id)
                 ->distinct('patient_id')
                 ->count('patient_id');
+            
+            // Calculate payment breakdown
+            $paymentBreakdown = $currentShift->calculatePaymentBreakdown();
             
             return response()->json([
                 'success' => true,
@@ -51,7 +53,10 @@ class ShiftController extends Controller
                     'patients_served' => $patientsCount,
                     'visits_processed' => $visitsCount,
                     'payments_processed' => $paymentsCount,
-                    'total_collected' => $totalCollected,
+                    'total_collected' => $paymentBreakdown['total_collected'],
+                    'cash_collected' => $paymentBreakdown['cash_collected'],
+                    'other_payments_collected' => $paymentBreakdown['other_payments_collected'],
+                    'payment_breakdown' => $paymentBreakdown['payment_breakdown'],
                 ]
             ]);
         }
@@ -148,13 +153,18 @@ class ShiftController extends Controller
 
         // Calculate final statistics
         $visits = $currentShift->visits()->count();
-        $payments = $currentShift->payments()->sum('amount');
         $patients = $currentShift->visits()->distinct('patient_id')->count();
+        
+        // Calculate payment breakdown
+        $paymentBreakdown = $currentShift->calculatePaymentBreakdown();
 
         $currentShift->update([
             'visits_processed' => $visits,
             'payments_processed' => $currentShift->payments()->count(),
-            'total_collected' => $payments,
+            'total_collected' => $paymentBreakdown['total_collected'],
+            'cash_collected' => $paymentBreakdown['cash_collected'],
+            'other_payments_collected' => $paymentBreakdown['other_payments_collected'],
+            'payment_breakdown' => $paymentBreakdown['payment_breakdown'],
             'patients_served' => $patients,
             'notes' => $request->notes,
         ]);
@@ -169,7 +179,7 @@ class ShiftController extends Controller
             'closed_at' => $currentShift->closed_at,
             'patients_served' => $patients,
             'visits_processed' => $visits,
-            'total_collected' => $payments,
+            'total_collected' => $paymentBreakdown['total_collected'],
         ]);
 
         return response()->json([
@@ -184,7 +194,7 @@ class ShiftController extends Controller
                 'patients_served' => $patients,
                 'visits_processed' => $visits,
                 'payments_processed' => $currentShift->payments()->count(),
-                'total_collected' => $payments,
+                'total_collected' => $paymentBreakdown['total_collected'],
             ]
         ]);
     }
@@ -230,6 +240,9 @@ class ShiftController extends Controller
                     'visits_processed' => $shift->visits_processed,
                     'payments_processed' => $shift->payments_processed,
                     'total_collected' => $shift->total_collected,
+                    'cash_collected' => $shift->cash_collected,
+                    'other_payments_collected' => $shift->other_payments_collected,
+                    'payment_breakdown' => $shift->payment_breakdown,
                     'notes' => $shift->notes,
                 ],
                 'patients' => $reportData,
@@ -259,16 +272,18 @@ class ShiftController extends Controller
         $shiftHistory = $shifts->map(function ($shift) {
             return [
                 'id' => $shift->id,
-                'date' => $shift->opened_at->format('Y-m-d'),
-                'type' => $shift->shift_type,
+                'shift_type' => $shift->shift_type,
+                'opened_at' => $shift->opened_at,
+                'closed_at' => $shift->closed_at,
                 'duration' => $shift->duration,
+                'status' => $shift->status,
                 'patients_served' => $shift->patients_served,
                 'visits_processed' => $shift->visits_processed,
                 'payments_processed' => $shift->payments_processed,
                 'total_collected' => $shift->total_collected,
-                'status' => $shift->status,
-                'opened_at' => $shift->opened_at,
-                'closed_at' => $shift->closed_at,
+                'cash_collected' => $shift->cash_collected,
+                'other_payments_collected' => $shift->other_payments_collected,
+                'payment_breakdown' => $shift->payment_breakdown,
             ];
         });
 

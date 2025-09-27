@@ -137,7 +137,7 @@ class InvoiceController extends Controller
     {
         $request->validate([
             'amount' => 'required|numeric|min:0',
-            'payment_method' => 'required|in:cash,card,bank_transfer',
+            'payment_method' => 'required|in:cash,card,Fawry,InstaPay,VodafoneCash,Other',
             'notes' => 'nullable|string',
         ]);
         DB::beginTransaction();
