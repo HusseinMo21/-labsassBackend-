@@ -34,7 +34,21 @@ class VisitController extends Controller
             // Get financial data from visit metadata or patient data
             $metadata = json_decode($visit->metadata ?? '{}', true);
             $totalAmount = $visit->total_amount ?? 0;
-            $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            
+            // Calculate paid amount from payment breakdown in metadata
+            $paymentDetails = $metadata['payment_details'] ?? [];
+            $patientData = $metadata['patient_data'] ?? [];
+            
+            // Get paid amount from metadata first, then fallback to direct fields
+            $paidAmount = $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            
+            // If still 0, calculate from payment breakdown
+            if ($paidAmount == 0) {
+                $cashPaid = $paymentDetails['amount_paid_cash'] ?? $patientData['amount_paid_cash'] ?? 0;
+                $cardPaid = $paymentDetails['amount_paid_card'] ?? $patientData['amount_paid_card'] ?? 0;
+                $paidAmount = $cashPaid + $cardPaid;
+            }
+            
             $remainingAmount = $totalAmount - $paidAmount;
             $paymentStatus = $remainingAmount <= 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'pending');
 

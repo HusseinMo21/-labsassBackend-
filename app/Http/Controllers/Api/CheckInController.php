@@ -541,8 +541,8 @@ class CheckInController extends Controller
                 'total_amount' => $invoice ? $invoice->total_amount : ($visit->total_amount ?: 0),
                 'discount_amount' => $visit->discount_amount ?: 0,
                 'final_amount' => $invoice ? $invoice->total_amount : ($visit->final_amount ?: 0),
-                'upfront_payment' => $invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0),
-                'remaining_balance' => $invoice ? $invoice->balance : (($visit->final_amount ?: 0) - ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0)),
+                'upfront_payment' => $this->calculatePaidAmount($visit, $invoice),
+                'remaining_balance' => $this->calculateRemainingBalance($visit, $invoice),
                 'payment_method' => $this->getPaymentMethod($visit, $payments),
                 'billing_status' => $this->getPaymentStatus($invoice, $visit),
                 'expected_delivery_date' => $visit->getExpectedDeliveryDate(),
@@ -990,5 +990,46 @@ class CheckInController extends Controller
             'success' => true,
             'data' => $categories
         ]);
+    }
+
+    private function calculatePaidAmount($visit, $invoice = null)
+    {
+        if ($invoice) {
+            return $invoice->amount_paid;
+        }
+        
+        // Get payment data from visit metadata
+        $metadata = json_decode($visit->metadata ?? '{}', true);
+        $paymentDetails = $metadata['payment_details'] ?? [];
+        $patientData = $metadata['patient_data'] ?? [];
+        
+        // Get paid amount from metadata first
+        $paidAmount = $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? 0;
+        
+        // If still 0, calculate from payment breakdown
+        if ($paidAmount == 0) {
+            $cashPaid = $paymentDetails['amount_paid_cash'] ?? $patientData['amount_paid_cash'] ?? 0;
+            $cardPaid = $paymentDetails['amount_paid_card'] ?? $patientData['amount_paid_card'] ?? 0;
+            $paidAmount = $cashPaid + $cardPaid;
+        }
+        
+        // Final fallback to direct fields
+        if ($paidAmount == 0) {
+            $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+        }
+        
+        return $paidAmount;
+    }
+
+    private function calculateRemainingBalance($visit, $invoice = null)
+    {
+        if ($invoice) {
+            return $invoice->balance;
+        }
+        
+        $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
+        $paidAmount = $this->calculatePaidAmount($visit, $invoice);
+        
+        return $totalAmount - $paidAmount;
     }
 } 

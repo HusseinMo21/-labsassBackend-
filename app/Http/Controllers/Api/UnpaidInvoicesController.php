@@ -336,13 +336,27 @@ class UnpaidInvoicesController extends Controller
             ], 404);
         }
         
-        // Get current payment information from patient table
-        $totalPaid = $patient->amount_paid ?? $visit->upfront_payment ?? 0;
-        $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
-        
-        // Get payment breakdown from visit metadata
+        // Get current payment information from visit metadata first
         $metadata = json_decode($visit->metadata ?? '{}', true);
         $paymentDetails = $metadata['payment_details'] ?? [];
+        $patientData = $metadata['patient_data'] ?? [];
+        
+        // Calculate total paid from payment breakdown
+        $totalPaid = $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? 0;
+        
+        // If still 0, calculate from payment breakdown
+        if ($totalPaid == 0) {
+            $cashPaid = $paymentDetails['amount_paid_cash'] ?? $patientData['amount_paid_cash'] ?? 0;
+            $cardPaid = $paymentDetails['amount_paid_card'] ?? $patientData['amount_paid_card'] ?? 0;
+            $totalPaid = $cashPaid + $cardPaid;
+        }
+        
+        // Final fallback to direct fields
+        if ($totalPaid == 0) {
+            $totalPaid = $patient->amount_paid ?? $visit->upfront_payment ?? 0;
+        }
+        
+        $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
         
         // Build payment breakdown
         $paymentBreakdown = [];

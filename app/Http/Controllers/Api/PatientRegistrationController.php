@@ -246,6 +246,25 @@ class PatientRegistrationController extends Controller
             
             // Create lab request for all patients so they appear in Lab Requests
             try {
+                // Prepare patient data for lab request metadata
+                $labRequestPatientData = [
+                    'name' => $data['name'] ?? $patient->name,
+                    'phone' => $data['phone'] ?? $patient->phone,
+                    'age' => $data['age'] ?? $patient->age,
+                    'gender' => $data['gender'] ?? $patient->gender,
+                    'organization' => $data['organization'] ?? $patient->organization,
+                    'doctor' => $data['doctor'] ?? $patient->doctor,
+                    'sample_type' => $data['sample_type'] ?? null,
+                    'sample_size' => $data['sample_size'] ?? null,
+                    'number_of_samples' => $data['number_of_samples'] ?? 1,
+                    'case_type' => $data['case_type'] ?? null,
+                    'total_amount' => $data['total_amount'] ?? 0,
+                    'amount_paid' => $data['amount_paid'] ?? 0,
+                    'amount_paid_cash' => $data['amount_paid_cash'] ?? 0,
+                    'amount_paid_card' => $data['amount_paid_card'] ?? 0,
+                    'additional_payment_method' => $data['additional_payment_method'] ?? null,
+                ];
+                
                 $labRequest = \App\Models\LabRequest::create([
                     'patient_id' => $patient->id,
                     'lab_no' => $patient->lab, // Use the patient's lab number
@@ -256,6 +275,7 @@ class PatientRegistrationController extends Controller
                         'notes' => 'Created via Patient Registration',
                         'created_by' => auth()->id() ?? 1,
                         'status' => $labRequestStatus, // Also store in metadata
+                        'patient_data' => $labRequestPatientData, // Store patient data in lab request metadata too
                     ],
                 ]);
             } catch (\Exception $e) {
@@ -274,6 +294,7 @@ class PatientRegistrationController extends Controller
                                 'notes' => 'Created via Patient Registration',
                                 'created_by' => auth()->id() ?? 1,
                                 'status' => $status,
+                                'patient_data' => $labRequestPatientData, // Store patient data in lab request metadata too
                             ],
                         ]);
                         
@@ -299,6 +320,7 @@ class PatientRegistrationController extends Controller
                             'request_date' => $data['attendance_date'] ?? now()->format('Y-m-d'),
                             'notes' => 'Created via Patient Registration',
                             'created_by' => auth()->id() ?? 1,
+                            'patient_data' => $labRequestPatientData, // Store patient data in lab request metadata too
                         ],
                     ]);
                     \Log::warning("Created lab request without status", [
