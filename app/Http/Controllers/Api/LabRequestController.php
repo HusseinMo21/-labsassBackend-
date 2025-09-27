@@ -455,12 +455,20 @@ class LabRequestController extends Controller
             if ($labRequest->visits && $labRequest->visits->count() > 0) {
                 $latestVisit = $labRequest->visits->sortByDesc('created_at')->first();
                 if ($latestVisit && $latestVisit->metadata) {
-                    $metadata = json_decode($latestVisit->metadata, true);
-                    $patientData = $metadata['patient_data'] ?? [];
-                    $numberOfSamples = intval($patientData['number_of_samples'] ?? 0);
-                    $sampleType = $patientData['sample_type'] ?? 'Pathology';
-                    $sampleSize = $patientData['sample_size'] ?? 'صغيرة جدا';
-                    $organization = $patientData['organization'] ?? null;
+                    try {
+                        // Handle both string and array metadata
+                        $metadata = is_string($latestVisit->metadata) ? json_decode($latestVisit->metadata, true) : $latestVisit->metadata;
+                        $patientData = $metadata['patient_data'] ?? [];
+                        $numberOfSamples = intval($patientData['number_of_samples'] ?? 0);
+                        $sampleType = $patientData['sample_type'] ?? 'Pathology';
+                        $sampleSize = $patientData['sample_size'] ?? 'صغيرة جدا';
+                        $organization = $patientData['organization'] ?? null;
+                    } catch (\Exception $e) {
+                        \Log::warning('Error parsing visit metadata: ' . $e->getMessage(), [
+                            'visit_id' => $latestVisit->id,
+                            'lab_request_id' => $labRequest->id
+                        ]);
+                    }
                 }
             }
 
@@ -510,9 +518,18 @@ class LabRequestController extends Controller
                 $latestVisit = $labRequest->visits->sortByDesc('created_at')->first();
                 if ($latestVisit) {
                     // Get payment data from visit metadata first
-                    $visitMetadata = json_decode($latestVisit->metadata ?? '{}', true);
-                    $paymentDetails = $visitMetadata['payment_details'] ?? [];
-                    $patientData = $visitMetadata['patient_data'] ?? [];
+                    try {
+                        $visitMetadata = is_string($latestVisit->metadata) ? json_decode($latestVisit->metadata ?? '{}', true) : ($latestVisit->metadata ?? []);
+                        $paymentDetails = $visitMetadata['payment_details'] ?? [];
+                        $patientData = $visitMetadata['patient_data'] ?? [];
+                    } catch (\Exception $e) {
+                        \Log::warning('Error parsing visit metadata for payment: ' . $e->getMessage(), [
+                            'visit_id' => $latestVisit->id,
+                            'lab_request_id' => $labRequest->id
+                        ]);
+                        $paymentDetails = [];
+                        $patientData = [];
+                    }
                     
                     // Calculate amounts from metadata or direct fields
                     $totalAmount = $patientData['total_amount'] ?? $latestVisit->total_amount ?? 0;
@@ -615,14 +632,14 @@ class LabRequestController extends Controller
                     'emergency_relationship' => $patient->emergency_relationship,
                 ],
                 'doctor' => $patient->doctor ? [
-                    'id' => $patient->doctor->id,
-                    'name' => $patient->doctor->name,
+                    'id' => is_object($patient->doctor) ? $patient->doctor->id : null,
+                    'name' => is_object($patient->doctor) ? $patient->doctor->name : $patient->doctor,
                 ] : null,
                 'organization' => $organization ? [
                     'name' => $organization,
                 ] : ($patient->organization ? [
-                    'id' => $patient->organization->id,
-                    'name' => $patient->organization->name,
+                    'id' => is_object($patient->organization) ? $patient->organization->id : null,
+                    'name' => is_object($patient->organization) ? $patient->organization->name : $patient->organization,
                 ] : null),
                 'samples' => $samples,
                 'all_tests' => $allTests,
