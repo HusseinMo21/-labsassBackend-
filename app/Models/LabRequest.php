@@ -79,6 +79,14 @@ class LabRequest extends Model
     }
 
     /**
+     * Get the visits for the lab request.
+     */
+    public function visits(): HasMany
+    {
+        return $this->hasMany(Visit::class, 'lab_request_id');
+    }
+
+    /**
      * Get the full lab number (lab_no + suffix).
      */
     public function getFullLabNoAttribute(): string

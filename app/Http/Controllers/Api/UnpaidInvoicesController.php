@@ -298,36 +298,28 @@ class UnpaidInvoicesController extends Controller
         ]);
     }
 
-    public function getFinalPaymentReceiptData(Request $request, $invoiceId)
+    public function getFinalPaymentReceiptData(Request $request, $visitId)
     {
         try {
-            $invoice = Invoice::with(['labRequest.patient', 'payments'])
-                ->findOrFail($invoiceId);
+            // Find the visit instead of invoice
+            $visit = \App\Models\Visit::with(['patient', 'visitTests.testCategory', 'visitTests.labTest', 'labRequest'])
+                ->findOrFail($visitId);
         
-        $patient = $invoice->labRequest ? $invoice->labRequest->patient : null;
-        
-        // Get the visit data to retrieve expected delivery date and tests
-        $visit = null;
-        if ($invoice->labRequest) {
-            $visit = \App\Models\Visit::with(['visitTests.testCategory', 'visitTests.labTest'])
-                ->where('lab_request_id', $invoice->lab_request_id)
-                ->orderBy('id', 'desc')
-                ->first();
-        }
+        $patient = $visit->patient;
         
         if (!$patient) {
             return response()->json([
-                'message' => 'Patient not found for this invoice',
+                'message' => 'Patient not found for this visit',
             ], 404);
         }
         
-        // Get the last payment (the final payment)
-        $lastPayment = $invoice->payments()->orderBy('id', 'desc')->first();
+        // Get current payment information from patient table
+        $totalPaid = $patient->amount_paid ?? $visit->upfront_payment ?? 0;
+        $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
         
-        // Calculate payment breakdown
-        $totalPaid = $invoice->paid;
-        $paidBefore = $totalPaid - ($lastPayment ? $lastPayment->paid : 0);
-        $paidNow = $lastPayment ? $lastPayment->paid : 0;
+        // For final payment receipt, we assume the last payment was the final one
+        $paidNow = $totalPaid; // All payments are considered as the final payment
+        $paidBefore = 0; // No previous payments for simplicity
         
         // Get patient credentials
         $credentials = $patient->getPortalCredentials() ?? [
@@ -335,42 +327,38 @@ class UnpaidInvoicesController extends Controller
             'password' => 'N/A'
         ];
         
-        // Get the user who processed the payment (author of the last payment)
-        $processedBy = null;
-        if ($lastPayment && $lastPayment->author) {
-            $user = \App\Models\User::find($lastPayment->author);
-            $processedBy = $user ? $user->name : 'Unknown';
-        }
+        // Get the user who processed the payment (current user)
+        $processedBy = auth()->user() ? auth()->user()->name : 'Unknown';
         
         return response()->json([
-            'receipt_number' => $invoice->lab, // Use lab number as receipt number
-            'date' => $invoice->labRequest ? $invoice->labRequest->created_at->format('Y-m-d') : now()->format('Y-m-d'),
+            'receipt_number' => $visit->visit_number, // Use visit number as receipt number
+            'date' => $visit->visit_date ?: now()->format('Y-m-d'),
             'patient_name' => $patient->name,
             'patient_age' => $patient->age,
             'patient_phone' => $patient->phone,
-            'tests' => $visit ? $visit->visitTests->map(function ($visitTest) {
+            'tests' => $visit->visitTests ? $visit->visitTests->map(function ($visitTest) {
                 return [
                     'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
                     'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
                     'price' => $visitTest->final_price ?: $visitTest->price,
                 ];
             }) : [],
-            'total_amount' => $invoice->total,
-            'discount_amount' => 0, // No discount in original table
-            'final_amount' => $invoice->total,
+            'total_amount' => $totalAmount,
+            'discount_amount' => 0, // No discount in current system
+            'final_amount' => $totalAmount,
             'paid_before' => $paidBefore,
             'paid_now' => $paidNow,
-            'remaining_balance' => $invoice->remaining,
-            'payment_method' => 'cash', // Default since payments table doesn't have payment_method field
-            'expected_delivery_date' => $visit ? $visit->getExpectedDeliveryDate() : now()->addDays(1)->toDateString(),
-            'lab_number' => $invoice->labRequest ? $invoice->labRequest->full_lab_no : 'N/A',
+            'remaining_balance' => $totalAmount - $totalPaid,
+            'payment_method' => $visit->payment_method ?: 'cash',
+            'expected_delivery_date' => $visit->expected_delivery_date ?: now()->addDays(1)->toDateString(),
+            'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($patient->lab ?: 'N/A'),
             'processed_by' => $processedBy,
-            'visit_id' => $invoice->labRequest ? $invoice->labRequest->id : null,
+            'visit_id' => $visit->id,
             'patient_credentials' => $credentials,
         ]);
         } catch (\Exception $e) {
             Log::error('Failed to get final payment receipt data', [
-                'invoice_id' => $invoiceId,
+                'visit_id' => $visitId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);

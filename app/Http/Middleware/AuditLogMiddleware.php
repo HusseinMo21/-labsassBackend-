@@ -92,9 +92,6 @@ class AuditLogMiddleware
             return ['type' => 'InventoryItem', 'id' => $request->route('inventoryItem')];
         }
         
-        if (str_contains($path, 'sample-tracking')) {
-            return ['type' => 'SampleTracking', 'id' => $request->route('sample_tracking')];
-        }
         
         if (str_contains($path, 'critical-values')) {
             return ['type' => 'CriticalValue', 'id' => $request->route('critical_value')];

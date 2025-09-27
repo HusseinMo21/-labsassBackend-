@@ -10,7 +10,6 @@ use App\Http\Controllers\Api\InvoiceController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\InventoryController;
 use App\Http\Controllers\Api\ReportController;
-use App\Http\Controllers\Api\SampleTrackingController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\CheckInController;
 use App\Http\Controllers\Api\UnpaidInvoicesController;
@@ -80,7 +79,6 @@ Route::group(['prefix' => 'invoices', 'middleware' => []], function () {
 });
 
 // Temporary public routes for testing (remove after fixing authentication)
-Route::get('/test/sample-tracking/stats', [SampleTrackingController::class, 'getStats']);
 Route::get('/test/notifications/stats', [NotificationController::class, 'getStats']);
 
 // Public invoice PDF/preview routes (bypass default CORS middleware)
@@ -227,17 +225,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // Report data saving
     Route::post('/visits/{visitId}/report', [ReportController::class, 'saveReport']);
 
-    // Sample Tracking routes (admin and staff only)
-    Route::middleware(['role:admin,staff'])->group(function () {
-        // Specific routes must come before resource routes to avoid conflicts
-        Route::get('/sample-tracking/stats', [SampleTrackingController::class, 'getStats']);
-        Route::post('/sample-tracking/create/{labRequestId}', [SampleTrackingController::class, 'createSample']);
-        Route::put('/sample-tracking/{id}/status', [SampleTrackingController::class, 'updateStatus']);
-        Route::get('/sample-tracking/lab-request/{labRequestId}', [SampleTrackingController::class, 'getSampleByLabRequest']);
-        
-        // Resource routes come last
-        Route::apiResource('sample-tracking', SampleTrackingController::class);
-    });
 
 
     // Notifications routes (admin and staff only)
@@ -282,6 +269,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/invoices/{invoiceId}/add-payment', [UnpaidInvoicesController::class, 'addPayment']);
         Route::get('/patients/{patientId}/portal-access', [UnpaidInvoicesController::class, 'checkPatientPortalAccess']);
         Route::get('/invoices/{invoiceId}/final-payment-receipt', [UnpaidInvoicesController::class, 'getFinalPaymentReceiptData']);
+        
+        // Visit-based payment routes (for compatibility with frontend)
+        Route::post('/visits/{visitId}/add-payment', [UnpaidInvoicesController::class, 'addPayment']);
+        Route::get('/visits/{visitId}/final-payment-receipt', [UnpaidInvoicesController::class, 'getFinalPaymentReceiptData']);
     });
 
     // Doctor routes (doctors can view and approve reports)

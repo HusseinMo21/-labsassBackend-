@@ -59,10 +59,6 @@ class VisitTest extends Model
         return $this->belongsTo(User::class, 'performed_by');
     }
 
-    public function sampleTracking()
-    {
-        return $this->hasOne(SampleTracking::class);
-    }
 
     public function notifications()
     {

@@ -49,6 +49,7 @@ class Visit extends Model
         'gross_examination',
         'shift_id',
         'processed_by_staff',
+        'metadata',
     ];
 
     protected $casts = [
@@ -67,6 +68,7 @@ class Visit extends Model
         'image_size' => 'integer',
         'checked_by_doctors' => 'array',
         'last_checked_at' => 'datetime',
+        'metadata' => 'array',
     ];
 
     protected $appends = ['lab_number'];

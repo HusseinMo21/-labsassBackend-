@@ -31,7 +31,7 @@ class LabRequestController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = LabRequest::with(['patient', 'samples']);
+            $query = LabRequest::with(['patient', 'samples', 'visits']);
 
             // Search by lab number, full lab number, or patient information
             if ($request->has('search') && !empty($request->search)) {
@@ -63,7 +63,27 @@ class LabRequestController extends Controller
             $perPage = $request->get('per_page', 15);
             $labRequests = $query->orderBy('id', 'desc')->paginate($perPage);
 
-            return response()->json($labRequests);
+            // Transform the data to include number of samples from patient registration
+            $transformedData = $labRequests->through(function ($labRequest) {
+                $numberOfSamples = 0;
+                
+                // Get number of samples from the most recent visit's metadata
+                if ($labRequest->visits && $labRequest->visits->count() > 0) {
+                    $latestVisit = $labRequest->visits->sortByDesc('created_at')->first();
+                    if ($latestVisit && $latestVisit->metadata) {
+                        $metadata = json_decode($latestVisit->metadata, true);
+                        $patientData = $metadata['patient_data'] ?? [];
+                        $numberOfSamples = intval($patientData['number_of_samples'] ?? 0);
+                    }
+                }
+                
+                // Add the number of samples to the lab request data
+                $labRequest->number_of_samples = $numberOfSamples;
+                
+                return $labRequest;
+            });
+
+            return response()->json($transformedData);
         } catch (\Exception $e) {
             Log::error('Error in LabRequestController@index', [
                 'error' => $e->getMessage(),
@@ -403,7 +423,7 @@ class LabRequestController extends Controller
                 ->with([
                     'patient.doctor',
                     'patient.organization', 
-                    'patient.visits.visitTests.labTest',
+                    'visits', // Get visits to access metadata
                     'samples',
                     'report',
                     'invoice.payments'
@@ -416,46 +436,74 @@ class LabRequestController extends Controller
 
             $patient = $labRequest->patient;
 
+            // Get patient registration data from the latest visit's metadata
+            $patientData = [];
+            $numberOfSamples = 0;
+            $sampleType = 'Pathology';
+            $sampleSize = 'صغيرة جدا';
+            $organization = null;
+            
+            if ($labRequest->visits && $labRequest->visits->count() > 0) {
+                $latestVisit = $labRequest->visits->sortByDesc('created_at')->first();
+                if ($latestVisit && $latestVisit->metadata) {
+                    $metadata = json_decode($latestVisit->metadata, true);
+                    $patientData = $metadata['patient_data'] ?? [];
+                    $numberOfSamples = intval($patientData['number_of_samples'] ?? 0);
+                    $sampleType = $patientData['sample_type'] ?? 'Pathology';
+                    $sampleSize = $patientData['sample_size'] ?? 'صغيرة جدا';
+                    $organization = $patientData['organization'] ?? null;
+                }
+            }
+
             // Get all visits for this patient
             $visits = $patient->visits()->with([
                 'visitTests.labTest'
             ])->orderBy('visit_date', 'desc')->get();
 
-            // Get all lab tests from all visits
-            $allTests = collect();
-            foreach ($visits as $visit) {
-                foreach ($visit->visitTests as $visitTest) {
-                    $allTests->push([
-                        'visit_id' => $visit->id,
-                        'visit_date' => $visit->visit_date,
-                        'visit_number' => $visit->visit_number,
-                        'test_id' => $visitTest->lab_test_id,
-                        'test_name' => $visitTest->labTest ? $visitTest->labTest->name : ($visitTest->custom_test_name ?? 'Unknown Test'),
-                        'test_code' => $visitTest->labTest ? $visitTest->labTest->code : 'N/A',
-                        'test_price' => $visitTest->price ?? $visitTest->custom_price ?? 0,
-                        'status' => $visitTest->status,
-                        'barcode_uid' => $visitTest->barcode_uid,
-                    ]);
-                }
+            // Create samples data from patient registration
+            $samples = collect();
+            for ($i = 1; $i <= $numberOfSamples; $i++) {
+                $samples->push([
+                    'id' => $i,
+                    'sample_type' => $sampleType,
+                    'sample_id' => $labRequest->full_lab_no . '-S' . $i,
+                    'sample_size' => $sampleSize,
+                ]);
             }
 
-            // Get payment history from lab request's invoice or metadata
+            // Create tests data from patient registration
+            $allTests = collect();
+            if ($sampleType) {
+                $allTests->push([
+                    'test_name' => $sampleType,
+                ]);
+            }
+
+            // Get payment history from visit metadata
             $paymentHistory = collect();
             
-            // First try to get financial data from metadata (from patient registration)
-            $metadata = $labRequest->metadata ?? [];
-            $totalAmount = $metadata['total_amount'] ?? 0;
-            $paidAmount = $metadata['paid_amount'] ?? 0;
-            $remainingAmount = $metadata['remaining_amount'] ?? 0;
-            $paymentStatus = $metadata['payment_status'] ?? 'unpaid';
+            // Get financial data from visit metadata (from patient registration)
+            $totalAmount = 0;
+            $paidAmount = 0;
+            $remainingAmount = 0;
+            $paymentStatus = 'unpaid';
             
-            // If no metadata, try to get from invoice
-            if ($totalAmount == 0 && $labRequest->invoice) {
-                $invoice = $labRequest->invoice;
-                $totalAmount = $invoice->total ?? 0;
-                $paidAmount = $invoice->paid ?? 0;
-                $remainingAmount = $invoice->remaining ?? 0;
-                $paymentStatus = $remainingAmount > 0 ? 'partial' : 'paid';
+            if ($labRequest->visits && $labRequest->visits->count() > 0) {
+                $latestVisit = $labRequest->visits->sortByDesc('created_at')->first();
+                if ($latestVisit) {
+                    $totalAmount = $latestVisit->total_amount ?? 0;
+                    $paidAmount = $latestVisit->upfront_payment ?? 0; // Use upfront_payment as the actual paid amount
+                    $remainingAmount = $totalAmount - $paidAmount;
+                    $paymentStatus = $latestVisit->billing_status ?? ($remainingAmount > 0 ? 'partial' : 'paid');
+                    
+                    // Also try to get from patient's amount_paid if visit data is missing
+                    if ($totalAmount == 0) {
+                        $totalAmount = $patient->total_amount ?? 0;
+                        $paidAmount = $patient->amount_paid ?? 0;
+                        $remainingAmount = $totalAmount - $paidAmount;
+                        $paymentStatus = $remainingAmount > 0 ? 'partial' : 'paid';
+                    }
+                }
             }
             
             // Add payment history entry if we have financial data
@@ -513,24 +561,13 @@ class LabRequestController extends Controller
                     'id' => $patient->doctor->id,
                     'name' => $patient->doctor->name,
                 ] : null,
-                'organization' => $patient->organization ? [
+                'organization' => $organization ? [
+                    'name' => $organization,
+                ] : ($patient->organization ? [
                     'id' => $patient->organization->id,
                     'name' => $patient->organization->name,
-                ] : null,
-                'samples' => $labRequest->samples->map(function($sample) {
-                    return [
-                        'id' => $sample->id,
-                        'sample_type' => $sample->sample_type,
-                        'case_type' => $sample->case_type,
-                        'sample_size' => $sample->sample_size,
-                        'number_of_samples' => $sample->number_of_samples,
-                        'tsample' => $sample->tsample,
-                        'nsample' => $sample->nsample,
-                        'isample' => $sample->isample,
-                        'notes' => $sample->notes,
-                        'created_at' => $sample->created_at,
-                    ];
-                }),
+                ] : null),
+                'samples' => $samples,
                 'all_tests' => $allTests,
                 'payment_history' => $paymentHistory,
                 'reports' => $reports->map(function($report) {

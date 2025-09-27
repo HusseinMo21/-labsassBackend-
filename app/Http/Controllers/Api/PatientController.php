@@ -62,7 +62,8 @@ class PatientController extends Controller
                 $q->where('name', 'like', "%{$search}%")
                   ->orWhere('phone', 'like', "%{$search}%")
                   ->orWhere('whatsapp_number', 'like', "%{$search}%")
-                  ->orWhere('id', 'like', "%{$search}%");
+                  ->orWhere('id', 'like', "%{$search}%")
+                  ->orWhere('lab', 'like', "%{$search}%");
             });
         }
 
@@ -155,6 +156,20 @@ class PatientController extends Controller
             'sender' => 'nullable|string|max:255', // Doctor name
             'status' => 'nullable|string|max:255',
             'age' => 'nullable|integer|min:0|max:150',
+            // New payment fields
+            'total_amount' => 'nullable|numeric|min:0',
+            'amount_paid_cash' => 'nullable|numeric|min:0',
+            'amount_paid_card' => 'nullable|numeric|min:0',
+            'additional_payment_method' => 'nullable|string|max:255',
+            'amount_paid' => 'nullable|numeric|min:0',
+            'lab_number' => 'nullable|string|max:255',
+            'sample_type' => 'nullable|string|max:255',
+            'sample_size' => 'nullable|string|max:255',
+            'number_of_samples' => 'nullable|integer|min:1',
+            'day_of_week' => 'nullable|string|max:255',
+            'attendance_date' => 'nullable|date',
+            'delivery_date' => 'nullable|date',
+            'previous_tests' => 'nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {
@@ -165,8 +180,8 @@ class PatientController extends Controller
         }
 
         // Auto-create user for patient
-        $username = 'pt-' . strtolower(Str::random(8));
-        $password = Str::random(10);
+        $username = $request->lab_number ?? 'pt-' . strtolower(Str::random(8));
+        $password = $request->phone ?? Str::random(10);
         $user = User::create([
             'name' => $username,
             'email' => $username . '@patients.local',
@@ -214,7 +229,79 @@ class PatientController extends Controller
         unset($patientData['status']);
         unset($patientData['age']);
         
+        // Handle payment data and preserve lab_number
+        $paymentData = [];
+        $manualLabNumber = null;
+        
+        if (isset($patientData['amount_paid'])) {
+            $paymentData['amount_paid'] = $patientData['amount_paid'];
+        }
+        if (isset($patientData['amount_paid_cash'])) {
+            $paymentData['amount_paid_cash'] = $patientData['amount_paid_cash'];
+        }
+        if (isset($patientData['amount_paid_card'])) {
+            $paymentData['amount_paid_card'] = $patientData['amount_paid_card'];
+        }
+        if (isset($patientData['additional_payment_method'])) {
+            $paymentData['additional_payment_method'] = $patientData['additional_payment_method'];
+        }
+        
+        // Preserve manually entered lab number
+        if (isset($patientData['lab_number']) && !empty($patientData['lab_number'])) {
+            $manualLabNumber = $patientData['lab_number'];
+        }
+        
+        // Clean up additional fields that don't exist in the patient table
+        unset($patientData['total_amount']);
+        unset($patientData['amount_paid_cash']);
+        unset($patientData['amount_paid_card']);
+        unset($patientData['additional_payment_method']);
+        unset($patientData['lab_number']);
+        unset($patientData['sample_type']);
+        unset($patientData['sample_size']);
+        unset($patientData['number_of_samples']);
+        unset($patientData['day_of_week']);
+        unset($patientData['attendance_date']);
+        unset($patientData['delivery_date']);
+        unset($patientData['previous_tests']);
+        
         $patient = Patient::create($patientData);
+
+        // Create visit record if payment data is provided
+        $visit = null;
+        if (!empty($paymentData) || isset($request->total_amount)) {
+            $visitData = [
+                'patient_id' => $patient->id,
+                'visit_number' => \App\Models\Visit::generateVisitNumber(),
+                'visit_date' => $request->attendance_date ?? now()->toDateString(),
+                'visit_time' => now()->toTimeString(),
+                'expected_delivery_date' => $request->delivery_date ?? now()->addDays(1)->toDateString(),
+                'total_amount' => $request->total_amount ?? 0,
+                'final_amount' => $request->total_amount ?? 0,
+                'upfront_payment' => $paymentData['amount_paid'] ?? 0,
+                'payment_method' => $paymentData['additional_payment_method'] ?? 'cash',
+                'billing_status' => ($paymentData['amount_paid'] ?? 0) >= ($request->total_amount ?? 0) ? 'paid' : 'partial',
+                'status' => 'pending',
+                'created_by' => auth()->id() ?? 1,
+                'metadata' => json_encode([
+                    'payment_details' => [
+                        'amount_paid_cash' => $paymentData['amount_paid_cash'] ?? 0,
+                        'amount_paid_card' => $paymentData['amount_paid_card'] ?? 0,
+                        'additional_payment_method' => $paymentData['additional_payment_method'] ?? 'cash',
+                        'total_paid' => $paymentData['amount_paid'] ?? 0,
+                    ],
+                    'created_via' => 'patient_registration',
+                    'patient_data' => $request->all(),
+                ]),
+            ];
+            
+            $visit = \App\Models\Visit::create($visitData);
+            
+            // Update patient with payment information
+            if (isset($paymentData['amount_paid'])) {
+                $patient->update(['amount_paid' => $paymentData['amount_paid']]);
+            }
+        }
 
         // Create patient credentials record
         $patient->credentials()->create([
@@ -225,7 +312,14 @@ class PatientController extends Controller
         ]);
 
         // Generate lab number and create lab request
-        $labNoData = $this->labNoGenerator->generate();
+        if ($manualLabNumber) {
+            // Use manually entered lab number
+            $labNoData = ['full' => $manualLabNumber];
+        } else {
+            // Generate automatic lab number
+            $labNoData = $this->labNoGenerator->generate();
+        }
+        
         $labRequest = LabRequest::create([
             'patient_id' => $patient->id,
             'lab_no' => $labNoData['full'],
@@ -234,6 +328,7 @@ class PatientController extends Controller
             'metadata' => json_encode([
                 'created_via' => 'patient_registration',
                 'patient_data' => $patientData,
+                'lab_number_source' => $manualLabNumber ? 'manual' : 'auto_generated',
             ]),
         ]);
 
@@ -259,7 +354,7 @@ class PatientController extends Controller
         }
 
         try {
-            return response()->json([
+            $response = [
                 'message' => 'Patient created successfully',
                 'patient_id' => $patient->id,
                 'lab_number' => $labNoData['full'],
@@ -267,7 +362,20 @@ class PatientController extends Controller
                     'username' => $username,
                     'password' => $password,
                 ],
-            ], 201);
+            ];
+            
+            // Include visit information if created
+            if ($visit) {
+                $response['visit_id'] = $visit->id;
+                $response['visit_number'] = $visit->visit_number;
+                $response['payment_status'] = $visit->billing_status;
+                $response['total_amount'] = $visit->total_amount;
+                $response['amount_paid'] = $visit->upfront_payment;
+                $response['remaining_balance'] = $visit->total_amount - $visit->upfront_payment;
+                $response['lab_number'] = $labNoData['full'];
+            }
+            
+            return response()->json($response, 201);
         } catch (\Exception $e) {
             \Log::error('Error in patient creation response', [
                 'error' => $e->getMessage(),
@@ -314,6 +422,20 @@ class PatientController extends Controller
             'sender' => 'nullable|string|max:255', // Doctor name
             'status' => 'nullable|string|max:255',
             'age' => 'nullable|integer|min:0|max:150',
+            // New payment fields
+            'total_amount' => 'nullable|numeric|min:0',
+            'amount_paid_cash' => 'nullable|numeric|min:0',
+            'amount_paid_card' => 'nullable|numeric|min:0',
+            'additional_payment_method' => 'nullable|string|max:255',
+            'amount_paid' => 'nullable|numeric|min:0',
+            'lab_number' => 'nullable|string|max:255',
+            'sample_type' => 'nullable|string|max:255',
+            'sample_size' => 'nullable|string|max:255',
+            'number_of_samples' => 'nullable|integer|min:1',
+            'day_of_week' => 'nullable|string|max:255',
+            'attendance_date' => 'nullable|date',
+            'delivery_date' => 'nullable|date',
+            'previous_tests' => 'nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {

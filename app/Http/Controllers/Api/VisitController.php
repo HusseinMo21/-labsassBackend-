@@ -31,59 +31,65 @@ class VisitController extends Controller
             }
 
             // Get financial data from visit metadata or patient data
-            $metadata = $visit->metadata ?? [];
-            $totalAmount = $metadata['total_amount'] ?? $visit->total_amount ?? 0;
-            $paidAmount = $metadata['paid_amount'] ?? $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
-            $remainingAmount = $metadata['remaining_amount'] ?? ($totalAmount - $paidAmount);
-            $paymentStatus = $metadata['payment_status'] ?? ($remainingAmount <= 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'pending'));
+            $metadata = json_decode($visit->metadata ?? '{}', true);
+            $totalAmount = $visit->total_amount ?? 0;
+            $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            $remainingAmount = $totalAmount - $paidAmount;
+            $paymentStatus = $remainingAmount <= 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'pending');
 
-            // If no metadata, try to get from invoice
-            if ($totalAmount == 0 && $visit->labRequest && $visit->labRequest->invoice) {
-                $invoice = $visit->labRequest->invoice;
-                $totalAmount = $invoice->total_amount ?? $invoice->amount ?? 0;
-                $paidAmount = $invoice->amount_paid ?? $invoice->paid_amount ?? 0;
-                $remainingAmount = $invoice->balance ?? $invoice->remaining_amount ?? 0;
-                $paymentStatus = $remainingAmount <= 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'pending');
-            }
+            // Get payment details from metadata
+            $paymentDetails = $metadata['payment_details'] ?? [];
+            $amountPaidCash = $paymentDetails['amount_paid_cash'] ?? 0;
+            $amountPaidCard = $paymentDetails['amount_paid_card'] ?? 0;
+            $additionalPaymentMethod = $paymentDetails['additional_payment_method'] ?? 'cash';
 
             // Generate receipt number if not exists
             $receiptNumber = $visit->receipt_number ?? 'RCP-' . date('Ymd') . '-' . str_pad($visit->id, 6, '0', STR_PAD_LEFT);
 
+            // Get the user who processed this receipt
+            $processedBy = 'System';
+            if ($visit->created_by) {
+                $user = \App\Models\User::find($visit->created_by);
+                $processedBy = $user ? $user->name : 'System';
+            } elseif (auth()->user()) {
+                $processedBy = auth()->user()->name;
+            }
+
             $receiptData = [
                 'receipt_number' => $receiptNumber,
                 'visit_number' => $visit->visit_number,
-                'visit_date' => $visit->visit_date,
+                'date' => $visit->visit_date,
                 'visit_time' => $visit->visit_time ?? $visit->created_at->format('H:i:s'),
                 'total_amount' => $totalAmount,
                 'final_amount' => $totalAmount,
-                'upfront_payment' => $paidAmount,
+                'discount_amount' => $visit->discount_amount ?? 0,
+                'paid_now' => $paidAmount,
                 'remaining_balance' => $remainingAmount,
-                'payment_method' => 'cash',
+                'payment_method' => $visit->payment_method ?? 'cash',
                 'billing_status' => $paymentStatus,
                 'status' => $visit->status,
-                'patient' => [
-                    'id' => $visit->patient->id,
-                    'name' => $visit->patient->name,
-                    'phone' => $visit->patient->phone,
-                    'email' => $visit->patient->email ?? null,
-                ],
-                'visitTests' => $visit->visitTests->map(function($visitTest) {
+                'patient_name' => $visit->patient->name,
+                'patient_age' => $visit->patient->age,
+                'patient_phone' => $visit->patient->phone,
+                'lab_number' => $visit->labRequest ? ($visit->labRequest->lab_no . ($visit->labRequest->suffix ? '-' . $visit->labRequest->suffix : '')) : ($visit->patient->lab ?? 'N/A'),
+                'processed_by' => $processedBy,
+                'tests' => $visit->visitTests->map(function($visitTest) {
                     return [
-                        'id' => $visitTest->id,
-                        'labTest' => $visitTest->labTest ? [
-                            'id' => $visitTest->labTest->id,
-                            'name' => $visitTest->labTest->name,
-                            'price' => $visitTest->price ?? $visitTest->labTest->price ?? 0,
-                        ] : null,
-                        'status' => $visitTest->status,
+                        'name' => $visitTest->custom_test_name ?? ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
+                        'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
+                        'price' => $visitTest->final_price ?? $visitTest->price ?? 0,
                     ];
                 }),
                 'barcode' => $visit->labRequest ? $visit->labRequest->barcode_url : null,
+                // Payment breakdown
+                'payment_breakdown' => [
+                    'cash' => $amountPaidCash,
+                    'card' => $amountPaidCard,
+                    'card_method' => $additionalPaymentMethod,
+                ],
             ];
 
-            return response()->json([
-                'receipt_data' => $receiptData
-            ]);
+            return response()->json($receiptData);
 
         } catch (\Exception $e) {
             \Log::error('Failed to get receipt details', [
@@ -106,7 +112,7 @@ class VisitController extends Controller
             'patient:id,name,phone,gender,birth_date,age,amount_paid,lab',
             'visitTests:id,visit_id,lab_test_id,status,result_value,result_status,result_notes,price',
             'visitTests.labTest:id,name,code,reference_range',
-            'labRequest:id,lab_no,suffix,full_lab_no',
+            'labRequest:id,lab_no,suffix',
             'labRequest.invoice:id,lab_request_id,amount_paid,balance' // Eager load invoice to avoid N+1
         ]);
         
@@ -184,8 +190,8 @@ class VisitController extends Controller
                 // First try with lab_no
                 $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
                 
-                // If not found, try with full_lab_no
-                if (!$invoice && $visit->labRequest->full_lab_no) {
+                // If not found, try with lab_no
+                if (!$invoice && $visit->labRequest->lab_no) {
                     $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
                 }
                 
@@ -212,7 +218,7 @@ class VisitController extends Controller
                 'visit_tests' => $visit->visitTests,
                 'labRequest' => $visit->labRequest,
                 'receipt_number' => $visit->visit_number,
-                'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?: 'N/A'),
+                'lab_number' => $visit->labRequest ? ($visit->labRequest->lab_no . ($visit->labRequest->suffix ? '-' . $visit->labRequest->suffix : '')) : ($visit->patient->lab ?: 'N/A'),
                 'total_amount' => $visit->total_amount ?? 0,
                 'final_amount' => $visit->final_amount ?? 0,
                 'upfront_payment' => $invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0),
@@ -398,8 +404,8 @@ class VisitController extends Controller
                 // First try with lab_no
                 $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
                 
-                // If not found, try with full_lab_no
-                if (!$invoice && $visit->labRequest->full_lab_no) {
+                // If not found, try with lab_no
+                if (!$invoice && $visit->labRequest->lab_no) {
                     $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
                 }
                 
@@ -417,7 +423,7 @@ class VisitController extends Controller
             return [
                 ...$visit->toArray(),
                 'receipt_number' => $visit->visit_number, // Use visit_number as receipt_number
-                'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?: 'N/A'),
+                'lab_number' => $visit->labRequest ? ($visit->labRequest->lab_no . ($visit->labRequest->suffix ? '-' . $visit->labRequest->suffix : '')) : ($visit->patient->lab ?: 'N/A'),
                 'upfront_payment' => $invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0),
                 'remaining_balance' => $invoice ? $invoice->balance : (($visit->final_amount ?? $visit->total_amount ?? 0) - ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0)),
                 'billing_status' => $this->getBillingStatus($invoice, $visit),

@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Models\Patient;
 use App\Models\Visit;
 use App\Models\LabTest;
-use App\Models\SampleTracking;
 use App\Models\VisitTest;
 use App\Models\PatientCredential;
 use App\Models\Invoice;
@@ -718,42 +717,55 @@ class CheckInController extends Controller
         try {
             \Log::info('Getting sample label for visit ID: ' . $visitId);
             
-            $visit = Visit::with(['patient', 'visitTests.testCategory'])->findOrFail($visitId);
+            $visit = Visit::with(['patient', 'labRequest'])->findOrFail($visitId);
             
             \Log::info('Visit found: ' . $visit->id . ', Patient: ' . $visit->patient->name);
-            \Log::info('Visit tests count: ' . $visit->visitTests->count());
             
-            // Generate individual labels for each test
-            $testLabels = $visit->visitTests->map(function ($visitTest, $index) use ($visit) {
+            // Get patient registration data from metadata
+            $metadata = json_decode($visit->metadata ?? '{}', true);
+            $patientData = $metadata['patient_data'] ?? [];
+            
+            // Get sample information from patient registration
+            $numberOfSamples = intval($patientData['number_of_samples'] ?? 1);
+            $sampleType = $patientData['sample_type'] ?? 'Pathology';
+            $sampleSize = $patientData['sample_size'] ?? 'صغيرة جدا';
+            
+            \Log::info('Sample info - Number: ' . $numberOfSamples . ', Type: ' . $sampleType . ', Size: ' . $sampleSize);
+            
+            // Generate sample labels based on number of samples
+            $sampleLabels = [];
+            for ($i = 1; $i <= $numberOfSamples; $i++) {
                 // Generate sample ID like "2025-19-S1", "2025-19-S2", etc.
-                $sampleId = $visit->labRequest ? $visit->labRequest->full_lab_no . '-S' . ($index + 1) : $visitTest->barcode_uid;
+                $sampleId = $visit->labRequest ? $visit->labRequest->full_lab_no . '-S' . $i : 'SAMPLE-' . $i;
                 
-                // Generate real barcode image for the sample ID
+                // Generate barcode for the sample ID
                 $barcodeImage = $this->barcodeService->generateReceiptBarcode($sampleId);
                 
-                return [
-                    'test_name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
-                    'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
+                $sampleLabels[] = [
+                    'sample_id' => $sampleId,
+                    'sample_type' => $sampleType,
+                    'sample_size' => $sampleSize,
                     'patient_name' => $visit->patient->name,
                     'patient_id' => $visit->patient->id,
-                    'sample_id' => $sampleId,
+                    'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?? 'N/A'),
                     'sample_date' => $visit->visit_date,
                     'sample_time' => $visit->visit_time ? date('H:i', strtotime($visit->visit_time)) : date('H:i'),
-                    'barcode' => $barcodeImage, // Real scannable barcode image
-                    'barcode_text' => $sampleId, // The text that the barcode represents
+                    'barcode' => $barcodeImage,
+                    'barcode_text' => $sampleId,
                 ];
-            });
+            }
             
-            \Log::info('Generated ' . $testLabels->count() . ' test labels');
+            \Log::info('Generated ' . count($sampleLabels) . ' sample labels');
             
             return response()->json([
-                'label_data' => [
+                'sample_data' => [
                     'patient_name' => $visit->patient->name,
                     'patient_age' => $visit->patient->age,
                     'visit_id' => $visit->id,
                     'visit_date' => $visit->visit_date,
                     'receipt_number' => $visit->visit_number,
-                    'test_labels' => $testLabels,
+                    'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?? 'N/A'),
+                    'sample_labels' => $sampleLabels,
                 ],
             ]);
         } catch (\Exception $e) {
