@@ -785,11 +785,17 @@ class CheckInController extends Controller
     public function getSampleLabel($visitId)
     {
         try {
+            \Log::info('=== SAMPLE LABEL REQUEST START ===');
             \Log::info('Getting sample label for visit ID: ' . $visitId);
             
             $visit = Visit::with(['patient', 'labRequest'])->findOrFail($visitId);
             
             \Log::info('Visit found: ' . $visit->id . ', Patient: ' . $visit->patient->name);
+            \Log::info('Visit metadata: ' . json_encode($visit->metadata));
+            \Log::info('Lab request exists: ' . ($visit->labRequest ? 'Yes' : 'No'));
+            if ($visit->labRequest) {
+                \Log::info('Lab request metadata: ' . json_encode($visit->labRequest->metadata));
+            }
             
             // Get patient registration data from metadata
             $metadata = json_decode($visit->metadata ?? '{}', true);
@@ -807,10 +813,21 @@ class CheckInController extends Controller
             $sampleType = $patientData['sample_type'] ?? $labRequestData['sample_type'] ?? 'Pathology';
             $sampleSize = $patientData['sample_size'] ?? $labRequestData['sample_size'] ?? 'صغيرة جدا';
             
+            \Log::info('=== SAMPLE LABEL DEBUG ===');
+            \Log::info('Visit ID: ' . $visit->id);
+            \Log::info('Visit metadata: ' . json_encode($metadata));
             \Log::info('Patient data from visit metadata: ' . json_encode($patientData));
             \Log::info('Patient data from lab request metadata: ' . json_encode($labRequestData));
-            
+            \Log::info('Raw number_of_samples from patientData: ' . ($patientData['number_of_samples'] ?? 'NOT_FOUND'));
+            \Log::info('Raw number_of_samples from labRequestData: ' . ($labRequestData['number_of_samples'] ?? 'NOT_FOUND'));
+            \Log::info('Final numberOfSamples: ' . $numberOfSamples);
             \Log::info('Sample info - Number: ' . $numberOfSamples . ', Type: ' . $sampleType . ', Size: ' . $sampleSize);
+            
+            // Debug: Check if we have the correct data
+            if ($numberOfSamples <= 0) {
+                \Log::warning('Number of samples is 0 or negative, using default value of 1');
+                $numberOfSamples = 1;
+            }
             
             // Generate sample labels based on number of samples
             $sampleLabels = [];
@@ -836,8 +853,9 @@ class CheckInController extends Controller
             }
             
             \Log::info('Generated ' . count($sampleLabels) . ' sample labels');
+            \Log::info('Sample labels data: ' . json_encode($sampleLabels));
             
-            return response()->json([
+            $response = [
                 'sample_data' => [
                     'patient_name' => $visit->patient->name,
                     'patient_age' => $visit->patient->age,
@@ -847,7 +865,12 @@ class CheckInController extends Controller
                     'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?? 'N/A'),
                     'sample_labels' => $sampleLabels,
                 ],
-            ]);
+            ];
+            
+            \Log::info('=== SAMPLE LABEL RESPONSE ===');
+            \Log::info('Response: ' . json_encode($response));
+            
+            return response()->json($response);
         } catch (\Exception $e) {
             \Log::error('Error generating sample label: ' . $e->getMessage());
             \Log::error('Stack trace: ' . $e->getTraceAsString());
@@ -921,9 +944,11 @@ class CheckInController extends Controller
 
         $patients = Patient::where('name', 'like', "%{$query}%")
             ->orWhere('phone', 'like', "%{$query}%")
+            ->orWhere('whatsapp_number', 'like', "%{$query}%")
+            ->orWhere('lab', 'like', "%{$query}%")
             ->orWhere('sender', 'like', "%{$query}%")
             ->limit(10)
-            ->get(['id', 'name', 'phone', 'age', 'gender', 'sender']);
+            ->get(['id', 'name', 'phone', 'age', 'gender', 'sender', 'lab']);
 
         return response()->json(['patients' => $patients]);
     }

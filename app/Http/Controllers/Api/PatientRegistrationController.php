@@ -162,6 +162,15 @@ class PatientRegistrationController extends Controller
         try {
             $data = $validator->validated();
             
+            // Debug: Log the incoming data
+            \Log::info('Patient registration data received', [
+                'total_amount' => $data['total_amount'] ?? 'not_set',
+                'amount_paid' => $data['amount_paid'] ?? 'not_set',
+                'number_of_samples' => $data['number_of_samples'] ?? 'not_set',
+                'has_billing_info' => isset($data['total_amount']) && !empty($data['total_amount']) && floatval($data['total_amount']) > 0,
+                'all_data_keys' => array_keys($data)
+            ]);
+            
             // Handle lab number
             if (empty($data['lab_number'])) {
                 $nextLabResponse = $this->getNextLabNumber();
@@ -329,8 +338,18 @@ class PatientRegistrationController extends Controller
                 }
             }
             
-            // Create visit if billing information is provided
-            if (isset($data['total_amount']) && !empty($data['total_amount']) && floatval($data['total_amount']) > 0) {
+            // Create visit for all patient registrations (with or without billing)
+            $visit = null;
+            $hasBillingInfo = isset($data['total_amount']) && !empty($data['total_amount']) && floatval($data['total_amount']) > 0;
+            
+            \Log::info('Visit creation decision', [
+                'has_billing_info' => $hasBillingInfo,
+                'total_amount' => $data['total_amount'] ?? 'not_set',
+                'will_create_visit_with_billing' => $hasBillingInfo,
+                'will_create_visit_without_billing' => !$hasBillingInfo
+            ]);
+            
+            if ($hasBillingInfo) {
                 $amountPaid = floatval($data['amount_paid'] ?? 0);
                 $totalAmount = floatval($data['total_amount']);
                 
@@ -435,6 +454,15 @@ class PatientRegistrationController extends Controller
                 
                 // Create the visit
                 $visit = Visit::create($visitData);
+                
+                // Debug: Log visit creation (with billing)
+                \Log::info('Visit created for patient registration (with billing)', [
+                    'visit_id' => $visit->id,
+                    'patient_id' => $patient->id,
+                    'patient_name' => $patient->name,
+                    'visit_metadata' => $visit->metadata,
+                    'number_of_samples' => $data['number_of_samples'] ?? 'not_set',
+                ]);
                 
             // Create visit test based on case type
             $visitTest = null;
@@ -754,6 +782,77 @@ class PatientRegistrationController extends Controller
                         'visit_id' => $visit->id ?? 'null'
                     ]);
                     // Continue without receipt
+                }
+            } else {
+                // Create a basic visit even without billing information
+                $visitData = [
+                    'patient_id' => $patient->id,
+                    'visit_number' => 'VIS-' . date('Ymd') . '-' . str_pad($patient->id, 6, '0', STR_PAD_LEFT),
+                    'visit_date' => $data['attendance_date'] ?? now(),
+                    'visit_time' => now()->format('H:i:s'),
+                    'status' => 'registered',
+                    'remarks' => 'Created via Patient Registration - No billing information',
+                    'shift_id' => null,
+                    'processed_by_staff' => auth()->id(),
+                ];
+                
+                // Add metadata with patient data
+                $visitModel = new Visit();
+                $fillable = $visitModel->getFillable();
+                
+                if (in_array('metadata', $fillable)) {
+                    $patientData = [
+                        'name' => $data['name'] ?? $patient->name,
+                        'phone' => $data['phone'] ?? $patient->phone,
+                        'age' => $data['age'] ?? $patient->age,
+                        'gender' => $data['gender'] ?? $patient->gender,
+                        'organization' => $data['organization'] ?? $patient->organization,
+                        'doctor' => $data['doctor'] ?? $patient->doctor,
+                        'sample_type' => $data['sample_type'] ?? null,
+                        'sample_size' => $data['sample_size'] ?? null,
+                        'number_of_samples' => $data['number_of_samples'] ?? 1,
+                        'case_type' => $data['case_type'] ?? null,
+                        'day_of_week' => $data['day_of_week'] ?? null,
+                        'medical_history' => $data['medical_history'] ?? null,
+                        'previous_tests' => $data['previous_tests'] ?? null,
+                        'attendance_date' => $data['attendance_date'] ?? now()->format('Y-m-d'),
+                        'delivery_date' => $data['delivery_date'] ?? null,
+                        'lab_number' => $patient->lab,
+                    ];
+                    
+                    $visitData['metadata'] = [
+                        'created_via' => 'patient_registration',
+                        'patient_data' => $patientData,
+                        'lab_request_id' => $labRequest->id,
+                    ];
+                }
+                
+                // Create the visit
+                $visit = Visit::create($visitData);
+                
+                // Debug: Log visit creation
+                \Log::info('Visit created for patient registration', [
+                    'visit_id' => $visit->id,
+                    'patient_id' => $patient->id,
+                    'patient_name' => $patient->name,
+                    'visit_metadata' => $visit->metadata,
+                    'number_of_samples' => $data['number_of_samples'] ?? 'not_set',
+                ]);
+                
+                // Update lab request with visit information
+                try {
+                    $labRequest->update([
+                        'metadata' => array_merge($labRequest->metadata ?? [], [
+                            'visit_id' => $visit->id,
+                            'status' => 'registered',
+                        ]),
+                        'status' => 'registered',
+                    ]);
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to update lab request with visit info', [
+                        'error' => $e->getMessage(),
+                        'visit_id' => $visit->id ?? 'null'
+                    ]);
                 }
             }
             

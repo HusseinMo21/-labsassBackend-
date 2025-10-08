@@ -99,6 +99,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/patients/{id}/full-history', [PatientController::class, 'fullHistory']);
     Route::get('/patients/{id}/reports', [PatientController::class, 'reportsList']);
     Route::get('/patients/{id}/payments', [PatientController::class, 'paymentsHistory']);
+    Route::post('/patients/{id}/extra-payment', [PatientController::class, 'addExtraPayment']);
     Route::middleware('pdf.cors')->group(function () {
         Route::get('/patients/{id}/print-reports', [PatientController::class, 'printAllReports'])->name('patients.print-reports');
         Route::get('/reports/{report_id}/print', [PatientController::class, 'printSingleReport'])->name('reports.print-single');

@@ -451,26 +451,222 @@ class LabRequestController extends Controller
             $sampleType = 'Pathology';
             $sampleSize = 'صغيرة جدا';
             $organization = null;
+            $totalAmount = 0;
+            $paidAmount = 0;
+            $remainingAmount = 0;
+            $paymentStatus = 'unpaid';
+            
+            // Try to get from patient record (with error handling)
+            try {
+                if (isset($patient->number_of_samples) && $patient->number_of_samples) {
+                    $numberOfSamples = (int)$patient->number_of_samples;
+                }
+                if (isset($patient->sample_type) && $patient->sample_type) {
+                    $sampleType = $patient->sample_type;
+                }
+                if (isset($patient->sample_size) && $patient->sample_size) {
+                    $sampleSize = $patient->sample_size;
+                }
+                if (isset($patient->organization) && $patient->organization) {
+                    $organization = $patient->organization;
+                }
+                
+                \Log::info('Lab request details - patient record sample data', [
+                    'lab_request_id' => $labRequest->id,
+                    'lab_no' => $labNo,
+                    'patient_number_of_samples' => $numberOfSamples,
+                    'patient_sample_type' => $sampleType,
+                    'patient_sample_size' => $sampleSize,
+                    'patient_organization' => $organization
+                ]);
+            } catch (\Exception $e) {
+                \Log::warning('Error getting patient record data: ' . $e->getMessage());
+            }
             
             if ($labRequest->visits && $labRequest->visits->count() > 0) {
-                $latestVisit = $labRequest->visits->sortByDesc('created_at')->first();
-                if ($latestVisit && $latestVisit->metadata) {
-                    try {
-                        // Handle both string and array metadata
-                        $metadata = is_string($latestVisit->metadata) ? json_decode($latestVisit->metadata, true) : $latestVisit->metadata;
-                        $patientData = $metadata['patient_data'] ?? [];
-                        $numberOfSamples = intval($patientData['number_of_samples'] ?? 0);
-                        $sampleType = $patientData['sample_type'] ?? 'Pathology';
-                        $sampleSize = $patientData['sample_size'] ?? 'صغيرة جدا';
-                        $organization = $patientData['organization'] ?? null;
-                    } catch (\Exception $e) {
-                        \Log::warning('Error parsing visit metadata: ' . $e->getMessage(), [
+                try {
+                    $latestVisit = $labRequest->visits->sortByDesc('created_at')->first();
+                    \Log::info('Lab request details - processing visit', [
+                        'lab_request_id' => $labRequest->id,
+                        'lab_no' => $labNo,
+                        'visit_id' => $latestVisit->id,
+                        'visit_metadata' => $latestVisit->metadata,
+                        'visits_count' => $labRequest->visits->count()
+                    ]);
+                    
+                    if ($latestVisit && $latestVisit->metadata) {
+                        try {
+                            // Handle both string and array metadata
+                            $metadata = is_string($latestVisit->metadata) ? json_decode($latestVisit->metadata, true) : $latestVisit->metadata;
+                            $patientData = $metadata['patient_data'] ?? [];
+                            
+                            // Prioritize visit metadata over patient record (visit data is more accurate)
+                            $visitNumberOfSamples = intval($patientData['number_of_samples'] ?? 0);
+                            $visitSampleType = $patientData['sample_type'] ?? 'Pathology';
+                            $visitSampleSize = $patientData['sample_size'] ?? 'صغيرة جدا';
+                            $visitOrganization = $patientData['organization'] ?? null;
+                            
+                            // Use visit data if available, otherwise use patient data
+                            if ($visitNumberOfSamples > 0) {
+                                $numberOfSamples = $visitNumberOfSamples;
+                            }
+                            if ($visitSampleType !== 'Pathology') {
+                                $sampleType = $visitSampleType;
+                            }
+                            if ($visitSampleSize !== 'صغيرة جدا') {
+                                $sampleSize = $visitSampleSize;
+                            }
+                            if ($visitOrganization) {
+                                $organization = $visitOrganization;
+                            }
+                            
+                            \Log::info('Lab request details - extracted data', [
+                                'lab_request_id' => $labRequest->id,
+                                'lab_no' => $labNo,
+                                'number_of_samples' => $numberOfSamples,
+                                'sample_type' => $sampleType,
+                                'sample_size' => $sampleSize,
+                                'organization' => $organization,
+                                'patient_data' => $patientData
+                            ]);
+                        } catch (\Exception $e) {
+                            \Log::warning('Error parsing visit metadata: ' . $e->getMessage(), [
+                                'visit_id' => $latestVisit->id,
+                                'lab_request_id' => $labRequest->id
+                            ]);
+                        }
+                    } else {
+                        \Log::warning('No visit metadata found', [
                             'visit_id' => $latestVisit->id,
-                            'lab_request_id' => $labRequest->id
+                            'lab_request_id' => $labRequest->id,
+                            'has_metadata' => $latestVisit ? ($latestVisit->metadata ? 'Yes' : 'No') : 'No visit'
                         ]);
+                    }
+                } catch (\Exception $e) {
+                    \Log::warning('Error processing visit data: ' . $e->getMessage());
+                }
+            } else {
+                \Log::warning('No visits found for lab request', [
+                    'lab_request_id' => $labRequest->id,
+                    'lab_no' => $labNo,
+                    'visits_count' => $labRequest->visits ? $labRequest->visits->count() : 0
+                ]);
+                
+                // Try to get data from lab request metadata as fallback
+                if ($labRequest->metadata) {
+                    try {
+                        $labRequestMetadata = is_string($labRequest->metadata) ? json_decode($labRequest->metadata, true) : $labRequest->metadata;
+                        $labRequestPatientData = $labRequestMetadata['patient_data'] ?? [];
+                        
+                        \Log::info('Lab request details - sample data fallback debug', [
+                            'lab_request_id' => $labRequest->id,
+                            'lab_no' => $labNo,
+                            'raw_metadata' => $labRequest->metadata,
+                            'parsed_metadata' => $labRequestMetadata,
+                            'patient_data' => $labRequestPatientData,
+                            'current_number_of_samples' => $numberOfSamples,
+                            'current_organization' => $organization
+                        ]);
+                        
+                        if (empty($numberOfSamples) && isset($labRequestPatientData['number_of_samples'])) {
+                            $numberOfSamples = (int)$labRequestPatientData['number_of_samples'];
+                        }
+                        if (empty($organization) && isset($labRequestPatientData['organization'])) {
+                            $organization = $labRequestPatientData['organization'];
+                        }
+                        // Also try organization_id if organization is not available
+                        if (empty($organization) && isset($labRequestPatientData['organization_id'])) {
+                            $organization = $labRequestPatientData['organization_id'];
+                        }
+                        
+                        \Log::info('Lab request details - fallback from lab request metadata', [
+                            'lab_request_id' => $labRequest->id,
+                            'lab_no' => $labNo,
+                            'number_of_samples' => $numberOfSamples,
+                            'organization' => $organization
+                        ]);
+                    } catch (\Exception $e) {
+                        \Log::warning('Error parsing lab request metadata: ' . $e->getMessage());
                     }
                 }
             }
+
+            // Final fallback - try to get data from patient record directly
+            if ($totalAmount == 0 && isset($patient->total_amount) && $patient->total_amount) {
+                $totalAmount = (float)$patient->total_amount;
+                \Log::info('Lab request details - final fallback total_amount from patient', [
+                    'lab_request_id' => $labRequest->id,
+                    'lab_no' => $labNo,
+                    'total_amount' => $totalAmount
+                ]);
+            }
+            
+            if ($numberOfSamples == 0 && isset($patient->number_of_samples) && $patient->number_of_samples) {
+                $numberOfSamples = (int)$patient->number_of_samples;
+                \Log::info('Lab request details - final fallback number_of_samples from patient', [
+                    'lab_request_id' => $labRequest->id,
+                    'lab_no' => $labNo,
+                    'number_of_samples' => $numberOfSamples
+                ]);
+            }
+            
+            // Final fallback - use lab request's number_of_samples field
+            if ($numberOfSamples == 0 && isset($labRequest->number_of_samples) && $labRequest->number_of_samples > 0) {
+                $numberOfSamples = (int)$labRequest->number_of_samples;
+                \Log::info('Lab request details - final fallback number_of_samples from lab request', [
+                    'lab_request_id' => $labRequest->id,
+                    'lab_no' => $labNo,
+                    'number_of_samples' => $numberOfSamples
+                ]);
+            }
+            
+            // Ultimate fallback - use default value of 1 if no samples found
+            if ($numberOfSamples == 0) {
+                $numberOfSamples = 1; // Default to 1 sample
+                \Log::info('Lab request details - ultimate fallback using default number_of_samples', [
+                    'lab_request_id' => $labRequest->id,
+                    'lab_no' => $labNo,
+                    'default_number_of_samples' => $numberOfSamples
+                ]);
+            }
+            
+            if (empty($organization) && isset($patient->organization) && $patient->organization) {
+                $organization = $patient->organization;
+                \Log::info('Lab request details - final fallback organization from patient', [
+                    'lab_request_id' => $labRequest->id,
+                    'lab_no' => $labNo,
+                    'organization' => $organization
+                ]);
+            }
+            
+            // Final fallback - use patient's organization_id
+            if (empty($organization) && isset($patient->organization_id) && $patient->organization_id) {
+                $organization = $patient->organization_id;
+                \Log::info('Lab request details - final fallback organization_id from patient', [
+                    'lab_request_id' => $labRequest->id,
+                    'lab_no' => $labNo,
+                    'organization' => $organization
+                ]);
+            }
+
+            // Final calculation of remaining amount
+            $remainingAmount = $totalAmount - $paidAmount;
+            $paymentStatus = $remainingAmount > 0 ? 'partial' : 'paid';
+            
+            \Log::info('Lab request details - final financial calculation', [
+                'lab_request_id' => $labRequest->id,
+                'lab_no' => $labNo,
+                'final_total_amount' => $totalAmount,
+                'final_paid_amount' => $paidAmount,
+                'final_remaining_amount' => $remainingAmount,
+                'final_payment_status' => $paymentStatus,
+                'final_number_of_samples' => $numberOfSamples,
+                'final_organization' => $organization,
+                'patient_total_amount' => $patient->total_amount ?? 'null',
+                'patient_amount_paid' => $patient->amount_paid ?? 'null',
+                'patient_number_of_samples' => $patient->number_of_samples ?? 'null',
+                'patient_organization' => $patient->organization ?? 'null'
+            ]);
 
             // Get all visits for this patient (handle potential null)
             $visits = collect();
@@ -508,34 +704,115 @@ class LabRequestController extends Controller
             $paymentHistory = collect();
             
             // Get financial data from visit metadata (from patient registration)
-            $totalAmount = 0;
-            $paidAmount = 0;
-            $remainingAmount = 0;
-            $paymentStatus = 'unpaid';
-            $paymentHistory = [];
+            // Variables already initialized above
             
-            if ($labRequest->visits && $labRequest->visits->count() > 0) {
-                $latestVisit = $labRequest->visits->sortByDesc('created_at')->first();
-                if ($latestVisit) {
-                    // Get payment data from visit metadata first
-                    try {
-                        $visitMetadata = is_string($latestVisit->metadata) ? json_decode($latestVisit->metadata ?? '{}', true) : ($latestVisit->metadata ?? []);
-                        $paymentDetails = $visitMetadata['payment_details'] ?? [];
-                        $patientData = $visitMetadata['patient_data'] ?? [];
-                    } catch (\Exception $e) {
-                        \Log::warning('Error parsing visit metadata for payment: ' . $e->getMessage(), [
-                            'visit_id' => $latestVisit->id,
-                            'lab_request_id' => $labRequest->id
-                        ]);
-                        $paymentDetails = [];
-                        $patientData = [];
+            // Try to get financial data from patient record (fallback)
+            try {
+                if (isset($patient->total_amount) && $patient->total_amount) {
+                    $totalAmount = (float)$patient->total_amount;
+                }
+                if (isset($patient->amount_paid) && $patient->amount_paid) {
+                    $paidAmount = (float)$patient->amount_paid;
+                }
+                
+                \Log::info('Lab request details - patient record financial data (initial)', [
+                    'lab_request_id' => $labRequest->id,
+                    'lab_no' => $labNo,
+                    'patient_total_amount' => $totalAmount,
+                    'patient_paid_amount' => $paidAmount
+                ]);
+            } catch (\Exception $e) {
+                \Log::warning('Error getting patient financial data: ' . $e->getMessage());
+            }
+            
+            // Try to get financial data from lab request metadata as fallback
+            if ($labRequest->metadata && ($totalAmount == 0 || $paidAmount == 0)) {
+                try {
+                    $labRequestMetadata = is_string($labRequest->metadata) ? json_decode($labRequest->metadata, true) : $labRequest->metadata;
+                    $labRequestPatientData = $labRequestMetadata['patient_data'] ?? [];
+                    
+                    \Log::info('Lab request details - raw metadata debug', [
+                        'lab_request_id' => $labRequest->id,
+                        'lab_no' => $labNo,
+                        'raw_metadata' => $labRequest->metadata,
+                        'parsed_metadata' => $labRequestMetadata,
+                        'patient_data' => $labRequestPatientData
+                    ]);
+                    
+                    if ($totalAmount == 0 && isset($labRequestPatientData['total_amount'])) {
+                        $totalAmount = (float)$labRequestPatientData['total_amount'];
+                    }
+                    if ($paidAmount == 0 && isset($labRequestPatientData['amount_paid'])) {
+                        $paidAmount = (float)$labRequestPatientData['amount_paid'];
                     }
                     
-                    // Calculate amounts from metadata or direct fields
-                    $totalAmount = $patientData['total_amount'] ?? $latestVisit->total_amount ?? 0;
-                    $paidAmount = $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? $latestVisit->upfront_payment ?? 0;
-                    $remainingAmount = $totalAmount - $paidAmount;
-                    $paymentStatus = $visitMetadata['payment_status'] ?? ($remainingAmount > 0 ? 'partial' : 'paid');
+                    // If we still don't have total_amount, try to calculate it from the lab request
+                    if ($totalAmount == 0 && $paidAmount > 0) {
+                        // For now, assume total_amount is at least the amount_paid
+                        $totalAmount = $paidAmount;
+                        \Log::info('Lab request details - estimated total_amount from amount_paid', [
+                            'lab_request_id' => $labRequest->id,
+                            'lab_no' => $labNo,
+                            'estimated_total_amount' => $totalAmount
+                        ]);
+                    }
+                    
+                    \Log::info('Lab request details - financial fallback from lab request metadata', [
+                        'lab_request_id' => $labRequest->id,
+                        'lab_no' => $labNo,
+                        'total_amount' => $totalAmount,
+                        'paid_amount' => $paidAmount
+                    ]);
+                } catch (\Exception $e) {
+                    \Log::warning('Error parsing lab request metadata for financial data: ' . $e->getMessage());
+                }
+            }
+            
+            try {
+                if ($labRequest->visits && $labRequest->visits->count() > 0) {
+                    $latestVisit = $labRequest->visits->sortByDesc('created_at')->first();
+                    if ($latestVisit) {
+                        // Get payment data from visit metadata first
+                        try {
+                            $visitMetadata = is_string($latestVisit->metadata) ? json_decode($latestVisit->metadata ?? '{}', true) : ($latestVisit->metadata ?? []);
+                            $paymentDetails = $visitMetadata['payment_details'] ?? [];
+                            $patientData = $visitMetadata['patient_data'] ?? [];
+                        } catch (\Exception $e) {
+                            \Log::warning('Error parsing visit metadata for payment: ' . $e->getMessage(), [
+                                'visit_id' => $latestVisit->id,
+                                'lab_request_id' => $labRequest->id
+                            ]);
+                            $paymentDetails = [];
+                            $patientData = [];
+                        }
+                        
+                        // Calculate amounts from metadata or direct fields (prioritize visit data)
+                        $visitTotalAmount = $patientData['total_amount'] ?? $latestVisit->total_amount ?? 0;
+                        $visitPaidAmount = $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? $latestVisit->upfront_payment ?? 0;
+                        
+                        // Prioritize visit data over patient data (visit data is more accurate)
+                        if ($visitTotalAmount > 0) {
+                            $totalAmount = $visitTotalAmount;
+                        }
+                        if ($visitPaidAmount > 0) {
+                            $paidAmount = $visitPaidAmount;
+                        }
+                        
+                        $remainingAmount = $totalAmount - $paidAmount;
+                        $paymentStatus = $visitMetadata['payment_status'] ?? ($remainingAmount > 0 ? 'partial' : 'paid');
+                        
+                        \Log::info('Lab request details - financial calculation', [
+                            'lab_request_id' => $labRequest->id,
+                            'lab_no' => $labNo,
+                            'visit_id' => $latestVisit->id,
+                            'total_amount' => $totalAmount,
+                            'paid_amount' => $paidAmount,
+                            'remaining_amount' => $remainingAmount,
+                            'payment_status' => $paymentStatus,
+                            'visit_metadata' => $visitMetadata,
+                            'payment_details' => $paymentDetails,
+                            'patient_data' => $patientData
+                        ]);
                     
                     // Create payment history entry
                     $paymentMethod = 'Cash';
@@ -570,6 +847,12 @@ class LabRequestController extends Controller
                         $paymentStatus = $remainingAmount > 0 ? 'partial' : 'paid';
                     }
                 }
+            }
+            } catch (\Exception $e) {
+                \Log::warning('Error processing financial data: ' . $e->getMessage(), [
+                    'lab_request_id' => $labRequest->id,
+                    'lab_no' => $labNo
+                ]);
             }
             
             // Add payment history entry if we have financial data

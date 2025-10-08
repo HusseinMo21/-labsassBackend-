@@ -87,6 +87,7 @@ class UnpaidInvoicesController extends Controller
                         'id' => $visit->patient->id,
                         'name' => $visit->patient->name,
                         'phone' => $visit->patient->phone,
+                        'lab' => $visit->patient->lab,
                     ],
                 ],
             ];

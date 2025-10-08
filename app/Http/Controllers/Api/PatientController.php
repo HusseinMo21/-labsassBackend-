@@ -67,7 +67,9 @@ class PatientController extends Controller
             });
         }
 
-        $patients = $query->orderBy('id', 'desc')->paginate(15);
+        $patients = $query->with(['visits' => function($q) {
+            $q->latest()->limit(5); // Get the latest 5 visits for financial info
+        }])->orderBy('id', 'desc')->paginate(15);
         
         // Transform the data to ensure proper formatting and avoid N/A values
         $patients->getCollection()->transform(function ($patient) {
@@ -93,6 +95,125 @@ class PatientController extends Controller
             // Handle organization - use organization_id if available
             if (!$patient->organization && $patient->organization_id) {
                 $patient->organization = $patient->organization_id;
+            }
+            
+            // Add financial information from latest visit
+            $latestVisit = $patient->visits->first();
+            
+            // Debug logging for patient dasdasd
+            if ($patient->id == 18) {
+                \Log::info('Processing patient dasdasd (ID: 18)', [
+                    'patient_name' => $patient->name,
+                    'visits_count' => $patient->visits->count(),
+                    'all_visits' => $patient->visits->map(function($visit) {
+                        return [
+                            'visit_id' => $visit->id,
+                            'total_amount' => $visit->total_amount,
+                            'amount_paid' => $visit->amount_paid,
+                            'final_amount' => $visit->final_amount,
+                            'amount' => $visit->amount,
+                            'remaining_amount' => $visit->remaining_amount,
+                            'payment_status' => $visit->payment_status,
+                            'metadata' => $visit->metadata,
+                        ];
+                    })
+                ]);
+            }
+            
+            if ($latestVisit) {
+                // Get financial data from visit metadata if available
+                $metadata = $latestVisit->metadata ?? [];
+                $patientData = $metadata['patient_data'] ?? [];
+                $financialData = $metadata['financial_data'] ?? [];
+                
+                // Calculate total amount from multiple sources - prioritize metadata
+                $totalAmount = $financialData['total_amount'] ?? 
+                              $financialData['final_amount'] ?? 
+                              $patientData['total_amount'] ?? 
+                              $latestVisit->total_amount ?? 
+                              $latestVisit->final_amount ?? 
+                              $latestVisit->amount ?? 
+                              $patient->total_amount ?? 0;
+                
+                // Calculate amount paid from multiple sources - prioritize metadata
+                $amountPaid = $financialData['amount_paid'] ?? 
+                             $financialData['paid_amount'] ?? 
+                             $patientData['amount_paid'] ?? 
+                             $latestVisit->amount_paid ?? 
+                             $latestVisit->paid_amount ?? 
+                             $patient->amount_paid ?? 0;
+                
+                // Calculate remaining balance
+                $remainingBalance = max(0, $totalAmount - $amountPaid);
+                
+                // Determine payment status
+                $paymentStatus = 'unpaid';
+                if ($remainingBalance <= 0 && $totalAmount > 0) {
+                    $paymentStatus = 'paid';
+                } elseif ($amountPaid > 0) {
+                    $paymentStatus = 'partial';
+                }
+                
+                $patient->total_amount = $totalAmount;
+                $patient->amount_paid = $amountPaid;
+                $patient->remaining_balance = $remainingBalance;
+                $patient->payment_status = $paymentStatus;
+                
+                // Debug logging for patient dasdasd after calculation
+                if ($patient->id == 18) {
+                    \Log::info('Financial calculation for patient dasdasd (ID: 18)', [
+                        'calculated_total_amount' => $totalAmount,
+                        'calculated_amount_paid' => $amountPaid,
+                        'calculated_remaining_balance' => $remainingBalance,
+                        'calculated_payment_status' => $paymentStatus,
+                        'metadata' => $metadata,
+                        'patientData' => $patientData,
+                        'financialData' => $financialData,
+                    ]);
+                }
+            } else {
+                // Try to get financial data from patient record itself
+                $totalAmount = $patient->total_amount ?? 0;
+                $amountPaid = $patient->amount_paid ?? 0;
+                $remainingBalance = max(0, $totalAmount - $amountPaid);
+                
+                $paymentStatus = 'unpaid';
+                if ($remainingBalance <= 0 && $totalAmount > 0) {
+                    $paymentStatus = 'paid';
+                } elseif ($amountPaid > 0) {
+                    $paymentStatus = 'partial';
+                }
+                
+                $patient->total_amount = $totalAmount;
+                $patient->amount_paid = $amountPaid;
+                $patient->remaining_balance = $remainingBalance;
+                $patient->payment_status = $paymentStatus;
+            }
+            
+            // Add debug information for the first few patients
+            if ($patient->id <= 20) { // Only for first 20 patients to avoid too much data
+                $latestVisit = $patient->visits->first();
+                $patient->debug_info = [
+                    'visits_count' => $patient->visits->count(),
+                    'latest_visit' => $latestVisit ? [
+                        'id' => $latestVisit->id,
+                        'total_amount' => $latestVisit->total_amount,
+                        'amount_paid' => $latestVisit->amount_paid,
+                        'final_amount' => $latestVisit->final_amount,
+                        'amount' => $latestVisit->amount,
+                        'remaining_amount' => $latestVisit->remaining_amount,
+                        'payment_status' => $latestVisit->payment_status,
+                        'metadata' => $latestVisit->metadata,
+                        'metadata_patient_data' => $latestVisit->metadata['patient_data'] ?? null,
+                        'metadata_financial_data' => $latestVisit->metadata['financial_data'] ?? null,
+                    ] : null,
+                    'patient_total_amount' => $patient->total_amount,
+                    'patient_amount_paid' => $patient->amount_paid,
+                    'calculated_total_amount' => $patient->total_amount,
+                    'calculated_amount_paid' => $patient->amount_paid,
+                    'calculated_remaining_balance' => $patient->remaining_balance,
+                    'calculated_payment_status' => $patient->payment_status,
+                ];
             }
             
             return $patient;
@@ -703,6 +824,177 @@ class PatientController extends Controller
             'total_paid' => $total_paid,
             'total_due' => $total_due,
         ]);
+    }
+
+    public function debugFinancialData($id)
+    {
+        try {
+            $patient = Patient::with(['visits'])->findOrFail($id);
+            
+            $debugData = [
+                'patient_id' => $patient->id,
+                'patient_name' => $patient->name,
+                'patient_lab' => $patient->lab,
+                'patient_total_amount' => $patient->total_amount,
+                'patient_amount_paid' => $patient->amount_paid,
+                'visits_count' => $patient->visits->count(),
+                'visits' => $patient->visits->map(function($visit) {
+                    return [
+                        'visit_id' => $visit->id,
+                        'visit_date' => $visit->visit_date,
+                        'total_amount' => $visit->total_amount,
+                        'amount_paid' => $visit->amount_paid,
+                        'final_amount' => $visit->final_amount,
+                        'amount' => $visit->amount,
+                        'remaining_amount' => $visit->remaining_amount,
+                        'payment_status' => $visit->payment_status,
+                        'metadata' => $visit->metadata,
+                        'metadata_patient_data' => isset($visit->metadata['patient_data']) ? $visit->metadata['patient_data'] : null,
+                    ];
+                })
+            ];
+            
+            return response()->json($debugData);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function addExtraPayment(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'amount' => 'required|numeric|min:0.01',
+            'payment_method' => 'required|string|in:cash,Fawry,InstaPay,VodafoneCash,Other',
+            'notes' => 'nullable|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $patient = Patient::with(['visits'])->findOrFail($id);
+            
+            // Debug: Log patient data
+            \Log::info('Patient data for extra payment:', [
+                'patient_id' => $patient->id,
+                'patient_name' => $patient->name,
+                'patient_total_amount' => $patient->total_amount,
+                'patient_amount_paid' => $patient->amount_paid,
+                'visits_count' => $patient->visits->count(),
+                'visits_data' => $patient->visits->map(function($visit) {
+                    return [
+                        'visit_id' => $visit->id,
+                        'total_amount' => $visit->total_amount,
+                        'amount_paid' => $visit->amount_paid,
+                        'final_amount' => $visit->final_amount,
+                        'amount' => $visit->amount,
+                        'metadata' => $visit->metadata,
+                    ];
+                })
+            ]);
+            
+            // Get the latest visit for this patient
+            $latestVisit = $patient->visits()->latest()->first();
+            
+            if (!$latestVisit) {
+                return response()->json([
+                    'message' => 'No visit found for this patient',
+                ], 404);
+            }
+
+            $amount = $request->amount;
+            $paymentMethod = $request->payment_method;
+            $notes = $request->notes ?? "Extra payment - {$paymentMethod}";
+
+            // Update visit with additional payment
+            $currentPaidAmount = $latestVisit->amount_paid ?? 0;
+            $newPaidAmount = $currentPaidAmount + $amount;
+            $totalAmount = $latestVisit->total_amount ?? 0;
+            $remainingBalance = max(0, $totalAmount - $newPaidAmount);
+
+            // Determine new payment status
+            $paymentStatus = 'unpaid';
+            if ($remainingBalance <= 0) {
+                $paymentStatus = 'paid';
+            } elseif ($newPaidAmount > 0) {
+                $paymentStatus = 'partial';
+            }
+
+            // Update visit
+            $latestVisit->update([
+                'amount_paid' => $newPaidAmount,
+                'remaining_amount' => $remainingBalance,
+                'payment_status' => $paymentStatus,
+            ]);
+
+            // Create payment record if payment model exists
+            try {
+                $paymentData = [
+                    'visit_id' => $latestVisit->id,
+                    'amount' => $amount,
+                    'payment_method' => $paymentMethod,
+                    'notes' => $notes,
+                    'paid_at' => now(),
+                    'processed_by' => auth()->id(),
+                ];
+
+                // Try to create payment record
+                if (class_exists('App\Models\Payment')) {
+                    \App\Models\Payment::create($paymentData);
+                }
+            } catch (\Exception $e) {
+                \Log::warning('Failed to create payment record', [
+                    'error' => $e->getMessage(),
+                    'visit_id' => $latestVisit->id
+                ]);
+            }
+
+            // Prepare receipt data
+            $receiptData = [
+                'patient_name' => $patient->name,
+                'patient_phone' => $patient->phone,
+                'lab_number' => $patient->lab,
+                'visit_id' => $latestVisit->id,
+                'total_amount' => $totalAmount,
+                'amount_paid_before' => $currentPaidAmount,
+                'extra_payment_amount' => $amount,
+                'total_paid_now' => $newPaidAmount,
+                'remaining_balance' => $remainingBalance,
+                'payment_method' => $paymentMethod,
+                'payment_status' => $paymentStatus,
+                'payment_date' => now()->format('Y-m-d H:i:s'),
+                'processed_by' => auth()->user()->name ?? 'System',
+            ];
+
+            return response()->json([
+                'message' => 'Extra payment added successfully',
+                'receipt_data' => $receiptData,
+                'updated_visit' => [
+                    'total_amount' => $totalAmount,
+                    'amount_paid' => $newPaidAmount,
+                    'remaining_balance' => $remainingBalance,
+                    'payment_status' => $paymentStatus,
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Failed to add extra payment', [
+                'error' => $e->getMessage(),
+                'patient_id' => $id,
+                'amount' => $request->amount
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to add extra payment',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function printAllReports($id)
