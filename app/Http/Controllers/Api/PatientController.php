@@ -78,6 +78,11 @@ class PatientController extends Controller
                 $patient->birth_date = now()->subYears($patient->age)->format('Y-m-d');
             }
             
+            // Calculate age from birth_date if not set
+            if (!$patient->age && $patient->birth_date) {
+                $patient->age = \Carbon\Carbon::parse($patient->birth_date)->age;
+            }
+            
             // Handle address - prioritize address_required or address_optional
             if (!$patient->address) {
                 if ($patient->address_required) {
@@ -227,6 +232,11 @@ class PatientController extends Controller
                 $patient['birth_date'] = now()->subYears($patient['age'])->format('Y-m-d');
             }
             
+            // Calculate age from birth_date if not set
+            if (!$patient['age'] && $patient['birth_date']) {
+                $patient['age'] = \Carbon\Carbon::parse($patient['birth_date'])->age;
+            }
+            
             // Handle address - prioritize address_required or address_optional
             if (!$patient['address']) {
                 if (isset($patient['address_required']) && $patient['address_required']) {
@@ -259,6 +269,9 @@ class PatientController extends Controller
 
     public function store(Request $request)
     {
+        // Debug: Log the incoming request data
+        \Log::info('Incoming request data:', $request->all());
+        
         $validator = Validator::make($request->all(), [
             'name' => 'nullable|string|max:255',
             'gender' => 'nullable|in:male,female,other',
@@ -294,6 +307,7 @@ class PatientController extends Controller
         ]);
 
         if ($validator->fails()) {
+            \Log::info('Validation failed in store method:', $validator->errors()->toArray());
             return response()->json([
                 'message' => 'Validation failed',
                 'errors' => $validator->errors(),
@@ -313,6 +327,9 @@ class PatientController extends Controller
 
         $patientData = $validator->validated();
         $patientData['user_id'] = $user->id;
+        
+        // Debug: Log the patient data before processing
+        \Log::info('Patient data before processing:', $patientData);
         
         // Handle address - use address_required if available, otherwise use address
         if (isset($patientData['address_required']) && !empty($patientData['address_required'])) {
@@ -348,7 +365,7 @@ class PatientController extends Controller
         unset($patientData['address_required']);
         unset($patientData['address_optional']);
         unset($patientData['status']);
-        unset($patientData['age']);
+        // Note: Keep age field as it exists in the patient table
         
         // Handle payment data and preserve lab_number
         $paymentData = [];
@@ -386,7 +403,18 @@ class PatientController extends Controller
         unset($patientData['delivery_date']);
         unset($patientData['previous_tests']);
         
+        // Debug: Log the final patient data before creation
+        \Log::info('Final patient data before creation:', $patientData);
+        
         $patient = Patient::create($patientData);
+        
+        // Debug: Log the patient data after creation to verify age was saved
+        \Log::info('Patient created successfully', [
+            'patient_id' => $patient->id,
+            'patient_name' => $patient->name,
+            'patient_age' => $patient->age,
+            'patient_age_raw' => $patient->getAttributes()['age'] ?? 'NULL',
+        ]);
 
         // Create visit record if payment data is provided
         $visit = null;
@@ -602,7 +630,7 @@ class PatientController extends Controller
         unset($patientData['address_required']);
         unset($patientData['address_optional']);
         unset($patientData['status']);
-        unset($patientData['age']);
+        // Note: Keep age field as it exists in the patient table
         
         $patient->update($patientData);
 
