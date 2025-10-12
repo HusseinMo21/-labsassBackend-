@@ -374,6 +374,12 @@ class VisitController extends Controller
             $nextId = (Visit::max('id') ?? 0) + 1;
             $visitNumber = 'VIS-' . date('Ymd') . '-' . str_pad($nextId, 6, '0', STR_PAD_LEFT);
 
+            // Get current staff shift
+            $currentShift = \App\Models\Shift::where('staff_id', auth()->id())
+                ->where('status', 'open')
+                ->whereDate('opened_at', today())
+                ->first();
+
             $visit = Visit::create([
                 // Required from frontend:
                 'patient_id' => $request->patient_id,
@@ -385,6 +391,8 @@ class VisitController extends Controller
                 'notes' => $request->notes,
                 'total_amount' => 0,
                 'final_amount' => 0,
+                'shift_id' => $currentShift?->id, // Link to current shift
+                'processed_by_staff' => auth()->id(),
             ]);
 
             $totalAmount = 0;

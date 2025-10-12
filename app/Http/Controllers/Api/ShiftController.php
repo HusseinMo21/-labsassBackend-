@@ -18,10 +18,10 @@ class ShiftController extends Controller
     {
         $user = Auth::user();
         
-        if ($user->role !== 'staff') {
+        if (!in_array($user->role, ['staff', 'admin'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only staff members can access shift management'
+                'message' => 'Only staff and admin members can access shift management'
             ], 403);
         }
 
@@ -40,6 +40,11 @@ class ShiftController extends Controller
             
             // Calculate payment breakdown
             $paymentBreakdown = $currentShift->calculatePaymentBreakdown();
+            
+            // Ensure we have valid numbers
+            $visitsCount = $visitsCount ?? 0;
+            $paymentsCount = $paymentsCount ?? 0;
+            $patientsCount = $patientsCount ?? 0;
             
             return response()->json([
                 'success' => true,
@@ -74,10 +79,10 @@ class ShiftController extends Controller
     {
         $user = Auth::user();
         
-        if ($user->role !== 'staff') {
+        if (!in_array($user->role, ['staff', 'admin'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only staff members can open shifts'
+                'message' => 'Only staff and admin members can open shifts'
             ], 403);
         }
 
@@ -132,10 +137,10 @@ class ShiftController extends Controller
     {
         $user = Auth::user();
         
-        if ($user->role !== 'staff') {
+        if (!in_array($user->role, ['staff', 'admin'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only staff members can close shifts'
+                'message' => 'Only staff and admin members can close shifts'
             ], 403);
         }
 
@@ -206,10 +211,10 @@ class ShiftController extends Controller
     {
         $user = Auth::user();
         
-        if ($user->role !== 'staff') {
+        if (!in_array($user->role, ['staff', 'admin'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only staff members can access shift reports'
+                'message' => 'Only staff and admin members can access shift reports'
             ], 403);
         }
 
@@ -257,10 +262,10 @@ class ShiftController extends Controller
     {
         $user = Auth::user();
         
-        if ($user->role !== 'staff') {
+        if (!in_array($user->role, ['staff', 'admin'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only staff members can access shift history'
+                'message' => 'Only staff and admin members can access shift history'
             ], 403);
         }
 

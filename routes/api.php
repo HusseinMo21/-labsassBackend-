@@ -303,8 +303,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/patient/my-invoices', [PatientController::class, 'myInvoices']);
     });
 
-    // Shift Management routes (staff only)
-    Route::middleware(['role:staff'])->group(function () {
+    // Shift Management routes (staff and admin)
+    Route::middleware(['role:staff,admin'])->group(function () {
         Route::get('/shifts/current', [App\Http\Controllers\Api\ShiftController::class, 'getCurrentShift']);
         Route::post('/shifts/open', [App\Http\Controllers\Api\ShiftController::class, 'openShift']);
         Route::post('/shifts/close', [App\Http\Controllers\Api\ShiftController::class, 'closeShift']);

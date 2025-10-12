@@ -24,7 +24,7 @@ class CheckInController extends Controller
     protected $barcodeGenerator;
     protected $barcodeService;
 
-    public function __construct(LabNoGenerator $labNoGenerator = null, BarcodeGenerator $barcodeGenerator = null, BarcodeService $barcodeService = null)
+    public function __construct(LabNoGenerator $labNoGenerator, BarcodeGenerator $barcodeGenerator, BarcodeService $barcodeService)
     {
         $this->labNoGenerator = $labNoGenerator;
         $this->barcodeGenerator = $barcodeGenerator;

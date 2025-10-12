@@ -419,6 +419,12 @@ class PatientController extends Controller
         // Create visit record if payment data is provided
         $visit = null;
         if (!empty($paymentData) || isset($request->total_amount)) {
+            // Get current staff shift
+            $currentShift = \App\Models\Shift::where('staff_id', auth()->id())
+                ->where('status', 'open')
+                ->whereDate('opened_at', today())
+                ->first();
+
             $visitData = [
                 'patient_id' => $patient->id,
                 'visit_number' => \App\Models\Visit::generateVisitNumber(),
@@ -432,6 +438,8 @@ class PatientController extends Controller
                 'billing_status' => ($paymentData['amount_paid'] ?? 0) >= ($request->total_amount ?? 0) ? 'paid' : 'partial',
                 'status' => 'pending',
                 'created_by' => auth()->id() ?? 1,
+                'shift_id' => $currentShift?->id, // Link to current shift
+                'processed_by_staff' => auth()->id(),
                 'metadata' => json_encode([
                     'payment_details' => [
                         'amount_paid_cash' => $paymentData['amount_paid_cash'] ?? 0,

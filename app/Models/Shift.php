@@ -102,12 +102,19 @@ class Shift extends Model
 
         // Handle case where closed_at might be before opened_at (data inconsistency)
         if ($this->closed_at < $this->opened_at) {
-            return 'Data Error';
+            // Try to fix the data inconsistency by setting closed_at to opened_at + 1 minute
+            $this->update(['closed_at' => $this->opened_at->addMinutes(1)]);
+            return '1m'; // Return a minimal duration
         }
 
         $duration = $this->opened_at->diffInMinutes($this->closed_at);
         $hours = floor($duration / 60);
-        $minutes = $duration % 60;
+        $minutes = round($duration % 60);
+
+        // Handle case where duration is less than 1 minute
+        if ($duration < 1) {
+            return "0h 1m"; // Show at least 1 minute for very short shifts
+        }
 
         return "{$hours}h {$minutes}m";
     }
@@ -235,9 +242,19 @@ class Shift extends Model
             
             $remainingAmount = $totalAmount - $paidAmount;
             
+            // Get lab number from multiple sources
+            $labNumber = 'N/A';
+            if ($labRequest?->full_lab_no) {
+                $labNumber = $labRequest->full_lab_no;
+            } elseif (isset($patientData['lab_number']) && $patientData['lab_number']) {
+                $labNumber = $patientData['lab_number'];
+            } elseif ($patient?->lab) {
+                $labNumber = $patient->lab;
+            }
+            
             $reportData[] = [
                 'patient_name' => $patient?->name ?? 'N/A',
-                'lab_number' => $labRequest?->full_lab_no ?? 'N/A',
+                'lab_number' => $labNumber,
                 'total_amount' => $totalAmount,
                 'paid_amount' => $paidAmount,
                 'remaining_amount' => $remainingAmount,
