@@ -46,7 +46,8 @@ class UnpaidInvoicesController extends Controller
         $filteredVisits = $visits->filter(function ($visit) use ($status) {
             // Get paid amount from patient table (where the actual payment data is stored)
             $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
-            $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
+            // Use patient total_amount if available, otherwise fallback to visit amounts
+            $totalAmount = $visit->patient->total_amount ?? $visit->final_amount ?? $visit->total_amount ?? 0;
             $remainingAmount = $totalAmount - $paidAmount;
             
             switch ($status) {
@@ -70,7 +71,8 @@ class UnpaidInvoicesController extends Controller
         $transformedData = $paginatedVisits->map(function ($visit) {
             // Get paid amount from patient table (where the actual payment data is stored)
             $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
-            $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
+            // Use patient total_amount if available, otherwise fallback to visit amounts
+            $totalAmount = $visit->patient->total_amount ?? $visit->final_amount ?? $visit->total_amount ?? 0;
             $remainingAmount = $totalAmount - $paidAmount;
             
             return [
@@ -169,7 +171,7 @@ class UnpaidInvoicesController extends Controller
         
         // Get current paid amount from patient table (where the actual payment data is stored)
         $currentPaidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
-        $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
+        $totalAmount = $visit->patient->total_amount ?? $visit->final_amount ?? $visit->total_amount ?? 0;
         $remainingBalance = $totalAmount - $currentPaidAmount;
         
         if ($remainingBalance <= 0) {
@@ -257,7 +259,7 @@ class UnpaidInvoicesController extends Controller
         
         $totalInvoices = $visits->count();
         $totalInvoiced = $visits->sum(function ($visit) {
-            return $visit->final_amount ?? $visit->total_amount ?? 0;
+            return $visit->patient->total_amount ?? $visit->final_amount ?? $visit->total_amount ?? 0;
         });
         $totalPaid = $visits->sum(function ($visit) {
             return $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
@@ -271,13 +273,13 @@ class UnpaidInvoicesController extends Controller
         
         $partialCount = $visits->filter(function ($visit) {
             $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
-            $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
+            $totalAmount = $visit->patient->total_amount ?? $visit->final_amount ?? $visit->total_amount ?? 0;
             return $paidAmount > 0 && $paidAmount < $totalAmount;
         })->count();
         
         $paidCount = $visits->filter(function ($visit) {
             $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
-            $totalAmount = $visit->final_amount ?? $visit->total_amount ?? 0;
+            $totalAmount = $visit->patient->total_amount ?? $visit->final_amount ?? $visit->total_amount ?? 0;
             return $paidAmount >= $totalAmount;
         })->count();
 

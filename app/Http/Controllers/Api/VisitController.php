@@ -33,14 +33,13 @@ class VisitController extends Controller
 
             // Get financial data from visit metadata or patient data
             $metadata = json_decode($visit->metadata ?? '{}', true);
-            $totalAmount = $visit->total_amount ?? 0;
-            
-            // Calculate paid amount from payment breakdown in metadata
+            $financialData = $metadata['financial_data'] ?? [];
             $paymentDetails = $metadata['payment_details'] ?? [];
             $patientData = $metadata['patient_data'] ?? [];
             
-            // Get paid amount from metadata first, then fallback to direct fields
-            $paidAmount = $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            // Prioritize financial_data (from extra payments), then fallback to other sources
+            $totalAmount = $financialData['total_amount'] ?? $visit->total_amount ?? 0;
+            $paidAmount = $financialData['amount_paid'] ?? $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
             
             // If still 0, calculate from payment breakdown
             if ($paidAmount == 0) {
@@ -50,7 +49,7 @@ class VisitController extends Controller
             }
             
             $remainingAmount = $totalAmount - $paidAmount;
-            $paymentStatus = $remainingAmount <= 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'pending');
+            $paymentStatus = $financialData['payment_status'] ?? ($remainingAmount <= 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'pending'));
 
             // Get payment details from metadata
             $paymentDetails = $metadata['payment_details'] ?? [];
@@ -136,7 +135,7 @@ class VisitController extends Controller
         // Optimize: Use select to only fetch needed columns and eager load relationships
         $query = Visit::select([
             'id', 'visit_number', 'visit_date', 'status', 'created_at', 'updated_at',
-            'patient_id', 'lab_request_id', 'total_amount', 'final_amount'
+            'patient_id', 'lab_request_id', 'total_amount', 'final_amount', 'upfront_payment', 'metadata'
         ])
         ->with([
             'patient:id,name,phone,gender,birth_date,age,amount_paid,lab',
@@ -147,10 +146,10 @@ class VisitController extends Controller
         ]);
         
         // Filter to only include visits with receipts if requested
-        // Note: receipt_number column doesn't exist in original visits table
-        // if ($request->has('include_receipts') && $request->include_receipts === 'true') {
-        //     $query->whereNotNull('receipt_number');
-        // }
+        // For receipts, we want visits that have visit_number (which serves as receipt_number)
+        if ($request->has('include_receipts') && $request->include_receipts === 'true') {
+            $query->whereNotNull('visit_number');
+        }
         
         // Search functionality
         if ($request->has('search') && !empty($request->search)) {
@@ -236,6 +235,19 @@ class VisitController extends Controller
                 $invoice = \App\Models\Invoice::where('visit_id', $visit->id)->first();
             }
             
+            // Get financial data from visit metadata (prioritize financial_data from extra payments)
+            $metadata = is_string($visit->metadata) ? json_decode($visit->metadata, true) : ($visit->metadata ?? []);
+            $financialData = $metadata['financial_data'] ?? [];
+            $paymentDetails = $metadata['payment_details'] ?? [];
+            $patientData = $metadata['patient_data'] ?? [];
+            
+            // Calculate amounts prioritizing financial_data, then fallback to other sources
+            $totalAmount = $financialData['total_amount'] ?? $visit->total_amount ?? 0;
+            $finalAmount = $financialData['total_amount'] ?? $visit->final_amount ?? 0; // Use total_amount for final_amount too
+            $paidAmount = $financialData['amount_paid'] ?? ($invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0));
+            $remainingBalance = $financialData['remaining_balance'] ?? ($invoice ? $invoice->balance : (($visit->final_amount ?? $visit->total_amount ?? 0) - ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0)));
+            $billingStatus = $financialData['payment_status'] ?? $this->getBillingStatus($invoice, $visit);
+            
             return [
                 'id' => $visit->id,
                 'visit_number' => $visit->visit_number,
@@ -249,13 +261,20 @@ class VisitController extends Controller
                 'labRequest' => $visit->labRequest,
                 'receipt_number' => $visit->visit_number,
                 'lab_number' => $visit->labRequest ? ($visit->labRequest->lab_no . ($visit->labRequest->suffix ? '-' . $visit->labRequest->suffix : '')) : ($visit->patient->lab ?: 'N/A'),
-                'total_amount' => $visit->total_amount ?? 0,
-                'final_amount' => $visit->final_amount ?? 0,
-                'upfront_payment' => $invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0),
-                'remaining_balance' => $invoice ? $invoice->balance : (($visit->final_amount ?? $visit->total_amount ?? 0) - ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0)),
-                'billing_status' => $this->getBillingStatus($invoice, $visit),
+                'total_amount' => $totalAmount,
+                'final_amount' => $finalAmount,
+                'upfront_payment' => $paidAmount,
+                'remaining_balance' => $remainingBalance,
+                'billing_status' => $billingStatus,
             ];
         });
+        
+        // If include_receipts is requested, wrap the data in receipt_data structure
+        if ($request->has('include_receipts') && $request->include_receipts === 'true') {
+            return response()->json([
+                'receipt_data' => $transformedData
+            ]);
+        }
         
         return response()->json($transformedData);
     }

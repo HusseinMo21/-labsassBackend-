@@ -777,6 +777,7 @@ class LabRequestController extends Controller
                             $visitMetadata = is_string($latestVisit->metadata) ? json_decode($latestVisit->metadata ?? '{}', true) : ($latestVisit->metadata ?? []);
                             $paymentDetails = $visitMetadata['payment_details'] ?? [];
                             $patientData = $visitMetadata['patient_data'] ?? [];
+                            $financialData = $visitMetadata['financial_data'] ?? [];
                         } catch (\Exception $e) {
                             \Log::warning('Error parsing visit metadata for payment: ' . $e->getMessage(), [
                                 'visit_id' => $latestVisit->id,
@@ -784,11 +785,12 @@ class LabRequestController extends Controller
                             ]);
                             $paymentDetails = [];
                             $patientData = [];
+                            $financialData = [];
                         }
                         
-                        // Calculate amounts from metadata or direct fields (prioritize visit data)
-                        $visitTotalAmount = $patientData['total_amount'] ?? $latestVisit->total_amount ?? 0;
-                        $visitPaidAmount = $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? $latestVisit->upfront_payment ?? 0;
+                        // Calculate amounts from metadata or direct fields (prioritize financial_data, then visit data)
+                        $visitTotalAmount = $financialData['total_amount'] ?? $patientData['total_amount'] ?? $latestVisit->total_amount ?? 0;
+                        $visitPaidAmount = $financialData['amount_paid'] ?? $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? $latestVisit->upfront_payment ?? 0;
                         
                         // Prioritize visit data over patient data (visit data is more accurate)
                         if ($visitTotalAmount > 0) {
@@ -799,7 +801,7 @@ class LabRequestController extends Controller
                         }
                         
                         $remainingAmount = $totalAmount - $paidAmount;
-                        $paymentStatus = $visitMetadata['payment_status'] ?? ($remainingAmount > 0 ? 'partial' : 'paid');
+                        $paymentStatus = $financialData['payment_status'] ?? $visitMetadata['payment_status'] ?? ($remainingAmount > 0 ? 'partial' : 'paid');
                         
                         \Log::info('Lab request details - financial calculation', [
                             'lab_request_id' => $labRequest->id,

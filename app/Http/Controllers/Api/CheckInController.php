@@ -501,6 +501,7 @@ class CheckInController extends Controller
         
         // Get payment breakdown from visit metadata
         $metadata = json_decode($visit->metadata ?? '{}', true);
+        $financialData = $metadata['financial_data'] ?? []; // Added to read financial_data
         $paymentDetails = $metadata['payment_details'] ?? [];
         
         // Build payment breakdown
@@ -538,13 +539,13 @@ class CheckInController extends Controller
                 'patient_age' => $patientAge ?: 'N/A',
                 'patient_phone' => $visit->patient->phone ?: 'N/A',
                 'tests' => $this->getTestsForReceipt($visit),
-                'total_amount' => $invoice ? $invoice->total_amount : ($visit->total_amount ?: 0),
+                'total_amount' => $financialData['total_amount'] ?? ($invoice ? $invoice->total_amount : ($visit->total_amount ?: 0)),
                 'discount_amount' => $visit->discount_amount ?: 0,
-                'final_amount' => $invoice ? $invoice->total_amount : ($visit->final_amount ?: 0),
-                'upfront_payment' => $this->calculatePaidAmount($visit, $invoice),
-                'remaining_balance' => $this->calculateRemainingBalance($visit, $invoice),
+                'final_amount' => $financialData['total_amount'] ?? ($invoice ? $invoice->total_amount : ($visit->final_amount ?: 0)),
+                'upfront_payment' => $financialData['amount_paid'] ?? $this->calculatePaidAmount($visit, $invoice),
+                'remaining_balance' => $financialData['remaining_balance'] ?? $this->calculateRemainingBalance($visit, $invoice),
                 'payment_method' => $this->getPaymentMethod($visit, $payments),
-                'billing_status' => $this->getPaymentStatus($invoice, $visit),
+                'billing_status' => $financialData['payment_status'] ?? $this->getPaymentStatus($invoice, $visit),
                 'expected_delivery_date' => $visit->getExpectedDeliveryDate(),
                 'barcode' => $barcodeData,
                 'barcode_text' => $barcodeText ?: 'N/A',
@@ -571,58 +572,10 @@ class CheckInController extends Controller
             $cleanText = str_replace(['_', ' '], '', $text);
             $alphanumericText = preg_replace('/[^A-Za-z0-9]/', '', $text);
             
-            // Try different barcode types
+            // Try different barcode types - prioritize SVG since it's more reliable
             $barcodeTypes = ['C128', 'C39', 'C39+', 'C93'];
             
-            foreach ($barcodeTypes as $type) {
-                try {
-                    // Try to generate barcode as PNG
-                    $barcodePng = $generator->getBarcodePNG($text, $type, 2, 50);
-                    
-                    if ($barcodePng && strlen($barcodePng) > 100) { // Check if we got actual image data
-                        \Log::info('Successfully generated PNG barcode', [
-                            'text' => $text,
-                            'type' => $type,
-                            'size' => strlen($barcodePng)
-                        ]);
-                        return base64_encode($barcodePng);
-                    }
-                    
-                    // Try with cleaned text (keeping hyphens)
-                    $barcodePng = $generator->getBarcodePNG($cleanText, $type, 2, 50);
-                    if ($barcodePng && strlen($barcodePng) > 100) {
-                        \Log::info('Successfully generated PNG barcode with cleaned text', [
-                            'text' => $text,
-                            'clean_text' => $cleanText,
-                            'type' => $type,
-                            'size' => strlen($barcodePng)
-                        ]);
-                        return base64_encode($barcodePng);
-                    }
-                    
-                    // Try with alphanumeric only text
-                    if (!empty($alphanumericText)) {
-                        $barcodePng = $generator->getBarcodePNG($alphanumericText, $type, 2, 50);
-                        if ($barcodePng && strlen($barcodePng) > 100) {
-                            \Log::info('Successfully generated PNG barcode with alphanumeric text', [
-                                'text' => $text,
-                                'alphanumeric_text' => $alphanumericText,
-                                'type' => $type,
-                                'size' => strlen($barcodePng)
-                            ]);
-                            return base64_encode($barcodePng);
-                        }
-                    }
-                } catch (\Exception $e) {
-                    \Log::debug('PNG barcode generation failed for type ' . $type, [
-                        'text' => $text,
-                        'error' => $e->getMessage()
-                    ]);
-                    continue;
-                }
-            }
-            
-            // If PNG fails, try SVG (prioritize SVG since it works better)
+            // Try SVG first (more reliable than PNG)
             foreach ($barcodeTypes as $type) {
                 try {
                     // Try original text first
@@ -660,6 +613,71 @@ class CheckInController extends Controller
                     }
                 } catch (\Exception $e) {
                     \Log::debug('SVG barcode generation failed for type ' . $type, [
+                        'text' => $text,
+                        'error' => $e->getMessage()
+                    ]);
+                    continue;
+                }
+            }
+            
+            // If SVG fails, try PNG as fallback
+            foreach ($barcodeTypes as $type) {
+                try {
+                    // Try to generate barcode as PNG
+                    $barcodePng = $generator->getBarcodePNG($text, $type, 2, 50);
+                    
+                    if ($barcodePng && strlen($barcodePng) > 100) { // Check if we got actual image data
+                        // Validate PNG header
+                        $pngHeader = substr($barcodePng, 0, 8);
+                        if ($pngHeader === "\x89PNG\r\n\x1a\n") {
+                            \Log::info('Successfully generated PNG barcode', [
+                                'text' => $text,
+                                'type' => $type,
+                                'size' => strlen($barcodePng)
+                            ]);
+                            return base64_encode($barcodePng);
+                        } else {
+                            \Log::warning('PNG barcode has invalid header', [
+                                'text' => $text,
+                                'type' => $type,
+                                'header' => bin2hex($pngHeader)
+                            ]);
+                        }
+                    }
+                    
+                    // Try with cleaned text (keeping hyphens)
+                    $barcodePng = $generator->getBarcodePNG($cleanText, $type, 2, 50);
+                    if ($barcodePng && strlen($barcodePng) > 100) {
+                        $pngHeader = substr($barcodePng, 0, 8);
+                        if ($pngHeader === "\x89PNG\r\n\x1a\n") {
+                            \Log::info('Successfully generated PNG barcode with cleaned text', [
+                                'text' => $text,
+                                'clean_text' => $cleanText,
+                                'type' => $type,
+                                'size' => strlen($barcodePng)
+                            ]);
+                            return base64_encode($barcodePng);
+                        }
+                    }
+                    
+                    // Try with alphanumeric only text
+                    if (!empty($alphanumericText)) {
+                        $barcodePng = $generator->getBarcodePNG($alphanumericText, $type, 2, 50);
+                        if ($barcodePng && strlen($barcodePng) > 100) {
+                            $pngHeader = substr($barcodePng, 0, 8);
+                            if ($pngHeader === "\x89PNG\r\n\x1a\n") {
+                                \Log::info('Successfully generated PNG barcode with alphanumeric text', [
+                                    'text' => $text,
+                                    'alphanumeric_text' => $alphanumericText,
+                                    'type' => $type,
+                                    'size' => strlen($barcodePng)
+                                ]);
+                                return base64_encode($barcodePng);
+                            }
+                        }
+                    }
+                } catch (\Exception $e) {
+                    \Log::debug('PNG barcode generation failed for type ' . $type, [
                         'text' => $text,
                         'error' => $e->getMessage()
                     ]);

@@ -942,9 +942,12 @@ class PatientController extends Controller
 
             // Update visit with additional payment
             $currentPaidAmount = $latestVisit->amount_paid ?? 0;
+            $currentTotalAmount = $latestVisit->total_amount ?? 0;
+            
+            // For extra payments, we increase BOTH total amount and paid amount
+            $newTotalAmount = $currentTotalAmount + $amount;
             $newPaidAmount = $currentPaidAmount + $amount;
-            $totalAmount = $latestVisit->total_amount ?? 0;
-            $remainingBalance = max(0, $totalAmount - $newPaidAmount);
+            $remainingBalance = max(0, $newTotalAmount - $newPaidAmount);
 
             // Determine new payment status
             $paymentStatus = 'unpaid';
@@ -954,12 +957,48 @@ class PatientController extends Controller
                 $paymentStatus = 'partial';
             }
 
+            // Find the lab request for this patient to link the visit
+            $labRequest = LabRequest::where('patient_id', $patient->id)->first();
+            
             // Update visit
             $latestVisit->update([
+                'total_amount' => $newTotalAmount,
                 'amount_paid' => $newPaidAmount,
                 'remaining_amount' => $remainingBalance,
                 'payment_status' => $paymentStatus,
+                'lab_request_id' => $labRequest ? $labRequest->id : null,
             ]);
+
+            // Update patient record with new financial data
+            $patient->update([
+                'total_amount' => $newTotalAmount,
+                'amount_paid' => $newPaidAmount,
+                'remaining_balance' => $remainingBalance,
+                'payment_status' => $paymentStatus,
+            ]);
+
+            // Update visit metadata to reflect new financial data
+            $metadata = json_decode($latestVisit->metadata ?? '{}', true);
+            $metadata['financial_data'] = [
+                'total_amount' => $newTotalAmount,
+                'amount_paid' => $newPaidAmount,
+                'remaining_balance' => $remainingBalance,
+                'payment_status' => $paymentStatus,
+                'last_updated' => now()->toISOString(),
+                'extra_payment_added' => true,
+                'extra_payment_amount' => $amount,
+                'extra_payment_method' => $paymentMethod,
+            ];
+            
+            // Also update patient_data in metadata if it exists
+            if (isset($metadata['patient_data'])) {
+                $metadata['patient_data']['total_amount'] = $newTotalAmount;
+                $metadata['patient_data']['amount_paid'] = $newPaidAmount;
+                $metadata['patient_data']['remaining_balance'] = $remainingBalance;
+                $metadata['patient_data']['payment_status'] = $paymentStatus;
+            }
+            
+            $latestVisit->update(['metadata' => json_encode($metadata)]);
 
             // Create payment record if payment model exists
             try {
@@ -989,7 +1028,7 @@ class PatientController extends Controller
                 'patient_phone' => $patient->phone,
                 'lab_number' => $patient->lab,
                 'visit_id' => $latestVisit->id,
-                'total_amount' => $totalAmount,
+                'total_amount' => $newTotalAmount,
                 'amount_paid_before' => $currentPaidAmount,
                 'extra_payment_amount' => $amount,
                 'total_paid_now' => $newPaidAmount,
@@ -1004,7 +1043,7 @@ class PatientController extends Controller
                 'message' => 'Extra payment added successfully',
                 'receipt_data' => $receiptData,
                 'updated_visit' => [
-                    'total_amount' => $totalAmount,
+                    'total_amount' => $newTotalAmount,
                     'amount_paid' => $newPaidAmount,
                     'remaining_balance' => $remainingBalance,
                     'payment_status' => $paymentStatus,
