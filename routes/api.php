@@ -312,6 +312,15 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/shifts/{shiftId}/report', [App\Http\Controllers\Api\ShiftController::class, 'getShiftReport']);
     });
 
+    // Accounts Management routes (admin and staff only)
+    Route::middleware(['role:admin,staff'])->group(function () {
+        Route::apiResource('accounts', App\Http\Controllers\Api\AccountController::class);
+        Route::post('/accounts/{account}/transactions', [App\Http\Controllers\Api\AccountController::class, 'addTransaction']);
+        Route::post('/accounts/{account}/payments', [App\Http\Controllers\Api\AccountController::class, 'addPayment']);
+        Route::post('/accounts/{account}/mark-completed', [App\Http\Controllers\Api\AccountController::class, 'markCompleted']);
+        Route::get('/accounts-summary', [App\Http\Controllers\Api\AccountController::class, 'getSummary']);
+    });
+
 
 
     // Enhanced Report Generation routes
