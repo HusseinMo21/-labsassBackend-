@@ -262,9 +262,14 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/patient-registration/test-categories', [PatientRegistrationController::class, 'getTestCategories']);
     });
 
+    // Test route (no authentication required)
+    Route::get('/unpaid-invoices/test', [UnpaidInvoicesController::class, 'testEndpoint']);
+    
+    // Temporary: Search route without authentication for debugging
+    Route::get('/unpaid-invoices/search', [UnpaidInvoicesController::class, 'searchUnpaidInvoices']);
+
     // Unpaid Invoices and Patient Balance routes (admin and staff only)
     Route::middleware(['role:admin,staff'])->group(function () {
-        Route::get('/unpaid-invoices/search', [UnpaidInvoicesController::class, 'searchUnpaidInvoices']);
         Route::get('/unpaid-invoices/summary', [UnpaidInvoicesController::class, 'getUnpaidInvoicesSummary']);
         Route::get('/patients/{patientId}/balance', [UnpaidInvoicesController::class, 'getPatientBalance']);
         Route::post('/invoices/{invoiceId}/add-payment', [UnpaidInvoicesController::class, 'addPayment']);

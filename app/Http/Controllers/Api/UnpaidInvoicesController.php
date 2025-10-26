@@ -14,33 +14,72 @@ class UnpaidInvoicesController extends Controller
 {
     public function searchUnpaidInvoices(Request $request)
     {
-        $query = $request->get('query', '');
-        $status = $request->get('status', 'all'); // all, pending, partial, paid
-        $perPage = 15;
-        $currentPage = $request->get('page', 1);
-        
-        // Get visits with billing information instead of separate invoices
-        $visitsQuery = Visit::with(['patient', 'labRequest'])
-            ->where('total_amount', '>', 0); // Only visits with billing
+        try {
+            $query = $request->get('query', '');
+            $status = $request->get('status', 'all'); // all, pending, partial, paid
+            $perPage = 15;
+            $currentPage = $request->get('page', 1);
+            
+            \Log::info('UnpaidInvoicesController::searchUnpaidInvoices called', [
+                'query' => $query,
+                'status' => $status,
+                'page' => $currentPage,
+            ]);
+            
+            // Get ALL visits - remove billing restrictions for search
+            $visitsQuery = Visit::with(['patient', 'labRequest']);
         
         // Apply search filter
-        if ($query) {
-            $visitsQuery->where(function ($q) use ($query) {
-                $q->where('visit_number', 'like', "%{$query}%")
-                  ->orWhereHas('patient', function ($patientQuery) use ($query) {
-                      $patientQuery->where('name', 'like', "%{$query}%")
-                                  ->orWhere('phone', 'like', "%{$query}%")
-                                  ->orWhere('id', 'like', "%{$query}%");
-                  })
-                  ->orWhereHas('labRequest', function ($labQuery) use ($query) {
-                      $labQuery->where('lab_no', 'like', "%{$query}%")
-                              ->orWhere('full_lab_no', 'like', "%{$query}%");
-                  });
-            });
-        }
+                if ($query) {
+                    $visitsQuery->where(function ($q) use ($query) {
+                        $q->where('visit_number', 'like', "%{$query}%")
+                          ->orWhereHas('patient', function ($patientQuery) use ($query) {
+                              $patientQuery->where('name', 'like', "%{$query}%")
+                                          ->orWhere('phone', 'like', "%{$query}%")
+                                          ->orWhere('id', 'like', "%{$query}%")
+                                          ->orWhere('lab', 'like', "%{$query}%"); // Search in patient.lab field
+                          })
+                          ->orWhereHas('labRequest', function ($labQuery) use ($query) {
+                              $labQuery->where('lab_no', 'like', "%{$query}%")
+                                      ->orWhereRaw("CONCAT(lab_no, COALESCE(suffix, '')) LIKE ?", ["%{$query}%"]);
+                          });
+                    });
+                }
         
         // Get all visits and filter by payment status
         $visits = $visitsQuery->orderBy('id', 'desc')->get();
+        
+        \Log::info('UnpaidInvoicesController::searchUnpaidInvoices visits found', [
+            'total_visits' => $visits->count(),
+            'search_query' => $query,
+            'all_visits_with_lab_11111' => $visits->filter(function($visit) {
+                return $visit->labRequest && 
+                       ($visit->labRequest->lab_no === '11111' || 
+                        $visit->labRequest->full_lab_no === '11111');
+            })->map(function($visit) {
+                return [
+                    'id' => $visit->id,
+                    'visit_number' => $visit->visit_number,
+                    'lab_no' => $visit->labRequest->lab_no,
+                    'full_lab_no' => $visit->labRequest->full_lab_no,
+                    'patient_name' => $visit->patient->name ?? 'no patient',
+                ];
+            })->toArray(),
+            'sample_visit' => $visits->first() ? [
+                'id' => $visits->first()->id,
+                'visit_number' => $visits->first()->visit_number,
+                'total_amount' => $visits->first()->total_amount,
+                'final_amount' => $visits->first()->final_amount,
+                'patient_total_amount' => $visits->first()->patient->total_amount ?? 'null',
+                'patient_amount_paid' => $visits->first()->patient->amount_paid ?? 'null',
+                'lab_request' => $visits->first()->labRequest ? [
+                    'id' => $visits->first()->labRequest->id,
+                    'lab_no' => $visits->first()->labRequest->lab_no,
+                    'suffix' => $visits->first()->labRequest->suffix,
+                    'full_lab_no' => $visits->first()->labRequest->full_lab_no,
+                ] : 'no lab request',
+            ] : 'no visits found',
+        ]);
         
         // Filter by payment status
         $filteredVisits = $visits->filter(function ($visit) use ($status) {
@@ -99,15 +138,113 @@ class UnpaidInvoicesController extends Controller
         $total = $filteredVisits->count();
         $lastPage = ceil($total / $perPage);
 
-        return response()->json([
-            'data' => $transformedData,
+        \Log::info('UnpaidInvoicesController::searchUnpaidInvoices response', [
+            'total_visits' => $visits->count(),
+            'filtered_visits' => $filteredVisits->count(),
+            'transformed_data_count' => $transformedData->count(),
             'current_page' => $currentPage,
             'last_page' => $lastPage,
-            'per_page' => $perPage,
-            'total' => $total,
-            'from' => $offset + 1,
-            'to' => min($offset + $perPage, $total),
+            'search_query' => $query,
+            'status_filter' => $status,
+            'sample_transformed_data' => $transformedData->first() ? [
+                'id' => $transformedData->first()['id'],
+                'invoice_number' => $transformedData->first()['invoice_number'],
+                'total_amount' => $transformedData->first()['total_amount'],
+                'amount_paid' => $transformedData->first()['amount_paid'],
+                'remaining_balance' => $transformedData->first()['remaining_balance'],
+                'status' => $transformedData->first()['status'],
+            ] : 'no transformed data',
         ]);
+
+            return response()->json([
+                'data' => $transformedData,
+                'current_page' => $currentPage,
+                'last_page' => $lastPage,
+                'per_page' => $perPage,
+                'total' => $total,
+                'from' => $offset + 1,
+                'to' => min($offset + $perPage, $total),
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('UnpaidInvoicesController::searchUnpaidInvoices error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            return response()->json([
+                'data' => [],
+                'current_page' => 1,
+                'last_page' => 1,
+                'per_page' => 15,
+                'total' => 0,
+                'from' => 0,
+                'to' => 0,
+                'error' => 'An error occurred while fetching invoices',
+            ], 500);
+        }
+    }
+
+    public function testEndpoint()
+    {
+        try {
+            $visits = Visit::with(['patient', 'labRequest'])->limit(10)->get();
+            $labRequests = \App\Models\LabRequest::limit(10)->get();
+            
+            // Check specifically for lab number 11111
+            $lab11111 = \App\Models\LabRequest::where('lab_no', '11111')->first();
+            $lab11111Full = \App\Models\LabRequest::whereRaw("CONCAT(lab_no, COALESCE(suffix, '')) = ?", ['11111'])->first();
+            
+            return response()->json([
+                'message' => 'Test endpoint working',
+                'visits_count' => $visits->count(),
+                'lab_requests_count' => $labRequests->count(),
+                'searching_for_lab_11111' => [
+                    'lab_no_11111_exists' => $lab11111 ? true : false,
+                    'lab_11111_data' => $lab11111 ? [
+                        'id' => $lab11111->id,
+                        'lab_no' => $lab11111->lab_no,
+                        'suffix' => $lab11111->suffix,
+                        'full_lab_no' => $lab11111->full_lab_no,
+                        'patient_id' => $lab11111->patient_id,
+                    ] : null,
+                    'full_lab_11111_exists' => $lab11111Full ? true : false,
+                    'full_lab_11111_data' => $lab11111Full ? [
+                        'id' => $lab11111Full->id,
+                        'lab_no' => $lab11111Full->lab_no,
+                        'suffix' => $lab11111Full->suffix,
+                        'full_lab_no' => $lab11111Full->full_lab_no,
+                        'patient_id' => $lab11111Full->patient_id,
+                    ] : null,
+                ],
+                'all_lab_numbers' => $labRequests->map(function ($lr) {
+                    return [
+                        'id' => $lr->id,
+                        'lab_no' => $lr->lab_no,
+                        'suffix' => $lr->suffix,
+                        'full_lab_no' => $lr->full_lab_no,
+                    ];
+                }),
+                'sample_visits' => $visits->map(function ($visit) {
+                    return [
+                        'id' => $visit->id,
+                        'visit_number' => $visit->visit_number,
+                        'total_amount' => $visit->total_amount,
+                        'patient_name' => $visit->patient->name ?? 'No patient',
+                        'lab_request' => $visit->labRequest ? [
+                            'id' => $visit->labRequest->id,
+                            'lab_no' => $visit->labRequest->lab_no,
+                            'suffix' => $visit->labRequest->suffix,
+                            'full_lab_no' => $visit->labRequest->full_lab_no,
+                        ] : 'No lab request',
+                    ];
+                }),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ], 500);
+        }
     }
 
     public function getPatientBalance($patientId)
