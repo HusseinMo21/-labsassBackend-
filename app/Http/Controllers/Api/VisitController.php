@@ -15,52 +15,68 @@ class VisitController extends Controller
 {
     /**
      * Get receipt details for any visit (works for both check-in and patient registration visits)
+     * Updated to match UnpaidInvoicesController format
      */
     public function getReceiptDetails($visitId)
     {
         try {
-            $visit = Visit::with([
-                'patient',
-                'labRequest',
-                'labRequest.invoice',
-                'visitTests.labTest',
-                'visitTests.testCategory'
-            ])->find($visitId);
-
-            if (!$visit) {
-                return response()->json(['error' => 'Visit not found'], 404);
+            // Find the visit with all necessary relationships
+            $visit = Visit::with(['patient', 'visitTests.testCategory', 'visitTests.labTest', 'labRequest'])
+                ->findOrFail($visitId);
+        
+            $patient = $visit->patient;
+            
+            if (!$patient) {
+                return response()->json([
+                    'message' => 'Patient not found for this visit',
+                ], 404);
             }
-
-            // Get financial data from visit metadata or patient data
+            
+            // Get current payment information from visit metadata first
             $metadata = json_decode($visit->metadata ?? '{}', true);
-            $financialData = $metadata['financial_data'] ?? [];
             $paymentDetails = $metadata['payment_details'] ?? [];
             $patientData = $metadata['patient_data'] ?? [];
+            $financialData = $metadata['financial_data'] ?? [];
             
-            // Prioritize financial_data (from extra payments), then fallback to other sources
-            $totalAmount = $financialData['total_amount'] ?? $visit->total_amount ?? 0;
-            $paidAmount = $financialData['amount_paid'] ?? $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            // Calculate total paid from payment breakdown
+            $totalPaid = $financialData['amount_paid'] ?? $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? 0;
             
             // If still 0, calculate from payment breakdown
-            if ($paidAmount == 0) {
+            if ($totalPaid == 0) {
                 $cashPaid = $paymentDetails['amount_paid_cash'] ?? $patientData['amount_paid_cash'] ?? 0;
                 $cardPaid = $paymentDetails['amount_paid_card'] ?? $patientData['amount_paid_card'] ?? 0;
-                $paidAmount = $cashPaid + $cardPaid;
+                $totalPaid = $cashPaid + $cardPaid;
             }
             
-            $remainingAmount = $totalAmount - $paidAmount;
-            $paymentStatus = $financialData['payment_status'] ?? ($remainingAmount <= 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'pending'));
-
-            // Get payment details from metadata
-            $paymentDetails = $metadata['payment_details'] ?? [];
-            $amountPaidCash = $paymentDetails['amount_paid_cash'] ?? 0;
-            $amountPaidCard = $paymentDetails['amount_paid_card'] ?? 0;
-            $additionalPaymentMethod = $paymentDetails['additional_payment_method'] ?? 'cash';
-
-            // Generate receipt number if not exists
-            $receiptNumber = $visit->receipt_number ?? 'RCP-' . date('Ymd') . '-' . str_pad($visit->id, 6, '0', STR_PAD_LEFT);
-
-            // Get the user who processed this receipt
+            // Final fallback to direct fields
+            if ($totalPaid == 0) {
+                $totalPaid = $patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            }
+            
+            $totalAmount = $financialData['total_amount'] ?? $visit->final_amount ?? $visit->total_amount ?? 0;
+            
+            // Build payment breakdown
+            $paymentBreakdown = [];
+            if (isset($paymentDetails['amount_paid_cash']) && $paymentDetails['amount_paid_cash'] > 0) {
+                $paymentBreakdown['cash'] = $paymentDetails['amount_paid_cash'];
+            }
+            if (isset($paymentDetails['amount_paid_card']) && $paymentDetails['amount_paid_card'] > 0) {
+                $paymentBreakdown['card'] = $paymentDetails['amount_paid_card'];
+                $paymentBreakdown['card_method'] = $paymentDetails['additional_payment_method'] ?? 'card';
+            }
+            
+            // If no breakdown exists but we have a payment method, create a simple breakdown
+            if (empty($paymentBreakdown) && $totalPaid > 0) {
+                $currentPaymentMethod = $visit->payment_method ?? 'cash';
+                if ($currentPaymentMethod === 'cash') {
+                    $paymentBreakdown['cash'] = $totalPaid;
+                } else {
+                    $paymentBreakdown['card'] = $totalPaid;
+                    $paymentBreakdown['card_method'] = $currentPaymentMethod;
+                }
+            }
+            
+            // Get processed by information
             $processedBy = 'System';
             if ($visit->created_by) {
                 $user = \App\Models\User::find($visit->created_by);
@@ -68,65 +84,63 @@ class VisitController extends Controller
             } elseif (auth()->user()) {
                 $processedBy = auth()->user()->name;
             }
-
-            // Build comprehensive payment breakdown
-            $paymentBreakdown = [];
             
-            // Add cash payment if exists
-            if ($amountPaidCash > 0) {
-                $paymentBreakdown['cash'] = $amountPaidCash;
+            // Get patient credentials
+            $credentials = null;
+            if (isset($patientData['username']) && isset($patientData['password'])) {
+                $credentials = [
+                    'username' => $patientData['username'],
+                    'password' => $patientData['password'],
+                ];
             }
             
-            // Add card/other payment method if exists
-            if ($amountPaidCard > 0) {
-                $paymentBreakdown['card'] = $amountPaidCard;
-                $paymentBreakdown['card_method'] = $additionalPaymentMethod;
-            }
+            // Calculate paid before and paid now (for display purposes)
+            $paidBefore = 0; // This would be calculated from previous payments
+            $paidNow = $totalPaid;
             
-            // If no breakdown exists but we have a payment method, create a simple breakdown
-            if (empty($paymentBreakdown) && $paidAmount > 0) {
-                $currentPaymentMethod = $visit->payment_method ?? $additionalPaymentMethod ?? 'cash';
-                if ($currentPaymentMethod === 'cash') {
-                    $paymentBreakdown['cash'] = $paidAmount;
-                } else {
-                    $paymentBreakdown['card'] = $paidAmount;
-                    $paymentBreakdown['card_method'] = $currentPaymentMethod;
-                }
-            }
-
-            $receiptData = [
-                'receipt_number' => $receiptNumber,
-                'visit_number' => $visit->visit_number,
-                'date' => $visit->visit_date,
-                'visit_time' => $visit->visit_time ?? $visit->created_at->format('H:i:s'),
+            // Debug logging
+            \Log::info('VisitController::getReceiptDetails - Updated method called', [
+                'visit_id' => $visitId,
                 'total_amount' => $totalAmount,
-                'final_amount' => $totalAmount,
-                'discount_amount' => $visit->discount_amount ?? 0,
-                'upfront_payment' => $paidAmount,
-                'remaining_balance' => $remainingAmount,
-                'payment_method' => $visit->payment_method ?? $additionalPaymentMethod ?? 'cash',
-                'billing_status' => $paymentStatus,
-                'status' => $visit->status,
-                'patient_name' => $visit->patient->name,
-                'patient_age' => $visit->patient->age,
-                'patient_phone' => $visit->patient->phone,
-                'lab_number' => $visit->labRequest && is_object($visit->labRequest) ? ($visit->labRequest->lab_no . ($visit->labRequest->suffix ? '-' . $visit->labRequest->suffix : '')) : ($visit->patient->lab ?? 'N/A'),
-                'processed_by' => $processedBy,
-                'tests' => $this->getTestsForReceipt($visit)->toArray(),
-                'barcode' => $visit->labRequest && is_object($visit->labRequest) ? $visit->labRequest->barcode_url : null,
-                // Payment breakdown
+                'total_paid' => $totalPaid,
+                'remaining_balance' => $totalAmount - $totalPaid,
                 'payment_breakdown' => $paymentBreakdown,
-            ];
-
-            return response()->json($receiptData);
+            ]);
+            
+            return response()->json([
+                'receipt_data' => [
+                    'receipt_number' => $visit->visit_number, // Use visit number as receipt number
+                    'date' => $visit->visit_date ?: now()->format('Y-m-d'),
+                    'patient_name' => $patient->name,
+                    'patient_age' => $patient->age,
+                    'patient_phone' => $patient->phone,
+                    'tests' => $this->getTestsForReceipt($visit),
+                    'total_amount' => $totalAmount,
+                    'discount_amount' => 0, // No discount in current system
+                    'final_amount' => $totalAmount,
+                    'paid_before' => $paidBefore,
+                    'paid_now' => $paidNow,
+                    'remaining_balance' => $totalAmount - $totalPaid,
+                    'payment_method' => $visit->payment_method ?: 'cash',
+                    'expected_delivery_date' => $visit->expected_delivery_date ?: now()->addDays(1)->toDateString(),
+                    'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($patient->lab ?: 'N/A'),
+                    'processed_by' => $processedBy,
+                    'visit_id' => $visit->id,
+                    'patient_credentials' => $credentials,
+                    'payment_breakdown' => $paymentBreakdown,
+                ]
+            ]);
 
         } catch (\Exception $e) {
             \Log::error('Failed to get receipt details', [
                 'visit_id' => $visitId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
-
-            return response()->json(['error' => 'Failed to get receipt details'], 500);
+            return response()->json([
+                'error' => 'Failed to get receipt details',
+                'message' => $e->getMessage(),
+            ], 500);
         }
     }
 
@@ -991,8 +1005,20 @@ class VisitController extends Controller
      */
     private function getTestsForReceipt($visit)
     {
+        // Debug logging
+        \Log::info('VisitController::getTestsForReceipt - Debug', [
+            'visit_id' => $visit->id,
+            'visitTests_count' => $visit->visitTests ? $visit->visitTests->count() : 'null',
+            'visitTests_loaded' => $visit->relationLoaded('visitTests'),
+            'metadata' => $visit->metadata,
+        ]);
+        
         // First try to get from visitTests (for CheckIn visits)
         if ($visit->visitTests && $visit->visitTests->count() > 0) {
+            \Log::info('VisitController::getTestsForReceipt - Using visitTests', [
+                'visit_id' => $visit->id,
+                'tests' => $visit->visitTests->toArray(),
+            ]);
             return $visit->visitTests->map(function ($visitTest) {
                 return [
                     'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
@@ -1006,6 +1032,12 @@ class VisitController extends Controller
         $metadata = json_decode($visit->metadata ?? '{}', true);
         $patientData = $metadata['patient_data'] ?? [];
         
+        \Log::info('VisitController::getTestsForReceipt - Checking metadata', [
+            'visit_id' => $visit->id,
+            'metadata' => $metadata,
+            'patientData' => $patientData,
+        ]);
+        
         // Also check lab request metadata for patient registration data
         $labRequestData = [];
         if ($visit->labRequest && is_object($visit->labRequest) && !is_array($visit->labRequest) && !($visit->labRequest instanceof \Illuminate\Database\Eloquent\Collection) && isset($visit->labRequest->metadata)) {
@@ -1017,8 +1049,20 @@ class VisitController extends Controller
         // Check both visit metadata and lab request metadata for sample_type
         $sampleType = $patientData['sample_type'] ?? $labRequestData['sample_type'] ?? $metadata['sample_type'] ?? null;
         
+        \Log::info('VisitController::getTestsForReceipt - Sample type found', [
+            'visit_id' => $visit->id,
+            'sampleType' => $sampleType,
+            'labRequestData' => $labRequestData,
+        ]);
+        
         if (!empty($sampleType)) {
             $totalAmount = $visit->total_amount ?? $visit->final_amount ?? 0;
+            
+            \Log::info('VisitController::getTestsForReceipt - Creating test from sample type', [
+                'visit_id' => $visit->id,
+                'sampleType' => $sampleType,
+                'totalAmount' => $totalAmount,
+            ]);
             
             return collect([
                 [

@@ -131,21 +131,21 @@ class PatientController extends Controller
                 $patientData = $metadata['patient_data'] ?? [];
                 $financialData = $metadata['financial_data'] ?? [];
                 
-                // Calculate total amount from multiple sources - prioritize metadata
-                $totalAmount = $financialData['total_amount'] ?? 
-                              $financialData['final_amount'] ?? 
-                              $patientData['total_amount'] ?? 
-                              $latestVisit->total_amount ?? 
+                // Calculate total amount from multiple sources - prioritize database values first
+                $totalAmount = $latestVisit->total_amount ?? 
                               $latestVisit->final_amount ?? 
                               $latestVisit->amount ?? 
+                              $financialData['total_amount'] ?? 
+                              $financialData['final_amount'] ?? 
+                              $patientData['total_amount'] ?? 
                               $patient->total_amount ?? 0;
                 
-                // Calculate amount paid from multiple sources - prioritize metadata
-                $amountPaid = $financialData['amount_paid'] ?? 
+                // Calculate amount paid from multiple sources - prioritize database values first
+                $amountPaid = $latestVisit->amount_paid ?? 
+                             $latestVisit->paid_amount ?? 
+                             $financialData['amount_paid'] ?? 
                              $financialData['paid_amount'] ?? 
                              $patientData['amount_paid'] ?? 
-                             $latestVisit->amount_paid ?? 
-                             $latestVisit->paid_amount ?? 
                              $patient->amount_paid ?? 0;
                 
                 // Calculate remaining balance
@@ -952,10 +952,29 @@ class PatientController extends Controller
             $currentPaidAmount = $latestVisit->amount_paid ?? 0;
             $currentTotalAmount = $latestVisit->total_amount ?? 0;
             
-            // For extra payments, we increase BOTH total amount and paid amount
-            $newTotalAmount = $currentTotalAmount + $amount;
-            $newPaidAmount = $currentPaidAmount + $amount;
+            // Debug: Log current amounts before adding extra payment
+            \Log::info('Extra payment calculation for patient', [
+                'patient_id' => $patient->id,
+                'current_paid_amount' => $currentPaidAmount,
+                'current_total_amount' => $currentTotalAmount,
+                'extra_payment_amount' => $amount,
+            ]);
+            
+            // For extra payments, we only increase the paid amount, not the total amount
+            $newTotalAmount = $currentTotalAmount; // Keep total amount the same
+            $newPaidAmount = $currentPaidAmount + $amount; // Add extra payment to existing paid amount
             $remainingBalance = max(0, $newTotalAmount - $newPaidAmount);
+            
+            // Debug: Log calculated amounts
+            \Log::info('Extra payment calculation results', [
+                'patient_id' => $patient->id,
+                'original_total_amount' => $currentTotalAmount,
+                'new_total_amount' => $newTotalAmount,
+                'original_paid_amount' => $currentPaidAmount,
+                'new_paid_amount' => $newPaidAmount,
+                'remaining_balance' => $remainingBalance,
+                'note' => 'Total amount unchanged, only paid amount increased',
+            ]);
 
             // Determine new payment status
             $paymentStatus = 'unpaid';
@@ -984,6 +1003,15 @@ class PatientController extends Controller
                 'remaining_balance' => $remainingBalance,
                 'payment_status' => $paymentStatus,
             ]);
+            
+            // Debug: Log updated patient data
+            \Log::info('Patient record updated with extra payment', [
+                'patient_id' => $patient->id,
+                'updated_total_amount' => $newTotalAmount,
+                'updated_amount_paid' => $newPaidAmount,
+                'updated_remaining_balance' => $remainingBalance,
+                'updated_payment_status' => $paymentStatus,
+            ]);
 
             // Update visit metadata to reflect new financial data
             $metadata = json_decode($latestVisit->metadata ?? '{}', true);
@@ -996,6 +1024,7 @@ class PatientController extends Controller
                 'extra_payment_added' => true,
                 'extra_payment_amount' => $amount,
                 'extra_payment_method' => $paymentMethod,
+                'note' => 'Extra payment added - total amount unchanged',
             ];
             
             // Also update patient_data in metadata if it exists
