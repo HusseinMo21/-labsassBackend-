@@ -960,8 +960,8 @@ class PatientController extends Controller
                 'extra_payment_amount' => $amount,
             ]);
             
-            // For extra payments, we only increase the paid amount, not the total amount
-            $newTotalAmount = $currentTotalAmount; // Keep total amount the same
+            // For extra payments, we increase both the total amount and the paid amount
+            $newTotalAmount = $currentTotalAmount + $amount; // Add extra payment to total amount
             $newPaidAmount = $currentPaidAmount + $amount; // Add extra payment to existing paid amount
             $remainingBalance = max(0, $newTotalAmount - $newPaidAmount);
             
@@ -973,7 +973,7 @@ class PatientController extends Controller
                 'original_paid_amount' => $currentPaidAmount,
                 'new_paid_amount' => $newPaidAmount,
                 'remaining_balance' => $remainingBalance,
-                'note' => 'Total amount unchanged, only paid amount increased',
+                'note' => 'Both total amount and paid amount increased by extra payment',
             ]);
 
             // Determine new payment status
@@ -1024,7 +1024,7 @@ class PatientController extends Controller
                 'extra_payment_added' => true,
                 'extra_payment_amount' => $amount,
                 'extra_payment_method' => $paymentMethod,
-                'note' => 'Extra payment added - total amount unchanged',
+                'note' => 'Extra payment added - both total amount and paid amount increased',
             ];
             
             // Also update patient_data in metadata if it exists
