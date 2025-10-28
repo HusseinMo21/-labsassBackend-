@@ -111,5 +111,12 @@
     <div class="section" style="margin-top: 40px; color: #888; font-size: 0.95rem;">
         Thank you for choosing our laboratory.
     </div>
+    
+    <!-- Arabic Note -->
+    <div style="margin-top: 20px; padding: 15px; background: linear-gradient(135deg, rgba(220, 38, 38, 0.1), rgba(220, 38, 38, 0.2)); border: 2px solid #dc2626; border-radius: 6px; text-align: center; box-shadow: 0 2px 6px rgba(220, 38, 38, 0.3);">
+        <div style="font-size: 12px; font-weight: bold; color: #dc2626; direction: rtl; text-align: center; line-height: 1.5; text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8); font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-serif;">
+            يتم الاحتفاظ بالبلوكات الشمعية لمدة ثلاث سنوات ولطلبها يتم التبليغ عنها مسبقا  ميعاد استلام النتيجة ووقت التسليم
+        </div>
+    </div>
 </body>
 </html> 

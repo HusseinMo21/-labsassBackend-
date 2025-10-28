@@ -250,6 +250,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/check-in/test-categories', [CheckInController::class, 'getTestCategories']);
         Route::post('/check-in/calculate-billing', [CheckInController::class, 'calculateBilling']);
         Route::get('/check-in/visits/{visitId}/receipt', [CheckInController::class, 'getReceipt']);
+        Route::get('/check-in/visits/{visitId}/receipt-a4', [CheckInController::class, 'generateA4Receipt']);
+        Route::get('/check-in/visits/{visitId}/unpaid-invoice-receipt', [CheckInController::class, 'generateUnpaidInvoiceReceipt']);
+        Route::get('/check-in/visits/{visitId}/unpaid-invoice-receipt-data', [CheckInController::class, 'getUnpaidInvoiceReceiptData']);
+        Route::get('/check-in/visits/{visitId}/final-payment-receipt-pdf', [CheckInController::class, 'generateFinalPaymentReceipt']);
         Route::get('/check-in/visits/{visitId}/sample-label', [CheckInController::class, 'getSampleLabel']);
         Route::get('/check-in/visits/{visitId}/final-payment-receipt', [CheckInController::class, 'getFinalPaymentReceipt']);
     });
