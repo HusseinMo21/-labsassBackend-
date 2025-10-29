@@ -340,8 +340,14 @@ class VisitController extends Controller
             'has_lab_request_in_json' => isset($jsonData['lab_request']),
             'lab_request_keys' => isset($jsonData['lab_request']) ? array_keys($jsonData['lab_request']) : 'N/A',
             'has_reports_in_json' => isset($jsonData['lab_request']['reports']),
-            'reports_count_in_json' => isset($jsonData['lab_request']['reports']) ? count($jsonData['lab_request']['reports']) : 0
+            'reports_count_in_json' => isset($jsonData['lab_request']['reports']) ? count($jsonData['lab_request']['reports']) : 0,
+            'reports_data' => isset($jsonData['lab_request']['reports']) ? $jsonData['lab_request']['reports'] : 'N/A'
         ]);
+        
+        // Ensure reports are properly included in the response
+        if ($visit->labRequest && $visit->labRequest->reports) {
+            $visit->labRequest->setRelation('reports', $visit->labRequest->reports);
+        }
         
         return response()->json($visit);
     }
@@ -879,6 +885,12 @@ class VisitController extends Controller
         // Create a completed report to trigger Enhanced Report creation
         if ($visit->labRequest) {
             try {
+                \Log::info('Creating completed report for visit', [
+                    'visit_id' => $visit->id,
+                    'lab_request_id' => $visit->labRequest->id,
+                    'visit_number' => $visit->visit_number
+                ]);
+                
                 $report = \App\Models\Report::create([
                     'lab_request_id' => $visit->labRequest->id,
                     'title' => 'Lab Report - ' . $visit->visit_number,
@@ -888,10 +900,11 @@ class VisitController extends Controller
                     'generated_at' => now(),
                 ]);
                 
-                \Log::info('Completed report created for visit', [
+                \Log::info('Completed report created successfully', [
                     'visit_id' => $visit->id,
                     'report_id' => $report->id,
-                    'lab_request_id' => $visit->labRequest->id
+                    'lab_request_id' => $visit->labRequest->id,
+                    'report_status' => $report->status
                 ]);
             } catch (\Exception $e) {
                 \Log::error('Failed to create completed report for visit', [

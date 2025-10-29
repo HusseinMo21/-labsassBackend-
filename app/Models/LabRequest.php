@@ -75,7 +75,7 @@ class LabRequest extends Model
      */
     public function visit(): HasOne
     {
-        return $this->hasOne(Visit::class, 'lab_request_id');
+        return $this->hasOne(Visit::class, 'lab_request_id', 'id');
     }
 
     /**
@@ -83,7 +83,7 @@ class LabRequest extends Model
      */
     public function visits(): HasMany
     {
-        return $this->hasMany(Visit::class, 'lab_request_id');
+        return $this->hasMany(Visit::class, 'lab_request_id', 'id');
     }
 
     /**

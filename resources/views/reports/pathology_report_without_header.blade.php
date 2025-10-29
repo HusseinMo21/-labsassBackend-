@@ -203,7 +203,9 @@
     @php
         $reportContent = null;
         if ($visit->labRequest && $visit->labRequest->reports && $visit->labRequest->reports->count() > 0) {
-            $report = $visit->labRequest->reports->first();
+            // Get the latest completed report, or fall back to the latest report
+            $report = $visit->labRequest->reports->where('status', 'completed')->sortByDesc('id')->first() 
+                     ?? $visit->labRequest->reports->sortByDesc('id')->first();
             $reportContent = json_decode($report->content, true);
         }
     @endphp

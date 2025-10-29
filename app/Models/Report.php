@@ -37,15 +37,33 @@ class Report extends Model
     protected static function booted()
     {
         static::created(function ($report) {
+            \Log::info('Report created event fired', [
+                'report_id' => $report->id,
+                'status' => $report->status,
+                'lab_request_id' => $report->lab_request_id
+            ]);
+            
             // Only create Enhanced Report if the report is completed
             if ($report->status === 'completed') {
+                \Log::info('Report is completed, creating Enhanced Report', [
+                    'report_id' => $report->id
+                ]);
                 $report->createEnhancedReport();
             }
         });
         
         static::updated(function ($report) {
+            \Log::info('Report updated event fired', [
+                'report_id' => $report->id,
+                'status' => $report->status,
+                'is_dirty_status' => $report->isDirty('status')
+            ]);
+            
             // Create Enhanced Report when report status changes to completed
             if ($report->isDirty('status') && $report->status === 'completed') {
+                \Log::info('Report status changed to completed, creating Enhanced Report', [
+                    'report_id' => $report->id
+                ]);
                 $report->createEnhancedReport();
             }
         });

@@ -573,6 +573,20 @@ class ReportController extends Controller
         $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest.reports'])
             ->findOrFail($visitId);
         
+        \Log::info('Generating PDF with header for visit', [
+            'visit_id' => $visitId,
+            'has_lab_request' => $visit->labRequest ? 'yes' : 'no',
+            'lab_request_id' => $visit->labRequest ? $visit->labRequest->id : 'null',
+            'reports_count' => $visit->labRequest && $visit->labRequest->reports ? $visit->labRequest->reports->count() : 0,
+            'reports_data' => $visit->labRequest && $visit->labRequest->reports ? $visit->labRequest->reports->map(function($r) {
+                return [
+                    'id' => $r->id,
+                    'status' => $r->status,
+                    'content_preview' => substr($r->content, 0, 100) . '...'
+                ];
+            }) : []
+        ]);
+        
         // Read background image and convert to base64
         $backgroundImagePath = public_path('templete/background.jpg');
         $backgroundImage = null;
@@ -664,6 +678,19 @@ class ReportController extends Controller
     {
         $visit = Visit::findOrFail($visitId);
         
+        \Log::info('saveReport called', [
+            'visit_id' => $visitId,
+            'request_data' => $request->all(),
+            'form_data_keys' => array_keys($request->all()),
+            'clinical_data' => $request->clinical_data,
+            'nature_of_specimen' => $request->nature_of_specimen,
+            'gross_pathology' => $request->gross_pathology,
+            'microscopic_examination' => $request->microscopic_examination,
+            'conclusion' => $request->conclusion,
+            'recommendations' => $request->recommendations,
+            'test_status' => $request->test_status
+        ]);
+        
         $request->validate([
             'patient_name' => 'nullable|string|max:255',
             'referred_by' => 'nullable|string|max:255',
@@ -684,10 +711,18 @@ class ReportController extends Controller
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB max
         ]);
 
-        // Update visit status only
-        $visit->update([
-            'status' => $request->test_status ?? 'pending',
-        ]);
+        // Update visit status - if report is completed, mark visit as completed
+        $visitStatus = $request->test_status ?? 'pending';
+        if ($visitStatus === 'completed') {
+            $visit->update([
+                'status' => 'completed',
+                'completed_at' => now()
+            ]);
+        } else {
+            $visit->update([
+                'status' => $visitStatus,
+            ]);
+        }
 
         // Update patient data if provided
         if ($visit->patient) {
@@ -738,6 +773,15 @@ class ReportController extends Controller
             }
             
             $report = \App\Models\Report::create($reportData);
+            
+            \Log::info('Report created in saveReport', [
+                'report_id' => $report->id,
+                'status' => $report->status,
+                'lab_request_id' => $report->lab_request_id,
+                'visit_id' => $visit->id,
+                'content_preview' => substr($report->content, 0, 200) . '...',
+                'form_data' => $request->only(['clinical_data', 'nature_of_specimen', 'gross_pathology', 'microscopic_examination', 'conclusion', 'recommendations'])
+            ]);
         } else {
             // Update existing report
             $updateData = [
@@ -752,6 +796,15 @@ class ReportController extends Controller
             }
             
             $report->update($updateData);
+            
+            \Log::info('Report updated in saveReport', [
+                'report_id' => $report->id,
+                'status' => $report->status,
+                'lab_request_id' => $report->lab_request_id,
+                'visit_id' => $visit->id,
+                'content_preview' => substr($report->content, 0, 200) . '...',
+                'form_data' => $request->only(['clinical_data', 'nature_of_specimen', 'gross_pathology', 'microscopic_examination', 'conclusion', 'recommendations'])
+            ]);
         }
 
         return response()->json([
