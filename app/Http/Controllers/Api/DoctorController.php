@@ -66,12 +66,47 @@ class DoctorController extends Controller
             ], 422);
         }
 
-        $doctor->update($validator->validated());
+        $oldName = $doctor->name;
+        $newName = $validator->validated()['name'];
+        
+        // Check if name is actually changing
+        if ($oldName === $newName) {
+            return response()->json([
+                'message' => 'Doctor name unchanged',
+                'doctor' => $doctor,
+            ]);
+        }
 
-        return response()->json([
-            'message' => 'Doctor updated successfully',
-            'doctor' => $doctor->fresh(),
-        ]);
+        // Get count of patients that will be affected
+        $affectedPatientsCount = Patient::where('doctor_id', $oldName)->count();
+        
+        // Check if user confirmed the update (for frontend confirmation)
+        if ($request->has('confirmed') && $request->confirmed === true) {
+            // Update the doctor's name
+            $doctor->update($validator->validated());
+            
+            // Update all patients with the old doctor name to use the new name
+            if ($affectedPatientsCount > 0) {
+                Patient::where('doctor_id', $oldName)
+                    ->update(['doctor_id' => $newName]);
+            }
+            
+            return response()->json([
+                'message' => 'Doctor updated successfully. ' . $affectedPatientsCount . ' patients updated.',
+                'doctor' => $doctor->fresh(),
+                'affected_patients_count' => $affectedPatientsCount,
+            ]);
+        } else {
+            // Return confirmation required response
+            return response()->json([
+                'message' => 'Confirmation required',
+                'confirmation_required' => true,
+                'old_name' => $oldName,
+                'new_name' => $newName,
+                'affected_patients_count' => $affectedPatientsCount,
+                'confirmation_message' => "Are you sure you want to update doctor name from '{$oldName}' to '{$newName}'? This will update {$affectedPatientsCount} patients associated with this doctor.",
+            ], 200);
+        }
     }
 
     public function destroy(Doctor $doctor)

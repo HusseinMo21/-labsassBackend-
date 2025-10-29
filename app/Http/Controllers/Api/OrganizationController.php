@@ -66,12 +66,47 @@ class OrganizationController extends Controller
             ], 422);
         }
 
-        $organization->update($validator->validated());
+        $oldName = $organization->name;
+        $newName = $validator->validated()['name'];
+        
+        // Check if name is actually changing
+        if ($oldName === $newName) {
+            return response()->json([
+                'message' => 'Organization name unchanged',
+                'organization' => $organization,
+            ]);
+        }
 
-        return response()->json([
-            'message' => 'Organization updated successfully',
-            'organization' => $organization->fresh(),
-        ]);
+        // Get count of patients that will be affected
+        $affectedPatientsCount = Patient::where('organization_id', $oldName)->count();
+        
+        // Check if user confirmed the update (for frontend confirmation)
+        if ($request->has('confirmed') && $request->confirmed === true) {
+            // Update the organization's name
+            $organization->update($validator->validated());
+            
+            // Update all patients with the old organization name to use the new name
+            if ($affectedPatientsCount > 0) {
+                Patient::where('organization_id', $oldName)
+                    ->update(['organization_id' => $newName]);
+            }
+            
+            return response()->json([
+                'message' => 'Organization updated successfully. ' . $affectedPatientsCount . ' patients updated.',
+                'organization' => $organization->fresh(),
+                'affected_patients_count' => $affectedPatientsCount,
+            ]);
+        } else {
+            // Return confirmation required response
+            return response()->json([
+                'message' => 'Confirmation required',
+                'confirmation_required' => true,
+                'old_name' => $oldName,
+                'new_name' => $newName,
+                'affected_patients_count' => $affectedPatientsCount,
+                'confirmation_message' => "Are you sure you want to update organization name from '{$oldName}' to '{$newName}'? This will update {$affectedPatientsCount} patients associated with this organization.",
+            ], 200);
+        }
     }
 
     public function destroy(Organization $organization)
