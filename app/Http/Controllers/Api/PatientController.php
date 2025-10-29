@@ -949,20 +949,20 @@ class PatientController extends Controller
             $notes = $request->notes ?? "Extra payment - {$paymentMethod}";
 
             // Update visit with additional payment
-            $currentPaidAmount = $latestVisit->amount_paid ?? 0;
+            $originalPaidAmount = $latestVisit->upfront_payment ?? 0; // Use upfront_payment for original paid amount
             $currentTotalAmount = $latestVisit->total_amount ?? 0;
             
             // Debug: Log current amounts before adding extra payment
             \Log::info('Extra payment calculation for patient', [
                 'patient_id' => $patient->id,
-                'current_paid_amount' => $currentPaidAmount,
+                'original_paid_amount' => $originalPaidAmount,
                 'current_total_amount' => $currentTotalAmount,
                 'extra_payment_amount' => $amount,
             ]);
             
-            // For extra payments, we increase both the total amount and the paid amount
+            // For extra payments, we only increase the total amount, keeping the original paid amount the same
             $newTotalAmount = $currentTotalAmount + $amount; // Add extra payment to total amount
-            $newPaidAmount = $currentPaidAmount + $amount; // Add extra payment to existing paid amount
+            $newPaidAmount = $originalPaidAmount; // Keep original paid amount unchanged
             $remainingBalance = max(0, $newTotalAmount - $newPaidAmount);
             
             // Debug: Log calculated amounts
@@ -970,10 +970,10 @@ class PatientController extends Controller
                 'patient_id' => $patient->id,
                 'original_total_amount' => $currentTotalAmount,
                 'new_total_amount' => $newTotalAmount,
-                'original_paid_amount' => $currentPaidAmount,
+                'original_paid_amount' => $originalPaidAmount,
                 'new_paid_amount' => $newPaidAmount,
                 'remaining_balance' => $remainingBalance,
-                'note' => 'Both total amount and paid amount increased by extra payment',
+                'note' => 'Only total amount increased by extra payment, original paid amount unchanged',
             ]);
 
             // Determine new payment status
@@ -990,9 +990,9 @@ class PatientController extends Controller
             // Update visit
             $latestVisit->update([
                 'total_amount' => $newTotalAmount,
-                'amount_paid' => $newPaidAmount,
-                'remaining_amount' => $remainingBalance,
-                'payment_status' => $paymentStatus,
+                'upfront_payment' => $newPaidAmount, // Keep original paid amount in upfront_payment
+                'remaining_balance' => $remainingBalance,
+                'billing_status' => $paymentStatus,
                 'lab_request_id' => $labRequest ? $labRequest->id : null,
             ]);
 
@@ -1024,7 +1024,7 @@ class PatientController extends Controller
                 'extra_payment_added' => true,
                 'extra_payment_amount' => $amount,
                 'extra_payment_method' => $paymentMethod,
-                'note' => 'Extra payment added - both total amount and paid amount increased',
+                'note' => 'Extra payment added - only total amount increased, paid amount unchanged',
             ];
             
             // Also update patient_data in metadata if it exists
@@ -1039,13 +1039,20 @@ class PatientController extends Controller
 
             // Create payment record if payment model exists
             try {
+                // Get current shift for the payment
+                $currentShift = \App\Models\Shift::where('staff_id', auth()->id())
+                    ->where('status', 'open')
+                    ->whereDate('opened_at', today())
+                    ->first();
+
                 $paymentData = [
-                    'visit_id' => $latestVisit->id,
-                    'amount' => $amount,
-                    'payment_method' => $paymentMethod,
-                    'notes' => $notes,
-                    'paid_at' => now(),
-                    'processed_by' => auth()->id(),
+                    'paid' => $amount * 100, // Convert to cents (assuming the field stores in cents)
+                    'comment' => $notes,
+                    'date' => now()->toDateString(),
+                    'author' => auth()->id(),
+                    'income' => 1, // Assuming 1 means income
+                    'invoice_id' => $labRequest ? $labRequest->id : null, // Use lab request ID as invoice ID
+                    'shift_id' => $currentShift ? $currentShift->id : null,
                 ];
 
                 // Try to create payment record
@@ -1066,7 +1073,7 @@ class PatientController extends Controller
                 'lab_number' => $patient->lab,
                 'visit_id' => $latestVisit->id,
                 'total_amount' => $newTotalAmount,
-                'amount_paid_before' => $currentPaidAmount,
+                'amount_paid_before' => $originalPaidAmount,
                 'extra_payment_amount' => $amount,
                 'total_paid_now' => $newPaidAmount,
                 'remaining_balance' => $remainingBalance,
