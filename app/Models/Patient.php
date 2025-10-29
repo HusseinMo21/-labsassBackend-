@@ -61,6 +61,15 @@ class Patient extends Model
         'entryday',
         'deliday',
         'type',
+        // Delivery tracking fields
+        'report_delivered',
+        'report_delivery_date',
+        'report_delivery_notes',
+        'report_delivered_by',
+        'wax_blocks_delivered',
+        'wax_blocks_delivery_date',
+        'wax_blocks_delivery_notes',
+        'wax_blocks_delivered_by',
     ];
 
     protected $casts = [
@@ -74,11 +83,20 @@ class Patient extends Model
         'delivery_date' => 'date',
         'total_amount' => 'decimal:2',
         'amount_paid' => 'decimal:2',
+        'report_delivered' => 'boolean',
+        'report_delivery_date' => 'date',
+        'wax_blocks_delivered' => 'boolean',
+        'wax_blocks_delivery_date' => 'date',
     ];
 
     public function visits()
     {
         return $this->hasMany(Visit::class);
+    }
+
+    public function labRequest()
+    {
+        return $this->hasOne(LabRequest::class);
     }
 
     public function invoices()

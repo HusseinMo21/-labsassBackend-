@@ -9,6 +9,7 @@ use App\Models\LabTest;
 use App\Models\Invoice;
 use App\Models\InventoryItem;
 use App\Models\Expense;
+use App\Models\Report;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -787,5 +788,18 @@ class ReportController extends Controller
         }
         
         return json_encode($content);
+    }
+
+    public function getReports(Request $request)
+    {
+        $labRequestId = $request->get('lab_request_id');
+        
+        if (!$labRequestId) {
+            return response()->json(['data' => []]);
+        }
+        
+        $reports = Report::where('lab_request_id', $labRequestId)->get();
+        
+        return response()->json($reports);
     }
 } 

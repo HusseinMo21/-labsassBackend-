@@ -95,6 +95,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/auth/user', [AuthController::class, 'user']);
 
     // Patient routes
+    Route::get('/patients/search', [PatientController::class, 'search']);
+    Route::get('/patients/{id}/visits', [PatientController::class, 'visits']);
     Route::get('/patients/by-test', [PatientController::class, 'patientsByTest']);
     Route::get('/patients/{id}/full-history', [PatientController::class, 'fullHistory']);
     Route::get('/patients/{id}/reports', [PatientController::class, 'reportsList']);
@@ -144,6 +146,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/visits', [VisitController::class, 'index']);
     Route::post('/visits', [VisitController::class, 'store']);
     Route::get('/visits/{visit}', [VisitController::class, 'show']);
+    Route::get('/visits/{id}/debug-reports', [VisitController::class, 'debugReports']);
     Route::put('/visits/{visit}', [VisitController::class, 'update']);
     Route::delete('/visits/{visit}', [VisitController::class, 'destroy']);
     Route::get('/visits/{visitId}/receipt', [VisitController::class, 'getReceiptDetails']);
@@ -216,6 +219,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/reports/tests', [ReportController::class, 'tests']);
         Route::get('/reports/financial', [ReportController::class, 'financial']);
         Route::get('/reports/export', [ReportController::class, 'export']);
+        Route::get('/reports', [ReportController::class, 'getReports']);
     });
     
     // PDF Report generation

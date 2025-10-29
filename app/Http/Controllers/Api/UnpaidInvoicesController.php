@@ -114,21 +114,26 @@ class UnpaidInvoicesController extends Controller
             $totalAmount = $visit->patient->total_amount ?? $visit->final_amount ?? $visit->total_amount ?? 0;
             $remainingAmount = $totalAmount - $paidAmount;
             
+            // Format date properly
+            $visitDate = $visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : 'N/A';
+            
             return [
                 'id' => $visit->id,
                 'invoice_number' => $visit->visit_number, // Use visit number as invoice number
+                'patient_name' => $visit->patient->name ?? 'N/A', // Add patient name at top level
+                'date' => $visitDate, // Add formatted date at top level
                 'total_amount' => $totalAmount,
                 'amount_paid' => $paidAmount,
                 'remaining_balance' => $remainingAmount,
                 'status' => $remainingAmount <= 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'pending'),
                 'visit' => [
                     'id' => $visit->id,
-                    'visit_date' => $visit->visit_date,
+                    'visit_date' => $visitDate,
                     'patient' => [
                         'id' => $visit->patient->id,
-                        'name' => $visit->patient->name,
-                        'phone' => $visit->patient->phone,
-                        'lab' => $visit->patient->lab,
+                        'name' => $visit->patient->name ?? 'N/A',
+                        'phone' => $visit->patient->phone ?? 'N/A',
+                        'lab' => $visit->patient->lab ?? 'N/A',
                     ],
                 ],
             ];
@@ -288,7 +293,7 @@ class UnpaidInvoicesController extends Controller
         try {
             $request->validate([
                 'amount' => 'required|numeric|min:0.01',
-                'payment_method' => 'required|in:cash,card,Fawry,InstaPay,VodafoneCash,Other',
+                'payment_method' => 'required|in:cash,visa,instapay,fawry,vodafoneCash,card,other',
                 'notes' => 'nullable|string',
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {

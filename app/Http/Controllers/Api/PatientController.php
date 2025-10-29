@@ -1465,4 +1465,43 @@ class PatientController extends Controller
 
         return response()->json(['invoices' => $invoices]);
     }
+
+    /**
+     * Search patients by query (for copy pathology details feature)
+     */
+    public function search(Request $request)
+    {
+        $query = $request->get('query');
+        
+        if (empty($query)) {
+            return response()->json(['data' => []]);
+        }
+
+        $patients = Patient::where(function ($q) use ($query) {
+            $q->where('name', 'like', "%{$query}%")
+              ->orWhere('phone', 'like', "%{$query}%")
+              ->orWhere('lab', 'like', "%{$query}%")
+              ->orWhere('id', 'like', "%{$query}%");
+        })
+        ->with(['labRequest'])
+        ->limit(10)
+        ->get();
+
+        return response()->json(['data' => $patients]);
+    }
+
+    /**
+     * Get patient visits (for copy pathology details feature)
+     */
+    public function visits($patientId)
+    {
+        $patient = Patient::findOrFail($patientId);
+        
+        $visits = $patient->visits()
+            ->with(['labRequest.reports'])
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json(['visits' => $visits]);
+    }
 } 

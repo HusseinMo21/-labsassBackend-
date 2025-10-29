@@ -303,7 +303,70 @@ class VisitController extends Controller
         $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest.reports'])
             ->findOrFail($id);
         
+        // Debug: Log what we're returning
+        \Log::info('Visit API show method', [
+            'visit_id' => $id,
+            'has_patient' => $visit->patient ? true : false,
+            'has_lab_request' => $visit->labRequest ? true : false,
+            'has_reports' => $visit->labRequest && $visit->labRequest->reports ? $visit->labRequest->reports->count() : 0,
+            'reports_content' => $visit->labRequest && $visit->labRequest->reports ? $visit->labRequest->reports->pluck('content') : []
+        ]);
+        
+        // Additional debug: Check if there are any reports at all
+        $allReports = \App\Models\Report::where('lab_request_id', $visit->lab_request_id)->get();
+        \Log::info('Direct reports query', [
+            'lab_request_id' => $visit->lab_request_id,
+            'reports_count' => $allReports->count(),
+            'reports' => $allReports->map(function($report) {
+                return [
+                    'id' => $report->id,
+                    'content' => $report->content,
+                    'parsed' => json_decode($report->content, true)
+                ];
+            })
+        ]);
+        
+        // Force load the relationships to ensure they're included in JSON
+        $visit->load(['patient', 'visitTests.labTest', 'labRequest.reports']);
+        
+        // Debug: Log the actual JSON structure being sent
+        $jsonData = $visit->toArray();
+        \Log::info('Visit JSON structure', [
+            'has_lab_request_in_json' => isset($jsonData['lab_request']),
+            'lab_request_keys' => isset($jsonData['lab_request']) ? array_keys($jsonData['lab_request']) : 'N/A',
+            'has_reports_in_json' => isset($jsonData['lab_request']['reports']),
+            'reports_count_in_json' => isset($jsonData['lab_request']['reports']) ? count($jsonData['lab_request']['reports']) : 0
+        ]);
+        
         return response()->json($visit);
+    }
+
+    public function debugReports($id)
+    {
+        $visit = Visit::with(['patient', 'labRequest.reports'])->findOrFail($id);
+        
+        $debugData = [
+            'visit_id' => $visit->id,
+            'patient_name' => $visit->patient ? $visit->patient->name : 'No patient',
+            'lab_request_id' => $visit->labRequest ? $visit->labRequest->id : 'No lab request',
+            'reports_count' => $visit->labRequest && $visit->labRequest->reports ? $visit->labRequest->reports->count() : 0,
+            'reports' => []
+        ];
+        
+        if ($visit->labRequest && $visit->labRequest->reports) {
+            foreach ($visit->labRequest->reports as $index => $report) {
+                $debugData['reports'][] = [
+                    'id' => $report->id,
+                    'title' => $report->title,
+                    'content' => $report->content,
+                    'parsed_content' => json_decode($report->content, true),
+                    'status' => $report->status,
+                    'created_at' => $report->created_at
+                ];
+            }
+        }
+        
+        return response()->json($debugData);
     }
 
     public function destroy($id)
