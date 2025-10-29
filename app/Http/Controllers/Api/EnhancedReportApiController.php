@@ -18,6 +18,12 @@ class EnhancedReportApiController extends Controller
 
         // Role-based filtering
         $user = Auth::user();
+        \Log::info('Enhanced Reports API called', [
+            'user_id' => $user->id,
+            'user_role' => $user->role,
+            'request_params' => $request->all()
+        ]);
+        
         if ($user->role === 'staff') {
             // Staff can see approved, printed, delivered, and completed reports
             $query->whereIn('status', ['approved', 'printed', 'delivered', 'completed']);
@@ -57,6 +63,15 @@ class EnhancedReportApiController extends Controller
         $reports = $query->orderBy('created_at', 'desc')
         ->orderBy('report_date', 'desc')
         ->paginate(20);
+        
+        \Log::info('Enhanced Reports query results', [
+            'total_reports' => $reports->total(),
+            'current_page' => $reports->currentPage(),
+            'per_page' => $reports->perPage(),
+            'user_role' => $user->role,
+            'status_filter' => $request->get('status'),
+            'reports_count' => $reports->count()
+        ]);
 
         // Transform the data to ensure correct lab number is returned
         $transformedData = $reports->through(function ($report) {

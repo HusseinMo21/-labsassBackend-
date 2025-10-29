@@ -149,7 +149,8 @@ class VisitController extends Controller
         // Optimize: Use select to only fetch needed columns and eager load relationships
         $query = Visit::select([
             'id', 'visit_number', 'visit_date', 'status', 'created_at', 'updated_at',
-            'patient_id', 'lab_request_id', 'total_amount', 'final_amount', 'upfront_payment', 'metadata'
+            'patient_id', 'lab_request_id', 'total_amount', 'final_amount', 'upfront_payment', 'metadata',
+            'checked_by_doctors', 'last_checked_at'
         ])
         ->with([
             'patient:id,name,phone,gender,birth_date,age,amount_paid,lab',
@@ -224,6 +225,8 @@ class VisitController extends Controller
         $perPage = $request->get('per_page', 15);
         $visits = $query->orderBy('created_at', 'desc')->paginate($perPage);
         
+        // Visits query completed successfully
+        
         // Optimize: Transform data more efficiently without N+1 queries
         $transformedData = $visits->through(function ($visit) {
             // Try multiple ways to find the invoice (same logic as CheckInController)
@@ -280,6 +283,8 @@ class VisitController extends Controller
                 'upfront_payment' => $paidAmount,
                 'remaining_balance' => $remainingBalance,
                 'billing_status' => $billingStatus,
+                'checked_by_doctors' => $visit->checked_by_doctors,
+                'last_checked_at' => $visit->last_checked_at,
             ];
         });
         
@@ -856,12 +861,49 @@ class VisitController extends Controller
      */
     public function completeVisit($id)
     {
-        $visit = Visit::findOrFail($id);
+        $visit = Visit::with(['labRequest', 'labRequest.patient'])->findOrFail($id);
+        
+        \Log::info('Completing visit', [
+            'visit_id' => $visit->id,
+            'visit_number' => $visit->visit_number,
+            'has_lab_request' => $visit->labRequest ? 'yes' : 'no',
+            'lab_request_id' => $visit->labRequest ? $visit->labRequest->id : 'null',
+            'has_patient' => $visit->labRequest && $visit->labRequest->patient ? 'yes' : 'no'
+        ]);
         
         $visit->update([
             'status' => 'completed',
             'completed_at' => now()
         ]);
+        
+        // Create a completed report to trigger Enhanced Report creation
+        if ($visit->labRequest) {
+            try {
+                $report = \App\Models\Report::create([
+                    'lab_request_id' => $visit->labRequest->id,
+                    'title' => 'Lab Report - ' . $visit->visit_number,
+                    'content' => 'Report completed for visit ' . $visit->visit_number,
+                    'status' => 'completed',
+                    'generated_by' => auth()->id() ?? 1,
+                    'generated_at' => now(),
+                ]);
+                
+                \Log::info('Completed report created for visit', [
+                    'visit_id' => $visit->id,
+                    'report_id' => $report->id,
+                    'lab_request_id' => $visit->labRequest->id
+                ]);
+            } catch (\Exception $e) {
+                \Log::error('Failed to create completed report for visit', [
+                    'visit_id' => $visit->id,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                // Don't fail visit completion if report creation fails
+            }
+        } else {
+            \Log::warning('No lab request found for visit', ['visit_id' => $visit->id]);
+        }
         
         return response()->json([
             'message' => 'Visit marked as completed successfully',
@@ -1046,19 +1088,42 @@ class VisitController extends Controller
         $doctorName = $request->doctor_name;
         $currentDoctors = $visit->checked_by_doctors ?? [];
         
+        \Log::info('Marking visit as checked', [
+            'visit_id' => $visitId,
+            'doctor_name' => $doctorName,
+            'current_doctors_before' => $currentDoctors
+        ]);
+        
         // Add doctor if not already in the list
         if (!in_array($doctorName, $currentDoctors)) {
             $currentDoctors[] = $doctorName;
         }
         
-        $visit->update([
+        $updateData = [
             'checked_by_doctors' => $currentDoctors,
             'last_checked_at' => now()
+        ];
+        
+        \Log::info('Updating visit with data:', [
+            'visit_id' => $visitId,
+            'update_data' => $updateData
+        ]);
+        
+        $visit->update($updateData);
+
+        // Refresh the visit to get updated data
+        $visit->refresh();
+
+        \Log::info('Visit marked as checked successfully', [
+            'visit_id' => $visitId,
+            'updated_doctors' => $visit->checked_by_doctors,
+            'last_checked_at' => $visit->last_checked_at,
+            'raw_checked_by_doctors' => $visit->getRawOriginal('checked_by_doctors')
         ]);
 
         return response()->json([
             'message' => 'Report marked as checked successfully',
-            'checked_by_doctors' => $currentDoctors,
+            'checked_by_doctors' => $visit->checked_by_doctors,
             'last_checked_at' => $visit->last_checked_at
         ]);
     }

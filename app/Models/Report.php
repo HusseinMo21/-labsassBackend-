@@ -80,7 +80,10 @@ class Report extends Model
      */
     public function createEnhancedReport()
     {
+        \Log::info('Creating Enhanced Report for Report ID: ' . $this->id);
+        
         if (!$this->labRequest) {
+            \Log::warning('No lab request found for report: ' . $this->id);
             return;
         }
 
@@ -89,43 +92,71 @@ class Report extends Model
         $visit = $labRequest->visit;
 
         if (!$patient) {
+            \Log::warning('No patient found for lab request: ' . $labRequest->id);
             return;
         }
+        
+        \Log::info('Found patient and visit for Enhanced Report creation', [
+            'patient_id' => $patient->id,
+            'patient_name' => $patient->name,
+            'visit_id' => $visit ? $visit->id : 'null',
+            'lab_request_id' => $labRequest->id
+        ]);
 
         // Check if Enhanced Report already exists for this lab request
         $existingEnhancedReport = EnhancedReport::where('lab_request_id', $labRequest->id)->first();
         if ($existingEnhancedReport) {
+            \Log::info('Enhanced Report already exists for lab request: ' . $labRequest->id);
             return;
         }
 
-        // Create Enhanced Report with data from the visit and patient
-        $enhancedReport = EnhancedReport::create([
-            'nos' => $patient->name,
-            'reff' => $patient->sender ?: ($patient->doctor ? $patient->doctor->name : 'N/A'),
-            'clinical' => $visit ? ($visit->clinical_data ?? 'Clinical information not provided') : 'Clinical information not provided',
-            'nature' => $this->extractNatureFromContent(),
-            'report_date' => $this->generated_at ?? now(),
-            'lab_no' => $labRequest->full_lab_no,
-            'age' => $patient->age ?: 'N/A',
-            'gross' => $visit ? ($visit->microscopic_description ?? 'Gross examination details not provided') : 'Gross examination details not provided',
-            'micro' => $visit ? ($visit->microscopic_description ?? 'Microscopic examination details not provided') : 'Microscopic examination details not provided',
-            'conc' => $visit ? ($visit->diagnosis ?? 'Diagnosis pending') : 'Diagnosis pending',
-            'reco' => $visit ? ($visit->recommendations ?? 'Recommendations pending') : 'Recommendations pending',
-            'type' => 'PATH', // Default type
-            'sex' => $patient->gender ?? 'N/A',
-            'recieving' => $visit && $visit->visit_date ? $visit->visit_date->format('d/m/Y') : now()->format('d/m/Y'),
-            'discharge' => $visit && $visit->expected_delivery_date ? $visit->expected_delivery_date->format('d/m/Y') : now()->addDays(1)->format('d/m/Y'),
-            'patient_id' => $patient->id,
-            'lab_request_id' => $labRequest->id,
-            'created_by' => $this->generated_by,
-            'status' => 'draft', // Start as draft, can be updated later
-            'priority' => 'normal',
-            'examination_details' => $this->extractExaminationDetails(),
-            'quality_control' => $this->extractQualityControl(),
-        ]);
+        try {
+            // Create Enhanced Report with data from the visit and patient
+            $enhancedReport = EnhancedReport::create([
+                'nos' => $patient->name,
+                'reff' => $patient->sender ?: ($patient->doctor ? $patient->doctor->name : 'N/A'),
+                'clinical' => $visit ? ($visit->clinical_data ?? 'Clinical information not provided') : 'Clinical information not provided',
+                'nature' => $this->extractNatureFromContent(),
+                'report_date' => $this->generated_at ?? now(),
+                'lab_no' => $labRequest->full_lab_no,
+                'age' => $patient->age ?: 'N/A',
+                'gross' => $visit ? ($visit->microscopic_description ?? 'Gross examination details not provided') : 'Gross examination details not provided',
+                'micro' => $visit ? ($visit->microscopic_description ?? 'Microscopic examination details not provided') : 'Microscopic examination details not provided',
+                'conc' => $visit ? ($visit->diagnosis ?? 'Diagnosis pending') : 'Diagnosis pending',
+                'reco' => $visit ? ($visit->recommendations ?? 'Recommendations pending') : 'Recommendations pending',
+                'type' => 'PATH', // Default type
+                'sex' => $patient->gender ?? 'N/A',
+                'recieving' => $visit && $visit->visit_date ? $visit->visit_date->format('d/m/Y') : now()->format('d/m/Y'),
+                'discharge' => $visit && $visit->expected_delivery_date ? $visit->expected_delivery_date->format('d/m/Y') : now()->addDays(1)->format('d/m/Y'),
+                'patient_id' => $patient->id,
+                'lab_request_id' => $labRequest->id,
+                'created_by' => $this->generated_by,
+                'status' => 'approved', // Start as approved so it's visible to staff users
+                'priority' => 'normal',
+                'examination_details' => $this->extractExaminationDetails(),
+                'quality_control' => $this->extractQualityControl(),
+            ]);
 
-        // Generate barcode for the enhanced report
-        $enhancedReport->generateBarcode();
+            // Generate barcode for the enhanced report
+            $enhancedReport->generateBarcode();
+            
+            \Log::info('Enhanced Report created successfully', [
+                'enhanced_report_id' => $enhancedReport->id,
+                'lab_request_id' => $labRequest->id,
+                'patient_id' => $patient->id,
+                'status' => $enhancedReport->status
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Failed to create Enhanced Report', [
+                'report_id' => $this->id,
+                'lab_request_id' => $labRequest->id,
+                'patient_id' => $patient->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e; // Re-throw to ensure the error is not silently ignored
+        }
 
         \Log::info('Enhanced Report created automatically', [
             'report_id' => $this->id,

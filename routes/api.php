@@ -173,6 +173,102 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // Visit workflow (new)
     Route::get('/visits/{visitId}/tests/{testId}/print-label', [VisitController::class, 'printLabel']);
 
+    // Debug endpoint for Enhanced Reports
+    Route::get('/debug/enhanced-reports', function() {
+        $enhancedReports = \App\Models\EnhancedReport::with(['patient', 'labRequest.visit'])->get();
+        $reports = \App\Models\Report::with(['labRequest.patient'])->get();
+        
+        return response()->json([
+            'enhanced_reports_count' => $enhancedReports->count(),
+            'reports_count' => $reports->count(),
+            'enhanced_reports' => $enhancedReports->map(function($er) {
+                return [
+                    'id' => $er->id,
+                    'status' => $er->status,
+                    'patient_name' => $er->patient ? $er->patient->name : 'No patient',
+                    'lab_no' => $er->lab_no,
+                    'created_at' => $er->created_at,
+                    'lab_request_id' => $er->lab_request_id
+                ];
+            }),
+            'reports' => $reports->map(function($r) {
+                return [
+                    'id' => $r->id,
+                    'status' => $r->status,
+                    'lab_request_id' => $r->lab_request_id,
+                    'patient_name' => $r->labRequest && $r->labRequest->patient ? $r->labRequest->patient->name : 'No patient',
+                    'created_at' => $r->created_at
+                ];
+            })
+        ]);
+    });
+
+    // Debug endpoint for visits and test statuses
+    Route::get('/debug/visits', function() {
+        $visits = \App\Models\Visit::with(['patient', 'visitTests.labTest'])->get();
+        $testStatuses = \App\Models\VisitTest::select('status')->distinct()->pluck('status');
+        $visitStatuses = \App\Models\Visit::select('status')->distinct()->pluck('status');
+        
+        return response()->json([
+            'total_visits' => $visits->count(),
+            'visit_statuses' => $visitStatuses,
+            'test_statuses' => $testStatuses,
+            'visits_with_tests' => $visits->filter(function($visit) {
+                return $visit->visitTests && $visit->visitTests->count() > 0;
+            })->count(),
+            'visits' => $visits->map(function($visit) {
+                return [
+                    'id' => $visit->id,
+                    'visit_number' => $visit->visit_number,
+                    'status' => $visit->status,
+                    'patient_name' => $visit->patient ? $visit->patient->name : 'No patient',
+                    'test_count' => $visit->visitTests ? $visit->visitTests->count() : 0,
+                    'test_statuses' => $visit->visitTests ? $visit->visitTests->pluck('status')->unique()->values() : []
+                ];
+            })
+        ]);
+    });
+
+    // Simple test endpoint to check basic data
+    Route::get('/debug/simple', function() {
+        $visitCount = \App\Models\Visit::count();
+        $patientCount = \App\Models\Patient::count();
+        $visitTestCount = \App\Models\VisitTest::count();
+        
+        return response()->json([
+            'message' => 'Debug endpoint working',
+            'visit_count' => $visitCount,
+            'patient_count' => $patientCount,
+            'visit_test_count' => $visitTestCount,
+            'has_visits' => $visitCount > 0,
+            'has_patients' => $patientCount > 0,
+            'has_tests' => $visitTestCount > 0
+        ]);
+    });
+
+    // Debug endpoint to check checked_by_doctors data
+    Route::get('/debug/checked-by', function() {
+        $visits = \App\Models\Visit::select('id', 'visit_number', 'checked_by_doctors', 'last_checked_at')
+            ->whereNotNull('checked_by_doctors')
+            ->get();
+        
+        $allVisits = \App\Models\Visit::select('id', 'visit_number', 'checked_by_doctors', 'last_checked_at')
+            ->get();
+        
+        return response()->json([
+            'visits_with_checked_by' => $visits,
+            'all_visits_checked_by_data' => $allVisits->map(function($visit) {
+                return [
+                    'id' => $visit->id,
+                    'visit_number' => $visit->visit_number,
+                    'checked_by_doctors_raw' => $visit->getRawOriginal('checked_by_doctors'),
+                    'checked_by_doctors_casted' => $visit->checked_by_doctors,
+                    'last_checked_at' => $visit->last_checked_at
+                ];
+            })
+        ]);
+    });
+
     // Only admin, patient, and lab_tech can access pathology report PDF
     Route::middleware(['role:admin,patient,lab_tech'])->group(function () {
         Route::get('/visits/{visit}/pathology-report', [VisitController::class, 'generatePathologyReport']);
@@ -339,7 +435,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::middleware(['role:admin,staff,doctor'])->group(function () {
         Route::get('/enhanced-reports/professional/{visitId}', [App\Http\Controllers\Api\EnhancedReportController::class, 'generateProfessionalReport']);
         Route::get('/enhanced-reports/status/{visitId}', [App\Http\Controllers\Api\EnhancedReportController::class, 'getReportStatus']);
-        Route::get('/enhanced-reports', [App\Http\Controllers\Api\EnhancedReportController::class, 'listReports']);
+        Route::get('/reports/list', [App\Http\Controllers\Api\EnhancedReportController::class, 'listReports']); // Changed route to avoid conflict
     });
 
     // Enhanced Reports API routes (new report system)
