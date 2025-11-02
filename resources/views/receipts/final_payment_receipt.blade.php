@@ -13,9 +13,10 @@
             font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-serif;
             padding: 0;
             margin: 0;
-            line-height: 1.3;
-            font-size: 12px;
+            line-height: 1.5;
+            font-size: 11px;
             position: relative;
+            color: #2c3e50;
         }
         
         .main-content {
@@ -28,217 +29,204 @@
         
         .content-container {
             position: absolute;
-            top: 120px;
-            left: 40px;
-            right: 40px;
-            bottom: 150px;
+            top: 100px;
+            left: 35px;
+            right: 35px;
+            bottom: 120px;
             background: transparent;
-            border: none;
-            border-radius: 5px;
-            padding: 20px;
-            padding-top: 180px;
-            overflow: hidden;
+            padding: 15px;
             box-sizing: border-box;
         }
         
-        /* Report Title */
-        .report-title {
+        /* Header */
+        .receipt-header {
             text-align: center;
-            font-size: 20px;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #dc2626;
+        }
+        
+        .receipt-title {
+            font-size: 18px;
             font-weight: bold;
-            margin: 5px 0 15px 0;
             color: #dc2626;
-            text-shadow: 2px 2px 4px rgba(255, 255, 255, 0.9);
             letter-spacing: 1px;
-            background: linear-gradient(135deg, rgba(220, 38, 38, 0.1), rgba(220, 38, 38, 0.2));
-            border: 2px solid #dc2626;
-            border-radius: 6px;
-            padding: 10px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 5px;
         }
         
-        /* Patient Information Table */
-        .patient-info {
-            width: 100%;
+        /* Patient Info - Compact Grid */
+        .patient-info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
             margin-bottom: 12px;
-            border-collapse: collapse;
-            background-color: rgba(255, 255, 255, 0.95);
-            border: 2px solid #dc2626;
-            border-radius: 6px;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+            font-size: 10px;
         }
         
-        .patient-info td {
-            padding: 6px 10px;
-            border: 1px solid #dc2626;
-            font-size: 11px;
-            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
+        .info-item {
+            display: flex;
+            align-items: center;
         }
         
-        .patient-info .label {
-            font-weight: bold;
-            width: 25%;
-            background: linear-gradient(135deg, rgba(220, 38, 38, 0.1), rgba(220, 38, 38, 0.2));
+        .info-label {
+            font-weight: 600;
             color: #dc2626;
-            text-align: center;
+            min-width: 75px;
+            margin-right: 5px;
         }
         
-        .patient-info .value {
-            background-color: rgba(255, 255, 255, 0.8);
-            color: #333;
-        }
-        
-        /* Section Styles */
-        .section-title {
-            font-weight: bold;
-            font-size: 13px;
-            margin: 8px 0 5px 0;
-            color: #dc2626;
-            border-left: 4px solid #dc2626;
-            padding: 8px 12px;
-            background: linear-gradient(135deg, rgba(220, 38, 38, 0.1), rgba(220, 38, 38, 0.2));
-            border: 2px solid #dc2626;
-            border-radius: 4px;
-            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-        
-        .section-content {
-            margin-bottom: 8px;
-            padding: 10px 12px;
-            border: 2px solid #dc2626;
-            background-color: rgba(255, 255, 255, 0.95);
-            min-height: 25px;
-            text-align: left;
-            line-height: 1.4;
-            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
-            font-size: 11px;
-            border-radius: 4px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        .info-value {
+            color: #2c3e50;
+            flex: 1;
         }
         
         .arabic-text {
             direction: rtl;
             text-align: right;
             font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-serif;
-            unicode-bidi: bidi-override;
         }
         
-        .financial-section {
-            border: 3px solid #dc2626;
-            background: linear-gradient(135deg, rgba(220, 38, 38, 0.1), rgba(220, 38, 38, 0.2));
-            font-weight: bold;
-            font-size: 14px;
+        /* Section Headers */
+        .section-header {
+            font-size: 11px;
+            font-weight: 700;
             color: #dc2626;
-            border-radius: 6px;
-            box-shadow: 0 3px 6px rgba(220, 38, 38, 0.3);
-            text-align: center;
-            padding: 8px;
+            margin: 12px 0 6px 0;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #dc2626;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
         
-        /* Tests Table */
+        /* Tests Table - Minimal */
         .tests-table {
             width: 100%;
             border-collapse: collapse;
-            margin: 8px 0;
-            background-color: rgba(255, 255, 255, 0.95);
-            border: 2px solid #dc2626;
-            border-radius: 6px;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
-        }
-        
-        .tests-table th, .tests-table td {
-            padding: 8px 12px;
-            border: 1px solid #dc2626;
-            font-size: 11px;
-            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
+            margin-bottom: 12px;
+            font-size: 10px;
         }
         
         .tests-table th {
-            background: linear-gradient(135deg, rgba(220, 38, 38, 0.2), rgba(220, 38, 38, 0.3));
-            font-weight: bold;
+            background-color: #f8f9fa;
             color: #dc2626;
-            text-align: center;
+            font-weight: 600;
+            padding: 6px 8px;
+            text-align: left;
+            border-bottom: 2px solid #dc2626;
         }
         
         .tests-table td {
-            background-color: rgba(255, 255, 255, 0.8);
+            padding: 5px 8px;
+            border-bottom: 1px solid #e9ecef;
         }
         
-        /* Signature Section */
-        .signature-section {
-            margin-top: 12px;
-            text-align: right;
-            padding: 12px;
-            background: linear-gradient(135deg, rgba(220, 38, 38, 0.1), rgba(220, 38, 38, 0.2));
-            border: 2px solid #dc2626;
-            border-radius: 6px;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        .tests-table tr:last-child td {
+            border-bottom: none;
         }
         
-        .signature-name {
-            font-weight: bold;
-            font-size: 12px;
-            margin-bottom: 3px;
-            color: #dc2626;
-            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
-        }
-        
-        .signature-title {
+        /* Financial Summary - Clean */
+        .financial-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            margin-bottom: 10px;
             font-size: 10px;
-            margin-bottom: 3px;
-            color: #666;
-            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
         }
         
-        .signature-date {
-            font-size: 9px;
-            color: #888;
-            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
-        }
-        
-        /* Arabic Note Section */
-        .arabic-note {
-            margin-top: 15px;
-            padding: 15px;
-            background: linear-gradient(135deg, rgba(220, 38, 38, 0.1), rgba(220, 38, 38, 0.2));
-            border: 2px solid #dc2626;
-            border-radius: 6px;
-            text-align: center;
-            box-shadow: 0 2px 6px rgba(220, 38, 38, 0.3);
-        }
-        
-        .arabic-note-text {
-            font-size: 12px;
-            font-weight: bold;
-            color: #dc2626;
-            direction: rtl;
-            text-align: center;
-            line-height: 1.5;
-            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
-            font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-serif;
-        }
-
-        /* Info Row Styling */
-        .info-row {
+        .financial-row {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 5px;
+            padding: 4px 0;
+        }
+        
+        .financial-label {
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        .financial-value {
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        
+        .total-row {
+            border-top: 2px solid #dc2626;
+            margin-top: 4px;
+            padding-top: 6px;
+        }
+        
+        .total-row .financial-label,
+        .total-row .financial-value {
+            font-size: 11px;
+            font-weight: 700;
+            color: #dc2626;
+        }
+        
+        /* Payment Breakdown */
+        .payment-breakdown {
+            background-color: #f8f9fa;
+            padding: 8px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            font-size: 10px;
+        }
+        
+        .payment-item {
+            display: flex;
+            justify-content: space-between;
             padding: 3px 0;
         }
-
-        .info-row .label {
-            font-weight: bold;
-            color: #dc2626;
-            min-width: 120px;
+        
+        /* Payment Status Badge */
+        .status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            background-color: #dc2626;
+            color: white;
+            font-weight: 700;
+            font-size: 11px;
+            border-radius: 4px;
+            text-align: center;
+            width: 100%;
+            margin-top: 8px;
         }
-
-        .info-row .value {
-            color: #333;
+        
+        /* Footer */
+        .receipt-footer {
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #dee2e6;
+            font-size: 9px;
+            color: #6c757d;
+            text-align: center;
+        }
+        
+        .footer-item {
+            margin: 3px 0;
+        }
+        
+        /* Arabic Note */
+        .arabic-note {
+            margin-top: 12px;
+            padding: 10px;
+            background-color: #fff3cd;
+            border-left: 3px solid #ffc107;
+            border-radius: 3px;
+            font-size: 10px;
+            direction: rtl;
+            text-align: right;
+            font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-serif;
+        }
+        
+        /* Utilities */
+        .text-right {
             text-align: right;
         }
         
-        /* Print Specific Styles */
+        .font-bold {
+            font-weight: 700;
+        }
+        
         @media print {
             .main-content {
                 position: relative !important;
@@ -247,13 +235,11 @@
             }
             .content-container {
                 position: absolute !important;
-                top: 120px !important;
-                left: 40px !important;
-                right: 40px !important;
-                bottom: 150px !important;
-                padding-top: 180px !important;
+                top: 100px !important;
+                left: 35px !important;
+                right: 35px !important;
+                bottom: 120px !important;
                 background: transparent !important;
-                border: none !important;
             }
         }
     </style>
@@ -264,44 +250,55 @@
     @endif
     <div class="main-content">
         <div class="content-container">
-            <div class="report-title">FINAL PAYMENT RECEIPT</div>
+            <!-- Header -->
+            <div class="receipt-header">
+                <div class="receipt-title">FINAL PAYMENT RECEIPT</div>
+            </div>
 
             <!-- Patient Information -->
-            <table class="patient-info">
-                <tr>
-                    <td class="label">Patient's Name:</td>
-                    <td class="value arabic-text">{{ $receiptData['patient_name'] ?? 'N/A' }}</td>
-                    <td class="label">Age:</td>
-                    <td class="value">{{ $receiptData['patient_age'] ?? 'N/A' }}</td>
-                </tr>
-                <tr>
-                    <td class="label">Phone:</td>
-                    <td class="value">{{ $receiptData['patient_phone'] ?? 'N/A' }}</td>
-                    <td class="label">Date:</td>
-                    <td class="value">{{ $receiptData['date'] ?? 'N/A' }}</td>
-                </tr>
-                <tr>
-                    <td class="label">Receipt No:</td>
-                    <td class="value">{{ $receiptData['receipt_number'] ?? 'N/A' }}</td>
-                    <td class="label">Lab No:</td>
-                    <td class="value">{{ $receiptData['lab_number'] ?? 'N/A' }}</td>
-                </tr>
-                <tr>
-                    <td class="label">Visit ID:</td>
-                    <td class="value">{{ $receiptData['visit_id'] ?? 'N/A' }}</td>
-                    <td class="label">Status:</td>
-                    <td class="value">PAYMENT COMPLETED</td>
-                </tr>
-            </table>
+            <div class="patient-info-grid">
+                <div class="info-item">
+                    <span class="info-label">Patient Name:</span>
+                    <span class="info-value arabic-text">{{ $receiptData['patient_name'] ?? 'N/A' }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Age:</span>
+                    <span class="info-value">{{ $receiptData['patient_age'] ?? 'N/A' }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Phone:</span>
+                    <span class="info-value">{{ $receiptData['patient_phone'] ?? 'N/A' }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Date:</span>
+                    <span class="info-value">{{ $receiptData['date'] ?? 'N/A' }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Receipt No:</span>
+                    <span class="info-value">{{ $receiptData['receipt_number'] ?? 'N/A' }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Lab No:</span>
+                    <span class="info-value">{{ $receiptData['lab_number'] ?? 'N/A' }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Visit ID:</span>
+                    <span class="info-value">{{ $receiptData['visit_id'] ?? 'N/A' }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Status:</span>
+                    <span class="info-value">PAYMENT COMPLETED</span>
+                </div>
+            </div>
 
             <!-- Tests Ordered -->
-            <div class="section-title">Tests Ordered ({{ count($receiptData['tests'] ?? []) }}):</div>
+            <div class="section-header">Tests Ordered ({{ count($receiptData['tests'] ?? []) }}):</div>
             <table class="tests-table">
                 <thead>
                     <tr>
                         <th>Test Name</th>
                         <th>Category</th>
-                        <th style="text-align: right;">Price</th>
+                        <th class="text-right">Price</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -309,103 +306,103 @@
                         <tr>
                             <td>{{ $test['name'] ?? 'N/A' }}</td>
                             <td>{{ $test['category'] ?? 'N/A' }}</td>
-                            <td style="text-align: right;">EGP {{ number_format($test['price'] ?? 0, 2) }}</td>
+                            <td class="text-right">EGP {{ number_format($test['price'] ?? 0, 2) }}</td>
                         </tr>
                     @endforeach
                 </tbody>
             </table>
 
             <!-- Financial Summary -->
-            <div class="section-title">Financial Summary:</div>
-            <div class="section-content">
-                <table class="financial-summary-table">
-                    <tr>
-                        <td class="label">Total Amount:</td>
-                        <td class="value">EGP {{ number_format($receiptData['total_amount'] ?? 0, 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td class="label">Discount:</td>
-                        <td class="value">EGP {{ number_format($receiptData['discount_amount'] ?? 0, 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td class="label">Final Amount:</td>
-                        <td class="value">EGP {{ number_format($receiptData['final_amount'] ?? 0, 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td class="label">Amount Paid Before:</td>
-                        <td class="value">EGP {{ number_format($receiptData['paid_before'] ?? 0, 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td class="label">Final Payment:</td>
-                        <td class="value">EGP {{ number_format($receiptData['paid_now'] ?? 0, 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td class="label">Total Paid:</td>
-                        <td class="value">EGP {{ number_format(($receiptData['paid_before'] ?? 0) + ($receiptData['paid_now'] ?? 0), 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td class="label">Remaining Balance:</td>
-                        <td class="value">EGP {{ number_format($receiptData['remaining_balance'] ?? 0, 2) }}</td>
-                    </tr>
-                </table>
+            <div class="section-header">Financial Summary:</div>
+            <div class="financial-grid">
+                <div class="financial-row">
+                    <span class="financial-label">Total Amount:</span>
+                    <span class="financial-value">EGP {{ number_format($receiptData['total_amount'] ?? 0, 2) }}</span>
+                </div>
+                <div class="financial-row">
+                    <span class="financial-label">Discount:</span>
+                    <span class="financial-value">EGP {{ number_format($receiptData['discount_amount'] ?? 0, 2) }}</span>
+                </div>
+                <div class="financial-row total-row">
+                    <span class="financial-label">Final Amount:</span>
+                    <span class="financial-value">EGP {{ number_format($receiptData['final_amount'] ?? 0, 2) }}</span>
+                </div>
+                <div class="financial-row">
+                    <span class="financial-label">Amount Paid Before:</span>
+                    <span class="financial-value">EGP {{ number_format($receiptData['paid_before'] ?? 0, 2) }}</span>
+                </div>
+                <div class="financial-row">
+                    <span class="financial-label">Final Payment:</span>
+                    <span class="financial-value">EGP {{ number_format($receiptData['paid_now'] ?? 0, 2) }}</span>
+                </div>
+                <div class="financial-row total-row">
+                    <span class="financial-label">Total Paid:</span>
+                    <span class="financial-value">EGP {{ number_format(($receiptData['paid_before'] ?? 0) + ($receiptData['paid_now'] ?? 0), 2) }}</span>
+                </div>
+                <div class="financial-row">
+                    <span class="financial-label">Remaining Balance:</span>
+                    <span class="financial-value">EGP {{ number_format($receiptData['remaining_balance'] ?? 0, 2) }}</span>
+                </div>
             </div>
 
             <!-- Payment Method -->
-            <div class="section-title">Payment Method:</div>
-            <div class="section-content">
-                <strong>{{ strtoupper($receiptData['payment_method'] ?? 'CASH') }}</strong>
+            <div class="section-header">Payment Method:</div>
+            <div class="payment-breakdown">
+                <div class="payment-item">
+                    <span><strong>{{ strtoupper($receiptData['payment_method'] ?? 'CASH') }}</strong></span>
+                </div>
             </div>
 
             <!-- Payment Status -->
-            <div class="section-title">Payment Status:</div>
-            <div class="section-content financial-section">
-                <strong>PAYMENT COMPLETED</strong>
-            </div>
+            <div class="section-header">Payment Status:</div>
+            <div class="status-badge">PAYMENT COMPLETED</div>
 
             <!-- Patient Credentials -->
             @if(isset($receiptData['patient_credentials']) && $receiptData['patient_credentials'])
-                <div class="section-title">Patient Portal Access:</div>
-                <div class="section-content">
-                    <div class="info-row">
-                        <span class="label">Username:</span>
-                        <span class="value">{{ $receiptData['patient_credentials']['username'] ?? 'N/A' }}</span>
+                <div class="section-header">Patient Portal Access:</div>
+                <div class="payment-breakdown">
+                    <div class="payment-item">
+                        <span>Username:</span>
+                        <span class="font-bold">{{ $receiptData['patient_credentials']['username'] ?? 'N/A' }}</span>
                     </div>
-                    <div class="info-row">
-                        <span class="label">Password:</span>
-                        <span class="value">{{ $receiptData['patient_credentials']['password'] ?? 'N/A' }}</span>
+                    <div class="payment-item">
+                        <span>Password:</span>
+                        <span class="font-bold">{{ $receiptData['patient_credentials']['password'] ?? 'N/A' }}</span>
                     </div>
                 </div>
             @endif
 
             <!-- Expected Delivery -->
             @if(isset($receiptData['expected_delivery_date']) && $receiptData['expected_delivery_date'] !== 'N/A')
-                <div class="section-title">Expected Delivery:</div>
-                <div class="section-content">
-                    <strong>{{ $receiptData['expected_delivery_date'] }}</strong>
+                <div class="section-header">Expected Delivery:</div>
+                <div class="payment-breakdown">
+                    <div class="payment-item">
+                        <span><strong>{{ $receiptData['expected_delivery_date'] }}</strong></span>
+                    </div>
                 </div>
             @endif
 
             <!-- Barcode -->
             @if(isset($receiptData['barcode']) && $receiptData['barcode'] !== 'N/A')
-                <div class="section-title">Barcode:</div>
-                <div class="section-content" style="text-align: center;">
-                    <strong>{{ $receiptData['barcode'] }}</strong>
+                <div class="section-header">Barcode:</div>
+                <div class="payment-breakdown" style="text-align: center;">
+                    <div class="payment-item" style="justify-content: center;">
+                        <span class="font-bold">{{ $receiptData['barcode'] }}</span>
+                    </div>
                 </div>
             @endif
 
-            <!-- Signature Section -->
-            <div class="signature-section">
-                <div class="signature-name">Printed by: {{ $receiptData['check_in_by'] ?? 'System' }}</div>
-                <div class="signature-title">Pathology Lab System</div>
-                <div class="signature-date">Printed at: {{ $receiptData['check_in_at'] ?? now()->format('Y-m-d H:i:s') }}</div>
-                <div class="signature-date">Visit ID: {{ $receiptData['visit_id'] ?? 'N/A' }}</div>
+            <!-- Footer -->
+            <div class="receipt-footer">
+                <div class="footer-item">Printed by: {{ $receiptData['check_in_by'] ?? 'System' }}</div>
+                <div class="footer-item">Pathology Lab System</div>
+                <div class="footer-item">Printed at: {{ $receiptData['check_in_at'] ?? now()->format('Y-m-d H:i:s') }}</div>
+                <div class="footer-item">Visit ID: {{ $receiptData['visit_id'] ?? 'N/A' }}</div>
             </div>
 
             <!-- Arabic Note -->
             <div class="arabic-note">
-                <div class="arabic-note-text">
-                    يتم الاحتفاظ بالبلوكات الشمعية لمدة ثلاث سنوات ولطلبها يتم التبليغ عنها مسبقا  ميعاد استلام النتيجة ووقت التسليم
-                </div>
+                يتم الاحتفاظ بالبلوكات الشمعية لمدة ثلاث سنوات ولطلبها يتم التبليغ عنها مسبقا  ميعاد استلام النتيجة ووقت التسليم
             </div>
         </div>
     </div>

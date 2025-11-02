@@ -370,6 +370,7 @@ class PatientRegistrationController extends Controller
                 // Create visit with detailed information
                 $visitData = [
                     'patient_id' => $patient->id,
+                    'lab_request_id' => $labRequest->id, // Link visit to lab request
                     'visit_number' => 'VIS-' . date('Ymd') . '-' . str_pad($patient->id, 6, '0', STR_PAD_LEFT),
                     'visit_date' => $data['attendance_date'] ?? now(),
                     'visit_time' => now()->format('H:i:s'),
@@ -787,6 +788,7 @@ class PatientRegistrationController extends Controller
                 // Create a basic visit even without billing information
                 $visitData = [
                     'patient_id' => $patient->id,
+                    'lab_request_id' => $labRequest->id ?? null, // Link visit to lab request if available
                     'visit_number' => 'VIS-' . date('Ymd') . '-' . str_pad($patient->id, 6, '0', STR_PAD_LEFT),
                     'visit_date' => $data['attendance_date'] ?? now(),
                     'visit_time' => now()->format('H:i:s'),

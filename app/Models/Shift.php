@@ -140,48 +140,44 @@ class Shift extends Model
             $paymentDetails = $metadata['payment_details'] ?? [];
             $patientData = $metadata['patient_data'] ?? [];
 
-            // Check metadata payment details first
-            if (isset($paymentDetails['amount_paid_cash']) && $paymentDetails['amount_paid_cash'] > 0) {
-                $cashCollected += $paymentDetails['amount_paid_cash'];
-            }
+            $amountPaidCash = 0;
+            $amountPaidCard = 0;
+            $cardPaymentMethod = 'Card';
 
-            if (isset($paymentDetails['amount_paid_card']) && $paymentDetails['amount_paid_card'] > 0) {
-                $otherPaymentsCollected += $paymentDetails['amount_paid_card'];
-                $paymentMethod = $paymentDetails['additional_payment_method'] ?? 'Card';
-                
-                if (!isset($paymentBreakdown[$paymentMethod])) {
-                    $paymentBreakdown[$paymentMethod] = 0;
-                }
-                $paymentBreakdown[$paymentMethod] += $paymentDetails['amount_paid_card'];
+            // Priority 1: Check payment_details first (most reliable source)
+            if (!empty($paymentDetails)) {
+                $amountPaidCash = $paymentDetails['amount_paid_cash'] ?? 0;
+                $amountPaidCard = $paymentDetails['amount_paid_card'] ?? 0;
+                $cardPaymentMethod = $paymentDetails['additional_payment_method'] ?? 'Card';
             }
-
-            // Check patient_data payment details (for patient registration)
-            if (isset($patientData['amount_paid_cash']) && $patientData['amount_paid_cash'] > 0) {
-                $cashCollected += $patientData['amount_paid_cash'];
+            // Priority 2: Fall back to patient_data if payment_details is empty
+            elseif (!empty($patientData)) {
+                $amountPaidCash = $patientData['amount_paid_cash'] ?? 0;
+                $amountPaidCard = $patientData['amount_paid_card'] ?? 0;
+                $cardPaymentMethod = $patientData['additional_payment_method'] ?? 'Card';
             }
-
-            if (isset($patientData['amount_paid_card']) && $patientData['amount_paid_card'] > 0) {
-                $otherPaymentsCollected += $patientData['amount_paid_card'];
-                $paymentMethod = $patientData['additional_payment_method'] ?? 'Card';
-                
-                if (!isset($paymentBreakdown[$paymentMethod])) {
-                    $paymentBreakdown[$paymentMethod] = 0;
-                }
-                $paymentBreakdown[$paymentMethod] += $patientData['amount_paid_card'];
-            }
-
-            // If no metadata payment details found, use direct visit payment fields (for CheckIn visits)
-            if (empty($paymentDetails) && empty($patientData) && $visitPaymentAmount > 0) {
+            // Priority 3: Use direct visit payment fields (for CheckIn visits)
+            elseif ($visitPaymentAmount > 0) {
                 if ($visitPaymentMethod === 'cash') {
-                    $cashCollected += $visitPaymentAmount;
+                    $amountPaidCash = $visitPaymentAmount;
                 } else {
-                    $otherPaymentsCollected += $visitPaymentAmount;
-                    
-                    if (!isset($paymentBreakdown[$visitPaymentMethod])) {
-                        $paymentBreakdown[$visitPaymentMethod] = 0;
-                    }
-                    $paymentBreakdown[$visitPaymentMethod] += $visitPaymentAmount;
+                    $amountPaidCard = $visitPaymentAmount;
+                    $cardPaymentMethod = $visitPaymentMethod;
                 }
+            }
+
+            // Add to totals
+            if ($amountPaidCash > 0) {
+                $cashCollected += $amountPaidCash;
+            }
+
+            if ($amountPaidCard > 0) {
+                $otherPaymentsCollected += $amountPaidCard;
+                
+                if (!isset($paymentBreakdown[$cardPaymentMethod])) {
+                    $paymentBreakdown[$cardPaymentMethod] = 0;
+                }
+                $paymentBreakdown[$cardPaymentMethod] += $amountPaidCard;
             }
         }
 

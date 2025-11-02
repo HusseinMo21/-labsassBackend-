@@ -1088,7 +1088,7 @@ class CheckInController extends Controller
             // Load background image
             $backgroundImage = null;
             try {
-                $backgroundPath = public_path('templete/background.jpg');
+                $backgroundPath = public_path('templete/b2.jpg');
                 if (file_exists($backgroundPath)) {
                     $backgroundImage = base64_encode(file_get_contents($backgroundPath));
                     \Log::info('Background image loaded');
@@ -1304,7 +1304,7 @@ class CheckInController extends Controller
         $visit = Visit::with(['patient', 'visitTests.testCategory', 'labRequest'])->findOrFail($visitId);
         
         // Read background image and convert to base64
-        $backgroundImagePath = public_path('templete/background.jpg');
+        $backgroundImagePath = public_path('templete/b2.jpg');
         $backgroundImage = null;
         
         if (file_exists($backgroundImagePath)) {

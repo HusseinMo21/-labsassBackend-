@@ -225,6 +225,21 @@ class VisitController extends Controller
         $perPage = $request->get('per_page', 15);
         $visits = $query->orderBy('created_at', 'desc')->paginate($perPage);
         
+        // Auto-fix: Link visits to lab requests if missing (for visits created through patient registration)
+        foreach ($visits->items() as $visit) {
+            if (!$visit->lab_request_id && $visit->patient_id) {
+                // Try to find existing lab request for this patient
+                $labRequest = \App\Models\LabRequest::where('patient_id', $visit->patient_id)->first();
+                if ($labRequest) {
+                    $visit->update(['lab_request_id' => $labRequest->id]);
+                    \Log::info('Auto-linked visit to lab request', [
+                        'visit_id' => $visit->id,
+                        'lab_request_id' => $labRequest->id
+                    ]);
+                }
+            }
+        }
+        
         // Visits query completed successfully
         
         // Optimize: Transform data more efficiently without N+1 queries
@@ -287,6 +302,19 @@ class VisitController extends Controller
                 'last_checked_at' => $visit->last_checked_at,
             ];
         });
+        
+        // Log the query results for debugging
+        \Log::info('VisitController::index - Query results', [
+            'total_visits' => $visits->total(),
+            'current_page' => $visits->currentPage(),
+            'per_page' => $visits->perPage(),
+            'visit_ids' => $visits->pluck('id')->toArray(),
+            'visit_numbers' => $visits->pluck('visit_number')->toArray(),
+            'visit_statuses' => $visits->pluck('status')->toArray(),
+            'exclude_completed' => $request->get('exclude_completed'),
+            'start_date' => $request->get('start_date'),
+            'end_date' => $request->get('end_date'),
+        ]);
         
         // If include_receipts is requested, wrap the data in receipt_data structure
         if ($request->has('include_receipts') && $request->include_receipts === 'true') {

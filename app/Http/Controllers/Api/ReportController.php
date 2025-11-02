@@ -718,22 +718,31 @@ class ReportController extends Controller
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB max
         ]);
 
-        // Update visit status and referred_doctor - if report is completed, mark visit as completed
+        // Update visit status and referred_doctor
+        // Only mark visit as completed if explicitly set to 'completed' (via Mark as Complete button)
+        // Don't auto-complete when staff saves/records the report
         $visitStatus = $request->test_status ?? 'pending';
-        $visitUpdates = [
-            'status' => $visitStatus === 'completed' ? 'completed' : $visitStatus,
-        ];
         
+        // Only update visit status if test_status is explicitly 'completed'
+        // Otherwise, keep the visit status as is (don't change it when saving report)
         if ($visitStatus === 'completed') {
-            $visitUpdates['completed_at'] = now();
+            $visitUpdates = [
+                'status' => 'completed',
+                'completed_at' => now()
+            ];
+            
+            // Update referred_doctor if provided
+            if ($request->referred_by) {
+                $visitUpdates['referred_doctor'] = $request->referred_by;
+            }
+            
+            $visit->update($visitUpdates);
+        } else {
+            // For pending/draft reports, only update referred_doctor, don't change visit status
+            if ($request->referred_by) {
+                $visit->update(['referred_doctor' => $request->referred_by]);
+            }
         }
-        
-        // Update referred_doctor if provided
-        if ($request->referred_by) {
-            $visitUpdates['referred_doctor'] = $request->referred_by;
-        }
-        
-        $visit->update($visitUpdates);
 
         // Update patient data if provided
         if ($visit->patient) {
@@ -778,7 +787,7 @@ class ReportController extends Controller
                 'lab_request_id' => $visit->lab_request_id,
                 'title' => $request->type_of_analysis ?? 'Pathology Report',
                 'content' => $this->buildReportContent($request),
-                'status' => $request->test_status ?? 'draft',
+                'status' => $request->test_status ?? 'pending', // Default to pending, not draft
                 'generated_by' => auth()->id(),
                 'generated_at' => now(),
             ];
@@ -803,7 +812,9 @@ class ReportController extends Controller
             $updateData = [
                 'title' => $request->type_of_analysis ?? $report->title,
                 'content' => $this->buildReportContent($request),
-                'status' => $request->test_status ?? $report->status,
+                // Don't update status to completed unless explicitly set
+                // Keep existing status if test_status is not provided or is not 'completed'
+                'status' => ($request->test_status === 'completed') ? 'completed' : ($request->test_status ?? $report->status),
             ];
             
             // Add image data if available

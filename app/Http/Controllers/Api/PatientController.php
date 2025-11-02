@@ -492,6 +492,15 @@ class PatientController extends Controller
         // Update patient with lab number
         $patient->update(['lab' => $labNoData['full']]);
 
+        // Link visit to lab request if visit was created
+        if ($visit && $labRequest) {
+            $visit->update(['lab_request_id' => $labRequest->id]);
+            \Log::info('Linked visit to lab request', [
+                'visit_id' => $visit->id,
+                'lab_request_id' => $labRequest->id
+            ]);
+        }
+
         // Create initial report automatically for the patient
         try {
             \App\Models\Report::create([

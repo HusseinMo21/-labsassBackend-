@@ -229,6 +229,16 @@ class ShiftController extends Controller
             ], 404);
         }
 
+        // Calculate real-time statistics (like getCurrentShift does)
+        $visitsCount = \App\Models\Visit::where('shift_id', $shift->id)->count();
+        $paymentsCount = \App\Models\Payment::where('shift_id', $shift->id)->count();
+        $patientsCount = \App\Models\Visit::where('shift_id', $shift->id)
+            ->distinct('patient_id')
+            ->count('patient_id');
+        
+        // Calculate payment breakdown
+        $paymentBreakdown = $shift->calculatePaymentBreakdown();
+        
         $reportData = $shift->getShiftReportData();
 
         return response()->json([
@@ -241,13 +251,13 @@ class ShiftController extends Controller
                     'opened_at' => $shift->opened_at,
                     'closed_at' => $shift->closed_at,
                     'duration' => $shift->duration,
-                    'patients_served' => $shift->patients_served,
-                    'visits_processed' => $shift->visits_processed,
-                    'payments_processed' => $shift->payments_processed,
-                    'total_collected' => $shift->total_collected,
-                    'cash_collected' => $shift->cash_collected,
-                    'other_payments_collected' => $shift->other_payments_collected,
-                    'payment_breakdown' => $shift->payment_breakdown,
+                    'patients_served' => $patientsCount,
+                    'visits_processed' => $visitsCount,
+                    'payments_processed' => $paymentsCount,
+                    'total_collected' => $paymentBreakdown['total_collected'],
+                    'cash_collected' => $paymentBreakdown['cash_collected'],
+                    'other_payments_collected' => $paymentBreakdown['other_payments_collected'],
+                    'payment_breakdown' => $paymentBreakdown['payment_breakdown'],
                     'notes' => $shift->notes,
                 ],
                 'patients' => $reportData,
