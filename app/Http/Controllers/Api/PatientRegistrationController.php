@@ -116,7 +116,7 @@ class PatientRegistrationController extends Controller
         $validator = Validator::make($request->all(), [
             // Patient basic info
             'name' => 'required|string|max:255',
-            'phone' => 'required|string|max:20',
+            'phone' => 'nullable|string|max:20',
             'age' => 'nullable|string|max:10',
             'gender' => 'nullable|in:male,female,other',
             
