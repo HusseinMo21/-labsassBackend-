@@ -66,9 +66,14 @@ class TemplateController extends Controller
             $validator = Validator::make($request->all(), [
                 'name' => 'required|string|max:255',
                 'clinical_data' => 'nullable|string',
+                'specimen_information' => 'nullable|string',
+                'gross_examination' => 'nullable|string',
                 'microscopic' => 'nullable|string',
+                'microscopic_description' => 'nullable|string',
                 'diagnosis' => 'nullable|string',
                 'recommendations' => 'nullable|string',
+                'referred_doctor' => 'nullable|string|max:255',
+                'type_of_analysis' => 'nullable|string|max:255',
             ]);
 
             if ($validator->fails()) {
@@ -82,9 +87,14 @@ class TemplateController extends Controller
             $template = Template::create([
                 'name' => $request->name,
                 'clinical_data' => $request->clinical_data,
-                'microscopic' => $request->microscopic,
+                'specimen_information' => $request->specimen_information,
+                'gross_examination' => $request->gross_examination,
+                'microscopic' => $request->microscopic ?? $request->microscopic_description, // Support both field names
+                'microscopic_description' => $request->microscopic_description ?? $request->microscopic, // Support both field names
                 'diagnosis' => $request->diagnosis,
                 'recommendations' => $request->recommendations,
+                'referred_doctor' => $request->referred_doctor,
+                'type_of_analysis' => $request->type_of_analysis,
                 'created_by' => Auth::id(),
             ]);
 
@@ -144,9 +154,14 @@ class TemplateController extends Controller
             $validator = Validator::make($request->all(), [
                 'name' => 'required|string|max:255',
                 'clinical_data' => 'nullable|string',
+                'specimen_information' => 'nullable|string',
+                'gross_examination' => 'nullable|string',
                 'microscopic' => 'nullable|string',
+                'microscopic_description' => 'nullable|string',
                 'diagnosis' => 'nullable|string',
                 'recommendations' => 'nullable|string',
+                'referred_doctor' => 'nullable|string|max:255',
+                'type_of_analysis' => 'nullable|string|max:255',
             ]);
 
             if ($validator->fails()) {
@@ -160,9 +175,14 @@ class TemplateController extends Controller
             $template->update([
                 'name' => $request->name,
                 'clinical_data' => $request->clinical_data,
-                'microscopic' => $request->microscopic,
+                'specimen_information' => $request->specimen_information,
+                'gross_examination' => $request->gross_examination,
+                'microscopic' => $request->microscopic ?? $request->microscopic_description,
+                'microscopic_description' => $request->microscopic_description ?? $request->microscopic,
                 'diagnosis' => $request->diagnosis,
                 'recommendations' => $request->recommendations,
+                'referred_doctor' => $request->referred_doctor,
+                'type_of_analysis' => $request->type_of_analysis,
             ]);
 
             $template->load('createdBy');
@@ -221,9 +241,14 @@ class TemplateController extends Controller
             $validator = Validator::make($request->all(), [
                 'name' => 'required|string|max:255',
                 'clinical_data' => 'nullable|string',
+                'specimen_information' => 'nullable|string',
+                'gross_examination' => 'nullable|string',
                 'microscopic' => 'nullable|string',
+                'microscopic_description' => 'nullable|string',
                 'diagnosis' => 'nullable|string',
                 'recommendations' => 'nullable|string',
+                'referred_doctor' => 'nullable|string|max:255',
+                'type_of_analysis' => 'nullable|string|max:255',
             ]);
 
             if ($validator->fails()) {
@@ -237,9 +262,14 @@ class TemplateController extends Controller
             $template = Template::create([
                 'name' => $request->name,
                 'clinical_data' => $request->clinical_data,
-                'microscopic' => $request->microscopic,
+                'specimen_information' => $request->specimen_information,
+                'gross_examination' => $request->gross_examination,
+                'microscopic' => $request->microscopic ?? $request->microscopic_description,
+                'microscopic_description' => $request->microscopic_description ?? $request->microscopic,
                 'diagnosis' => $request->diagnosis,
                 'recommendations' => $request->recommendations,
+                'referred_doctor' => $request->referred_doctor,
+                'type_of_analysis' => $request->type_of_analysis,
                 'created_by' => Auth::id(),
             ]);
 

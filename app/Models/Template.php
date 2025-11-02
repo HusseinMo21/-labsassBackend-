@@ -14,9 +14,14 @@ class Template extends Model
     protected $fillable = [
         'name',
         'clinical_data',
+        'specimen_information',
+        'gross_examination',
         'microscopic',
+        'microscopic_description',
         'diagnosis',
         'recommendations',
+        'referred_doctor',
+        'type_of_analysis',
         'created_by',
     ];
 

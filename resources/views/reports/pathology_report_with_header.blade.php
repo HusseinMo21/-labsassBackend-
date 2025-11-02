@@ -255,22 +255,71 @@
 
         @php
             $reportContent = null;
+            $report = null;
+            $imagePlacement = 'end_of_report';
             if ($visit->labRequest && $visit->labRequest->reports && $visit->labRequest->reports->count() > 0) {
                 // Get the latest completed report, or fall back to the latest report
                 $report = $visit->labRequest->reports->where('status', 'completed')->sortByDesc('id')->first() 
                          ?? $visit->labRequest->reports->sortByDesc('id')->first();
-                $reportContent = json_decode($report->content, true);
+                if ($report) {
+                    $reportContent = json_decode($report->content, true);
+                    $imagePlacement = $reportContent['image_placement'] ?? 'end_of_report';
+                }
             }
         @endphp
 
         <!-- Clinical Data -->
-        @if($reportContent && isset($reportContent['clinical_data']))
+        @php
+            $showImageInClinicalData = ($imagePlacement === 'clinical_data' && isset($reportContent['image_placement']));
+        @endphp
+        @if($showImageInClinicalData && $report && $report->image_path)
+            @php
+                $imagePath = storage_path('app/public/' . $report->image_path);
+                $imageBase64 = null;
+                $imageMimeType = 'image/jpeg';
+                if (file_exists($imagePath)) {
+                    $imageData = file_get_contents($imagePath);
+                    $imageBase64 = base64_encode($imageData);
+                    $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+                }
+            @endphp
+            @if($imageBase64)
+            <div class="section-title">CLINICAL DATA:</div>
+            <div class="section-content" style="text-align: center; margin: 20px 0;">
+                <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
+                     alt="Clinical Data Image" 
+                     style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
+            </div>
+            @endif
+        @elseif($reportContent && isset($reportContent['clinical_data']))
         <div class="section-title">CLINICAL DATA:</div>
         <div class="section-content">{{ $reportContent['clinical_data'] }}</div>
         @endif
 
         <!-- Nature of Specimen -->
-        @if($reportContent && isset($reportContent['nature_of_specimen']))
+        @php
+            $showImageInNatureOfSpecimen = ($imagePlacement === 'nature_of_specimen' && isset($reportContent['image_placement']));
+        @endphp
+        @if($showImageInNatureOfSpecimen && $report && $report->image_path)
+            @php
+                $imagePath = storage_path('app/public/' . $report->image_path);
+                $imageBase64 = null;
+                $imageMimeType = 'image/jpeg';
+                if (file_exists($imagePath)) {
+                    $imageData = file_get_contents($imagePath);
+                    $imageBase64 = base64_encode($imageData);
+                    $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+                }
+            @endphp
+            @if($imageBase64)
+            <div class="section-title">NATURE OF SPECIMENS:</div>
+            <div class="section-content" style="text-align: center; margin: 20px 0;">
+                <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
+                     alt="Nature of Specimen Image" 
+                     style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
+            </div>
+            @endif
+        @elseif($reportContent && isset($reportContent['nature_of_specimen']))
         <div class="section-title">NATURE OF SPECIMENS:</div>
         <div class="section-content">{{ $reportContent['nature_of_specimen'] }}</div>
         @elseif($visit->visitTests && $visit->visitTests->count() > 0)
@@ -283,19 +332,85 @@
         @endif
 
         <!-- Gross Pathology -->
-        @if($reportContent && isset($reportContent['gross_pathology']))
+        @php
+            $showImageInGrossPathology = ($imagePlacement === 'gross_pathology' && isset($reportContent['image_placement']));
+        @endphp
+        @if($showImageInGrossPathology && $report && $report->image_path)
+            @php
+                $imagePath = storage_path('app/public/' . $report->image_path);
+                $imageBase64 = null;
+                $imageMimeType = 'image/jpeg';
+                if (file_exists($imagePath)) {
+                    $imageData = file_get_contents($imagePath);
+                    $imageBase64 = base64_encode($imageData);
+                    $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+                }
+            @endphp
+            @if($imageBase64)
+            <div class="section-title">GROSS EXAMINATION:</div>
+            <div class="section-content" style="text-align: center; margin: 20px 0;">
+                <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
+                     alt="Gross Pathology Image" 
+                     style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
+            </div>
+            @endif
+        @elseif($reportContent && isset($reportContent['gross_pathology']))
         <div class="section-title">GROSS EXAMINATION:</div>
         <div class="section-content">{{ $reportContent['gross_pathology'] }}</div>
         @endif
 
         <!-- Microscopic Examination -->
-        @if($reportContent && isset($reportContent['microscopic_examination']))
+        @php
+            $showImageInMicroscopic = ($imagePlacement === 'microscopic_examination' && isset($reportContent['image_placement']));
+        @endphp
+        @if($showImageInMicroscopic && $report && $report->image_path)
+            @php
+                $imagePath = storage_path('app/public/' . $report->image_path);
+                $imageBase64 = null;
+                $imageMimeType = 'image/jpeg';
+                if (file_exists($imagePath)) {
+                    $imageData = file_get_contents($imagePath);
+                    $imageBase64 = base64_encode($imageData);
+                    $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+                }
+            @endphp
+            @if($imageBase64)
+            <div class="section-title">MICROSCOPIC EXAMINATION:</div>
+            <div class="section-content" style="text-align: center; margin: 20px 0;">
+                <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
+                     alt="Microscopic Examination Image" 
+                     style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
+            </div>
+            @endif
+        @elseif($reportContent && isset($reportContent['microscopic_examination']))
         <div class="section-title">MICROSCOPIC EXAMINATION:</div>
         <div class="section-content">{{ $reportContent['microscopic_examination'] }}</div>
         @endif
 
         <!-- Diagnosis -->
-        @if($reportContent && isset($reportContent['conclusion']))
+        @php
+            $showImageInConclusion = ($imagePlacement === 'conclusion' && isset($reportContent['image_placement']));
+        @endphp
+        @if($showImageInConclusion && $report && $report->image_path)
+            @php
+                $imagePath = storage_path('app/public/' . $report->image_path);
+                $imageBase64 = null;
+                $imageMimeType = 'image/jpeg';
+                if (file_exists($imagePath)) {
+                    $imageData = file_get_contents($imagePath);
+                    $imageBase64 = base64_encode($imageData);
+                    $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+                }
+            @endphp
+            @if($imageBase64)
+            <div class="section-title">DIAGNOSIS:</div>
+            <div class="section-content" style="text-align: center; margin: 20px 0;">
+                <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
+                     alt="Conclusion Image" 
+                     style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
+            </div>
+            @endif
+        @elseif($reportContent && isset($reportContent['conclusion']))
         <div class="section-title">DIAGNOSIS:</div>
         <div class="section-content diagnosis-section">{{ $reportContent['conclusion'] }}</div>
         @endif
@@ -304,6 +419,37 @@
         @if($reportContent && isset($reportContent['recommendations']))
         <div class="section-title">RECOMMENDATIONS & NOTES:</div>
         <div class="section-content">{{ $reportContent['recommendations'] }}</div>
+        @endif
+
+        <!-- Pathology Image (only if placement is end_of_report) -->
+        @php
+            $showImageAtEnd = ($imagePlacement === 'end_of_report' || !isset($reportContent['image_placement']));
+            $imagePath = null;
+            $imageBase64 = null;
+            $imageMimeType = 'image/jpeg';
+            if ($showImageAtEnd && $visit->labRequest && $visit->labRequest->reports && $visit->labRequest->reports->count() > 0) {
+                if (!isset($report)) {
+                    $report = $visit->labRequest->reports->where('status', 'completed')->sortByDesc('id')->first() 
+                             ?? $visit->labRequest->reports->sortByDesc('id')->first();
+                }
+                if ($report && $report->image_path) {
+                    $imagePath = storage_path('app/public/' . $report->image_path);
+                    if (file_exists($imagePath)) {
+                        $imageData = file_get_contents($imagePath);
+                        $imageBase64 = base64_encode($imageData);
+                        $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+                    }
+                }
+            }
+        @endphp
+        
+        @if($showImageAtEnd && $imageBase64)
+        <div class="section-title" style="margin-top: 30px;">PATHOLOGY IMAGE:</div>
+        <div class="section-content" style="text-align: center; margin: 20px 0;">
+            <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
+                 alt="Pathology Image" 
+                 style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
+        </div>
         @endif
 
         <!-- Signature Section -->

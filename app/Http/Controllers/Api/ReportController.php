@@ -12,6 +12,7 @@ use App\Models\Expense;
 use App\Models\Report;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Carbon\Carbon;
 
 class ReportController extends Controller
@@ -626,6 +627,9 @@ class ReportController extends Controller
         // Get PDF content as string
         $pdfContent = $mpdf->Output('', 'S');
         
+        // Delete image after PDF generation (only once)
+        $this->deleteReportImageAfterPdf($visit);
+        
         // Return JSON response with base64-encoded content like seafrance
         return response()->json([
             'content' => base64_encode($pdfContent),
@@ -666,6 +670,9 @@ class ReportController extends Controller
         
         // Get PDF content as string
         $pdfContent = $mpdf->Output('', 'S');
+        
+        // Delete image after PDF generation (only once)
+        $this->deleteReportImageAfterPdf($visit);
         
         // Return JSON response with base64-encoded content like seafrance
         return response()->json([
@@ -711,18 +718,22 @@ class ReportController extends Controller
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB max
         ]);
 
-        // Update visit status - if report is completed, mark visit as completed
+        // Update visit status and referred_doctor - if report is completed, mark visit as completed
         $visitStatus = $request->test_status ?? 'pending';
+        $visitUpdates = [
+            'status' => $visitStatus === 'completed' ? 'completed' : $visitStatus,
+        ];
+        
         if ($visitStatus === 'completed') {
-            $visit->update([
-                'status' => 'completed',
-                'completed_at' => now()
-            ]);
-        } else {
-            $visit->update([
-                'status' => $visitStatus,
-            ]);
+            $visitUpdates['completed_at'] = now();
         }
+        
+        // Update referred_doctor if provided
+        if ($request->referred_by) {
+            $visitUpdates['referred_doctor'] = $request->referred_by;
+        }
+        
+        $visit->update($visitUpdates);
 
         // Update patient data if provided
         if ($visit->patient) {
@@ -730,6 +741,11 @@ class ReportController extends Controller
             if ($request->patient_name) $patientUpdates['name'] = $request->patient_name;
             if ($request->age) $patientUpdates['age'] = $request->age;
             if ($request->sex) $patientUpdates['gender'] = strtolower($request->sex);
+            
+            // Also update patient's doctor_id if referred_by is provided
+            if ($request->referred_by) {
+                $patientUpdates['doctor_id'] = $request->referred_by;
+            }
             
             if (!empty($patientUpdates)) {
                 $visit->patient->update($patientUpdates);
@@ -818,19 +834,22 @@ class ReportController extends Controller
     {
         $content = [];
         
-        if ($request->clinical_data) {
+        // Handle fields - if image replaces a field, don't include text for that field
+        $imagePlacement = $request->image_placement ?? 'end_of_report';
+        
+        if ($request->clinical_data && $imagePlacement !== 'clinical_data') {
             $content['clinical_data'] = $request->clinical_data;
         }
-        if ($request->nature_of_specimen) {
+        if ($request->nature_of_specimen && $imagePlacement !== 'nature_of_specimen') {
             $content['nature_of_specimen'] = $request->nature_of_specimen;
         }
-        if ($request->gross_pathology) {
+        if ($request->gross_pathology && $imagePlacement !== 'gross_pathology') {
             $content['gross_pathology'] = $request->gross_pathology;
         }
-        if ($request->microscopic_examination) {
+        if ($request->microscopic_examination && $imagePlacement !== 'microscopic_examination') {
             $content['microscopic_examination'] = $request->microscopic_examination;
         }
-        if ($request->conclusion) {
+        if ($request->conclusion && $imagePlacement !== 'conclusion') {
             $content['conclusion'] = $request->conclusion;
         }
         if ($request->recommendations) {
@@ -838,6 +857,11 @@ class ReportController extends Controller
         }
         if ($request->referred_by) {
             $content['referred_by'] = $request->referred_by;
+        }
+        
+        // Store image placement for PDF generation
+        if ($request->image_placement) {
+            $content['image_placement'] = $request->image_placement;
         }
         
         return json_encode($content);
@@ -854,5 +878,51 @@ class ReportController extends Controller
         $reports = Report::where('lab_request_id', $labRequestId)->get();
         
         return response()->json($reports);
+    }
+
+    /**
+     * Delete report image after PDF generation
+     * This ensures images are only used once in PDF and then removed
+     */
+    private function deleteReportImageAfterPdf($visit)
+    {
+        try {
+            if ($visit->labRequest && $visit->labRequest->reports) {
+                $report = $visit->labRequest->reports
+                    ->where('status', 'completed')
+                    ->sortByDesc('id')
+                    ->first() 
+                    ?? $visit->labRequest->reports->sortByDesc('id')->first();
+                
+                if ($report && $report->image_path) {
+                    $imagePath = storage_path('app/public/' . $report->image_path);
+                    
+                    // Delete the image file
+                    if (file_exists($imagePath)) {
+                        unlink($imagePath);
+                        \Log::info('Image deleted after PDF generation', [
+                            'report_id' => $report->id,
+                            'image_path' => $report->image_path
+                        ]);
+                    }
+                    
+                    // Clear image fields from database
+                    $report->update([
+                        'image_path' => null,
+                        'image_filename' => null,
+                        'image_mime_type' => null,
+                        'image_size' => null,
+                        'image_uploaded_at' => null,
+                        'image_uploaded_by' => null,
+                    ]);
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('Failed to delete report image after PDF generation', [
+                'visit_id' => $visit->id,
+                'error' => $e->getMessage()
+            ]);
+            // Don't throw exception - image deletion failure shouldn't break PDF generation
+        }
     }
 } 

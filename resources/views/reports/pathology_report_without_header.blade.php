@@ -253,6 +253,34 @@
     <div class="section-content">{{ $reportContent['recommendations'] }}</div>
     @endif
 
+    <!-- Pathology Image -->
+    @php
+        $imagePath = null;
+        $imageBase64 = null;
+        $imageMimeType = 'image/jpeg';
+        if ($visit->labRequest && $visit->labRequest->reports && $visit->labRequest->reports->count() > 0) {
+            $report = $visit->labRequest->reports->where('status', 'completed')->sortByDesc('id')->first() 
+                     ?? $visit->labRequest->reports->sortByDesc('id')->first();
+            if ($report && $report->image_path) {
+                $imagePath = storage_path('app/public/' . $report->image_path);
+                if (file_exists($imagePath)) {
+                    $imageData = file_get_contents($imagePath);
+                    $imageBase64 = base64_encode($imageData);
+                    $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+                }
+            }
+        }
+    @endphp
+    
+    @if($imageBase64)
+    <div class="section-title" style="margin-top: 30px;">PATHOLOGY IMAGE:</div>
+    <div class="section-content" style="text-align: center; margin: 20px 0;">
+        <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
+             alt="Pathology Image" 
+             style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
+    </div>
+    @endif
+
             <!-- Signature Section -->
             <div class="signature-section">
                 <div class="signature-name">Dr. Yasser M. El Dowik</div>
