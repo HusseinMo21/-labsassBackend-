@@ -1,0 +1,5 @@
+# Note: seedes directory should be included in git for production deployment
+# But you may want to ignore large JSON files if they're too big
+# Uncomment the line below if you want to ignore JSON files:
+# *.json
+

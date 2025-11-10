@@ -9,6 +9,14 @@ The premium fix consists of three scripts:
 2. **premium_fix_reports.php** - Fixes all empty/null reports after seeding
 3. **validate_all_data.php** - Validates all relationships and data integrity
 
+## File Locations
+
+All seed files are now located in `backend/seedes/`:
+- `backend/seedes/patient.json` - Patient data
+- `backend/seedes/patholgy.json` - Pathology report data
+
+This makes it easy to upload everything together to the server.
+
 ## Step-by-Step Process
 
 ### Step 1: Run the Seeder
@@ -19,10 +27,10 @@ php artisan db:seed --class=LegacyDataSeeder
 ```
 
 This will:
-- Create all patients from `patient.json`
-- Create all lab requests
-- Create all visits
-- Create reports (but some may be empty if pathology data doesn't match)
+- Load data from `backend/seedes/patient.json`
+- Load data from `backend/seedes/patholgy.json`
+- Create all patients, lab requests, visits, and reports
+- Some reports may be empty if pathology data doesn't match (will be fixed in step 2)
 
 ### Step 2: Fix All Empty Reports
 
@@ -31,7 +39,7 @@ php premium_fix_reports.php
 ```
 
 This will:
-- Load all pathology data from `patholgy.json`
+- Load all pathology data from `backend/seedes/patholgy.json`
 - Find and fix all reports with empty/null content
 - Handle oversized content (truncates to fit database)
 - Use multiple matching strategies for lab numbers
@@ -142,7 +150,7 @@ Checks for:
 
 ### If reports are still empty:
 
-1. Check if pathology data file exists: `seedes/patholgy.json`
+1. Check if pathology data file exists: `backend/seedes/patholgy.json`
 2. Verify lab number format matches between patient.json and patholgy.json
 3. Run `premium_fix_reports.php` again - it's safe to run multiple times
 

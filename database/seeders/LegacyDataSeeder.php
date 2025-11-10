@@ -52,18 +52,49 @@ class LegacyDataSeeder extends Seeder
             // Step 1: Load JSON files (using streaming to reduce memory)
             $this->command->info('Step 1: Loading JSON files (this may take a while for large files)...');
             
+            // Check multiple possible locations for seed files
+            $possiblePaths = [
+                base_path('seedes'),           // Standard location: backend/seedes/
+                base_path('../seedes'),        // Alternative: one level up
+                __DIR__ . '/../../seedes',     // Relative to seeder location
+                storage_path('seedes'),        // Storage directory
+            ];
+            
+            $seedesPath = null;
+            foreach ($possiblePaths as $path) {
+                if (is_dir($path) && file_exists($path . '/patient.json')) {
+                    $seedesPath = $path;
+                    break;
+                }
+            }
+            
+            if (!$seedesPath) {
+                $this->command->error('❌ seedes directory not found!');
+                $this->command->error('Searched in the following locations:');
+                foreach ($possiblePaths as $path) {
+                    $exists = is_dir($path) ? '✓ (directory exists)' : '✗ (not found)';
+                    $this->command->error("  - {$path} {$exists}");
+                }
+                $this->command->error('');
+                $this->command->error('Please ensure the seedes directory exists with patient.json and patholgy.json files.');
+                $this->command->error('Expected location: ' . base_path('seedes'));
+                throw new \Exception("seedes directory not found. Please upload the seedes directory to: " . base_path('seedes'));
+            }
+            
+            $this->command->info("✓ Found seedes directory at: {$seedesPath}");
+            
             // Check if test files exist, use them if available
-            $patientFile = base_path('../seedes/patient_test.json');
-            $pathologyFile = base_path('../seedes/patholgy_test.json');
+            $patientFile = $seedesPath . '/patient_test.json';
+            $pathologyFile = $seedesPath . '/patholgy_test.json';
             
             if (!file_exists($patientFile)) {
-                $patientFile = base_path('../seedes/patient.json');
+                $patientFile = $seedesPath . '/patient.json';
             } else {
                 $this->command->info('⚠ Using TEST files (patient_test.json) - only 10 records will be processed!');
             }
             
             if (!file_exists($pathologyFile)) {
-                $pathologyFile = base_path('../seedes/patholgy.json');
+                $pathologyFile = $seedesPath . '/patholgy.json';
             } else {
                 $this->command->info('⚠ Using TEST files (patholgy_test.json) - only 10 records will be processed!');
             }

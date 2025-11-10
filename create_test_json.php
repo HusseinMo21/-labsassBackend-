@@ -27,11 +27,11 @@ $method = $reflection->getMethod('loadJsonFile');
 $method->setAccessible(true);
 
 echo "Loading patient.json...\n";
-$patientData = $method->invoke($seeder, base_path('../seedes/patient.json'));
+$patientData = $method->invoke($seeder, base_path('seedes/patient.json'));
 echo "Found " . count($patientData) . " patient records\n";
 
 echo "Loading patholgy.json...\n";
-$pathologyData = $method->invoke($seeder, base_path('../seedes/patholgy.json'));
+$pathologyData = $method->invoke($seeder, base_path('seedes/patholgy.json'));
 echo "Found " . count($pathologyData) . " pathology records\n";
 
 // Take first 10 records
@@ -39,8 +39,8 @@ $testPatientData = array_slice($patientData, 0, 10);
 $testPathologyData = array_slice($pathologyData, 0, 10);
 
 // Save to test files
-$patientTestFile = base_path('../seedes/patient_test.json');
-$pathologyTestFile = base_path('../seedes/patholgy_test.json');
+$patientTestFile = base_path('seedes/patient_test.json');
+$pathologyTestFile = base_path('seedes/patholgy_test.json');
 
 file_put_contents($patientTestFile, json_encode($testPatientData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 file_put_contents($pathologyTestFile, json_encode($testPathologyData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));

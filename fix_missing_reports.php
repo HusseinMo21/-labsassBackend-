@@ -117,10 +117,10 @@ function loadJsonFile($filePath) {
 }
 
 // Use full file (skip test files)
-$pathologyFile = base_path('../seedes/patholgy.json');
+    $pathologyFile = base_path('seedes/patholgy.json');
 if (!file_exists($pathologyFile)) {
     // Fallback to test file if full file doesn't exist
-    $pathologyFile = base_path('../seedes/patholgy_test.json');
+    $pathologyFile = base_path('seedes/patholgy_test.json');
     if (file_exists($pathologyFile)) {
         echo "⚠ Using TEST file (patholgy_test.json) - only 10 records will be processed!\n";
     }
@@ -128,8 +128,8 @@ if (!file_exists($pathologyFile)) {
 
 if (!file_exists($pathologyFile)) {
     echo "ERROR: Pathology file not found. Checked:\n";
-    echo "  - " . base_path('../seedes/patholgy_test.json') . "\n";
-    echo "  - " . base_path('../seedes/patholgy.json') . "\n";
+    echo "  - " . base_path('seedes/patholgy_test.json') . "\n";
+    echo "  - " . base_path('seedes/patholgy.json') . "\n";
     exit(1);
 }
 

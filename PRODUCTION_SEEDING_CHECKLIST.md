@@ -10,6 +10,24 @@ All scripts are ready for production use. Follow this checklist to ensure perfec
 2. **validate_all_data.php** - Validates all relationships and data integrity
 3. **PREMIUM_FIX_GUIDE.md** - Detailed guide
 4. **LegacyDataSeeder.php** - Updated to prevent empty reports
+5. **backend/seedes/patient.json** - Patient data (copied from root seedes/)
+6. **backend/seedes/patholgy.json** - Pathology data (copied from root seedes/)
+
+## File Structure
+
+```
+backend/
+├── seedes/
+│   ├── patient.json          (22.84 MB)
+│   └── patholgy.json         (93.05 MB)
+├── premium_fix_reports.php
+├── validate_all_data.php
+├── database/seeders/
+│   └── LegacyDataSeeder.php
+└── ...
+```
+
+All seed files are now in `backend/seedes/` for easy server deployment.
 
 ## Quick Start
 
@@ -65,7 +83,7 @@ php validate_all_data.php
 
 ### On Production Server:
 1. Upload all files to server
-2. Ensure `seedes/patient.json` and `seedes/patholgy.json` are in place
+2. Ensure `backend/seedes/patient.json` and `backend/seedes/patholgy.json` are in place
 3. Run the 3 commands above
 4. Verify success messages
 5. Test frontend
@@ -74,7 +92,7 @@ php validate_all_data.php
 
 ### If reports are still empty:
 - Run `premium_fix_reports.php` again (safe to run multiple times)
-- Check if pathology file exists: `seedes/patholgy.json`
+- Check if pathology file exists: `backend/seedes/patholgy.json`
 - Verify file permissions
 
 ### If validation shows errors:

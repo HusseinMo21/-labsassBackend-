@@ -250,7 +250,7 @@ function hasReportData($content) {
 
 // Step 1: Load pathology data
 echo "Step 1: Loading pathology data...\n";
-$pathologyFile = base_path('../seedes/patholgy.json');
+$pathologyFile = base_path('seedes/patholgy.json');
 if (!file_exists($pathologyFile)) {
     echo "ERROR: Pathology file not found at: {$pathologyFile}\n";
     exit(1);

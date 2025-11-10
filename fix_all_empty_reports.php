@@ -104,7 +104,7 @@ function normalizeLabNumber($labString) {
     return $labString;
 }
 
-$pathologyFile = base_path('../seedes/patholgy.json');
+$pathologyFile = base_path('seedes/patholgy.json');
 if (!file_exists($pathologyFile)) {
     echo "Pathology file not found!\n";
     exit;
