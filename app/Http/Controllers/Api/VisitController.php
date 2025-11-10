@@ -157,6 +157,7 @@ class VisitController extends Controller
             'visitTests:id,visit_id,lab_test_id,status,result_value,result_status,result_notes,price',
             'visitTests.labTest:id,name,code,reference_range',
             'labRequest:id,lab_no,suffix',
+            'labRequest.reports:id,lab_request_id,status,content,created_at', // Eager load reports to avoid N+1
             'labRequest.invoice:id,lab_request_id,amount_paid,balance' // Eager load invoice to avoid N+1
         ]);
         

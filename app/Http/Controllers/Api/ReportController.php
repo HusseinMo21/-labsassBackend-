@@ -50,9 +50,11 @@ class ReportController extends Controller
             ->orderBy('month')
             ->get();
 
-        // Payment method breakdown (simplified since payment_method column doesn't exist)
+        // Payment method breakdown - use amount_paid from invoices table
+        $invoiceTotal = Invoice::whereBetween('created_at', [$startDate, $endDate])->sum('amount_paid');
+        
         $paymentMethods = collect([
-            (object)['payment_method' => 'Cash', 'count' => Invoice::whereBetween('created_at', [$startDate, $endDate])->count(), 'total' => Invoice::whereBetween('created_at', [$startDate, $endDate])->sum('paid')]
+            (object)['payment_method' => 'Cash', 'count' => Invoice::whereBetween('created_at', [$startDate, $endDate])->count(), 'total' => $invoiceTotal]
         ]);
 
         // Summary stats
@@ -84,21 +86,23 @@ class ReportController extends Controller
             $startDate = $request->get('start_date');
             $endDate = $request->get('end_date');
 
-            if (!$startDate) {
-                $startDate = now()->startOfMonth();
-            } else {
+            // Only apply date filter if dates are provided
+            $applyDateFilter = !empty($startDate) && !empty($endDate);
+            
+            if ($applyDateFilter) {
                 $startDate = Carbon::parse($startDate);
-            }
-
-            if (!$endDate) {
-                $endDate = now()->endOfMonth();
-            } else {
                 $endDate = Carbon::parse($endDate);
+            } else {
+                $startDate = null;
+                $endDate = null;
             }
 
         // New patients per day
-        $newPatients = Patient::whereBetween('created_at', [$startDate, $endDate])
-            ->selectRaw('DATE(created_at) as date, COUNT(*) as count')
+        $newPatientsQuery = Patient::query();
+        if ($applyDateFilter) {
+            $newPatientsQuery->whereBetween('created_at', [$startDate, $endDate]);
+        }
+        $newPatients = $newPatientsQuery->selectRaw('DATE(created_at) as date, COUNT(*) as count')
             ->groupBy('date')
             ->orderBy('date')
             ->get();
@@ -121,9 +125,14 @@ class ReportController extends Controller
             ->get();
 
         // Summary stats (simplified)
+        $newPatientsCountQuery = Patient::query();
+        if ($applyDateFilter) {
+            $newPatientsCountQuery->whereBetween('created_at', [$startDate, $endDate]);
+        }
+        
         $summary = [
             'total_patients' => Patient::count(),
-            'new_patients' => Patient::whereBetween('created_at', [$startDate, $endDate])->count(),
+            'new_patients' => $newPatientsCountQuery->count(),
             'active_patients' => Patient::whereHas('visits')->count(),
             'average_visits_per_patient' => Patient::withCount('visits')->get()->avg('visits_count'),
         ];
@@ -134,10 +143,10 @@ class ReportController extends Controller
                 'age_distribution' => $ageDistribution,
                 'top_patients' => $topPatients,
                 'summary' => $summary,
-                'period' => [
+                'period' => $applyDateFilter ? [
                     'start_date' => $startDate->toDateString(),
                     'end_date' => $endDate->toDateString(),
-                ],
+                ] : null,
             ]);
         } catch (\Exception $e) {
             \Log::error('Reports patients error: ' . $e->getMessage());
@@ -155,28 +164,32 @@ class ReportController extends Controller
         $startDate = $request->get('start_date');
         $endDate = $request->get('end_date');
 
-        if (!$startDate) {
-            $startDate = now()->startOfMonth();
-        } else {
+        // Only apply date filter if dates are provided
+        $applyDateFilter = !empty($startDate) && !empty($endDate);
+        
+        if ($applyDateFilter) {
             $startDate = Carbon::parse($startDate);
-        }
-
-        if (!$endDate) {
-            $endDate = now()->endOfMonth();
-        } else {
             $endDate = Carbon::parse($endDate);
+        } else {
+            // Default to all time if no dates provided
+            $startDate = null;
+            $endDate = null;
         }
 
         // Most requested tests
-        $popularTests = LabTest::withCount(['visitTests' => function ($query) use ($startDate, $endDate) {
-            $query->whereHas('visit', function ($q) use ($startDate, $endDate) {
-                $q->whereBetween('visit_date', [$startDate, $endDate]);
-            });
+        $popularTests = LabTest::withCount(['visitTests' => function ($query) use ($startDate, $endDate, $applyDateFilter) {
+            if ($applyDateFilter) {
+                $query->whereHas('visit', function ($q) use ($startDate, $endDate) {
+                    $q->whereBetween('visit_date', [$startDate, $endDate]);
+                });
+            }
         }])
-        ->withSum(['visitTests' => function ($query) use ($startDate, $endDate) {
-            $query->whereHas('visit', function ($q) use ($startDate, $endDate) {
-                $q->whereBetween('visit_date', [$startDate, $endDate]);
-            });
+        ->withSum(['visitTests' => function ($query) use ($startDate, $endDate, $applyDateFilter) {
+            if ($applyDateFilter) {
+                $query->whereHas('visit', function ($q) use ($startDate, $endDate) {
+                    $q->whereBetween('visit_date', [$startDate, $endDate]);
+                });
+            }
         }], 'price')
         ->orderByDesc('visit_tests_count')
         ->limit(10)
@@ -184,10 +197,12 @@ class ReportController extends Controller
 
         // Tests by category
         $testsByCategory = LabTest::with('category')
-            ->withCount(['visitTests' => function ($query) use ($startDate, $endDate) {
-                $query->whereHas('visit', function ($q) use ($startDate, $endDate) {
-                    $q->whereBetween('visit_date', [$startDate, $endDate]);
-                });
+            ->withCount(['visitTests' => function ($query) use ($startDate, $endDate, $applyDateFilter) {
+                if ($applyDateFilter) {
+                    $query->whereHas('visit', function ($q) use ($startDate, $endDate) {
+                        $q->whereBetween('visit_date', [$startDate, $endDate]);
+                    });
+                }
             }])
             ->get()
             ->groupBy('category.name')
@@ -200,42 +215,45 @@ class ReportController extends Controller
             });
 
         // Test completion status
-        $testStatus = DB::table('visit_tests')
-            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
-            ->whereBetween('visits.visit_date', [$startDate, $endDate])
-            ->selectRaw('visit_tests.status, COUNT(*) as count')
+        $testStatusQuery = DB::table('visit_tests')
+            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id');
+        if ($applyDateFilter) {
+            $testStatusQuery->whereBetween('visits.visit_date', [$startDate, $endDate]);
+        }
+        $testStatus = $testStatusQuery->selectRaw('visit_tests.status, COUNT(*) as count')
             ->groupBy('visit_tests.status')
             ->get();
 
         // Daily test volume
-        $dailyTests = DB::table('visit_tests')
-            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
-            ->whereBetween('visits.visit_date', [$startDate, $endDate])
-            ->selectRaw('DATE(visits.visit_date) as date, COUNT(*) as count')
+        $dailyTestsQuery = DB::table('visit_tests')
+            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id');
+        if ($applyDateFilter) {
+            $dailyTestsQuery->whereBetween('visits.visit_date', [$startDate, $endDate]);
+        }
+        $dailyTests = $dailyTestsQuery->selectRaw('DATE(visits.visit_date) as date, COUNT(*) as count')
             ->groupBy('date')
             ->orderBy('date')
             ->get();
 
         // Summary stats
+        $summaryQuery = DB::table('visit_tests')
+            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id');
+        if ($applyDateFilter) {
+            $summaryQuery->whereBetween('visits.visit_date', [$startDate, $endDate]);
+        }
+        
+        $revenueQuery = DB::table('visit_tests')
+            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id');
+        if ($applyDateFilter) {
+            $revenueQuery->whereBetween('visits.visit_date', [$startDate, $endDate]);
+        }
+        
         $summary = [
-            'total_tests_ordered' => DB::table('visit_tests')
-                ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
-                ->whereBetween('visits.visit_date', [$startDate, $endDate])
-                ->count(),
-            'completed_tests' => DB::table('visit_tests')
-                ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
-                ->whereBetween('visits.visit_date', [$startDate, $endDate])
-                ->where('visit_tests.status', 'completed')
-                ->count(),
-            'pending_tests' => DB::table('visit_tests')
-                ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
-                ->whereBetween('visits.visit_date', [$startDate, $endDate])
-                ->where('visit_tests.status', 'pending')
-                ->count(),
-            'total_test_revenue' => DB::table('visit_tests')
-                ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
-                ->whereBetween('visits.visit_date', [$startDate, $endDate])
-                ->sum('visit_tests.price'),
+            'total_tests' => (clone $summaryQuery)->count(),
+            'total_tests_ordered' => (clone $summaryQuery)->count(), // Keep for backward compatibility
+            'completed_tests' => (clone $summaryQuery)->where('visit_tests.status', 'completed')->count(),
+            'pending_tests' => (clone $summaryQuery)->where('visit_tests.status', 'pending')->count(),
+            'total_test_revenue' => $revenueQuery->sum('visit_tests.price'),
         ];
 
         return response()->json([
@@ -244,10 +262,10 @@ class ReportController extends Controller
             'test_status' => $testStatus,
             'daily_tests' => $dailyTests,
             'summary' => $summary,
-            'period' => [
+            'period' => $applyDateFilter ? [
                 'start_date' => $startDate->toDateString(),
                 'end_date' => $endDate->toDateString(),
-            ],
+            ] : null,
         ]);
     }
 
@@ -256,21 +274,24 @@ class ReportController extends Controller
         $startDate = $request->get('start_date');
         $endDate = $request->get('end_date');
 
-        if (!$startDate) {
-            $startDate = now()->startOfMonth();
-        } else {
+        // Only apply date filter if dates are provided
+        $applyDateFilter = !empty($startDate) && !empty($endDate);
+        
+        if ($applyDateFilter) {
             $startDate = Carbon::parse($startDate);
-        }
-
-        if (!$endDate) {
-            $endDate = now()->endOfMonth();
-        } else {
             $endDate = Carbon::parse($endDate);
+        } else {
+            $startDate = null;
+            $endDate = null;
         }
 
         // Revenue data
-        $totalRevenue = Visit::whereBetween('visit_date', [$startDate, $endDate])->sum('final_amount');
-        $totalVisits = Visit::whereBetween('visit_date', [$startDate, $endDate])->count();
+        $revenueQuery = Visit::query();
+        if ($applyDateFilter) {
+            $revenueQuery->whereBetween('visit_date', [$startDate, $endDate]);
+        }
+        $totalRevenue = $revenueQuery->sum('final_amount');
+        $totalVisits = (clone $revenueQuery)->count();
         
         // Expense data (using income table as fallback since expenses table doesn't exist)
         $totalExpenses = 0; // No expenses table available
@@ -280,9 +301,11 @@ class ReportController extends Controller
         $netProfit = $totalRevenue - $totalExpenses;
         
         // Daily financial data
-        $dailyFinancial = DB::table('visits')
-            ->selectRaw('DATE(visit_date) as date, SUM(final_amount) as revenue, COUNT(*) as visits')
-            ->whereBetween('visit_date', [$startDate, $endDate])
+        $dailyFinancialQuery = DB::table('visits');
+        if ($applyDateFilter) {
+            $dailyFinancialQuery->whereBetween('visit_date', [$startDate, $endDate]);
+        }
+        $dailyFinancial = $dailyFinancialQuery->selectRaw('DATE(visit_date) as date, SUM(final_amount) as revenue, COUNT(*) as visits')
             ->groupBy('date')
             ->orderBy('date')
             ->get();
@@ -290,9 +313,11 @@ class ReportController extends Controller
         // Expenses by category (no expenses table available)
         $expensesByCategory = collect([]);
 
-        // Payment methods for revenue (simplified since payment_method column doesn't exist)
+        // Payment methods for revenue - use amount_paid from invoices table
+        $invoiceTotal = Invoice::sum('amount_paid');
+        
         $revenueByPaymentMethod = collect([
-            (object)['payment_method' => 'Cash', 'count' => Invoice::count(), 'total' => Invoice::sum('paid')]
+            (object)['payment_method' => 'Cash', 'count' => Invoice::count(), 'total' => $invoiceTotal]
         ]);
 
         // Summary stats
@@ -312,10 +337,10 @@ class ReportController extends Controller
             'daily_financial' => $dailyFinancial,
             'expenses_by_category' => $expensesByCategory,
             'revenue_by_payment_method' => $revenueByPaymentMethod,
-            'period' => [
+            'period' => $applyDateFilter ? [
                 'start_date' => $startDate->toDateString(),
                 'end_date' => $endDate->toDateString(),
-            ],
+            ] : null,
         ]);
     }
 

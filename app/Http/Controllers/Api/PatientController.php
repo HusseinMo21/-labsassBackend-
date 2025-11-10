@@ -602,6 +602,15 @@ class PatientController extends Controller
             'attendance_date' => 'nullable|date',
             'delivery_date' => 'nullable|date',
             'previous_tests' => 'nullable|string|max:255',
+            // Delivery tracking fields
+            'report_delivered' => 'nullable|boolean',
+            'report_delivery_date' => 'nullable|date',
+            'report_delivery_notes' => 'nullable|string',
+            'report_delivered_by' => 'nullable|string|max:255',
+            'wax_blocks_delivered' => 'nullable|boolean',
+            'wax_blocks_delivery_date' => 'nullable|date',
+            'wax_blocks_delivery_notes' => 'nullable|string',
+            'wax_blocks_delivered_by' => 'nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {
