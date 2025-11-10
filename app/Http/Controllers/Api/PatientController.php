@@ -67,9 +67,14 @@ class PatientController extends Controller
             });
         }
 
-        $patients = $query->with(['visits' => function($q) {
-            $q->latest()->limit(5); // Get the latest 5 visits for financial info
-        }])->orderBy('id', 'desc')->paginate(15);
+        $patients = $query->with([
+            'visits' => function($q) {
+                $q->latest()->limit(5); // Get the latest 5 visits for financial info
+            },
+            'labRequests' => function($q) {
+                $q->latest()->limit(1); // Get the latest lab request for lab number
+            }
+        ])->orderBy('id', 'desc')->paginate(15);
         
         // Transform the data to ensure proper formatting and avoid N/A values
         $patients->getCollection()->transform(function ($patient) {
@@ -100,6 +105,12 @@ class PatientController extends Controller
             // Handle organization - use organization_id if available
             if (!$patient->organization && $patient->organization_id) {
                 $patient->organization = $patient->organization_id;
+            }
+            
+            // Get lab number from latest lab request, fallback to legacy 'lab' field
+            $latestLabRequest = $patient->labRequests->first();
+            if ($latestLabRequest && $latestLabRequest->full_lab_no) {
+                $patient->lab = $latestLabRequest->full_lab_no;
             }
             
             // Add financial information from latest visit
@@ -1501,9 +1512,20 @@ class PatientController extends Controller
               ->orWhere('lab', 'like', "%{$query}%")
               ->orWhere('id', 'like', "%{$query}%");
         })
-        ->with(['labRequest'])
+        ->with(['labRequests' => function($q) {
+            $q->latest()->limit(1);
+        }])
         ->limit(10)
         ->get();
+
+        // Update lab number from latest lab request
+        $patients->transform(function ($patient) {
+            $latestLabRequest = $patient->labRequests->first();
+            if ($latestLabRequest && $latestLabRequest->full_lab_no) {
+                $patient->lab = $latestLabRequest->full_lab_no;
+            }
+            return $patient;
+        });
 
         return response()->json(['data' => $patients]);
     }
