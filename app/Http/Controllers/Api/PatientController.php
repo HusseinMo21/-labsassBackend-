@@ -569,14 +569,46 @@ class PatientController extends Controller
 
     public function show(Patient $patient)
     {
-        $patient->load([
-            'visits' => function ($q) {
-                $q->with(['visitTests.labTest', 'invoice', 'labRequest'])->latest();
-            },
-            'visits.visitTests.performedBy',
-        ]);
+        try {
+            $patient->load([
+                'visits' => function ($q) {
+                    $q->with([
+                        'visitTests' => function ($q) {
+                            $q->with(['labTest', 'performedBy']);
+                        },
+                        'labRequest.invoice'
+                    ])->latest();
+                },
+            ]);
 
-        return response()->json($patient);
+            // Manually attach invoice to each visit through labRequest
+            $patient->visits->each(function ($visit) {
+                if ($visit->labRequest && $visit->labRequest->invoice) {
+                    $visit->setRelation('invoice', $visit->labRequest->invoice);
+                }
+            });
+
+            return response()->json($patient);
+        } catch (\Exception $e) {
+            \Log::error('Error fetching patient details', [
+                'patient_id' => $patient->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            
+            // Return patient without relationships if loading fails
+            return response()->json([
+                'id' => $patient->id,
+                'name' => $patient->name,
+                'phone' => $patient->phone,
+                'age' => $patient->age,
+                'gender' => $patient->gender,
+                'visits' => [],
+                'error' => 'Failed to load patient details: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function update(Request $request, Patient $patient)
