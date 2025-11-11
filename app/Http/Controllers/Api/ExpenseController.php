@@ -52,8 +52,8 @@ class ExpenseController extends Controller
         $validator = Validator::make($request->all(), [
             'description' => 'required|string|max:255',
             'amount' => 'required|numeric|min:0',
-            'category' => 'required|string|max:100',
-            'expense_date' => 'required|date',
+            'category' => 'nullable|string|max:100',
+            'expense_date' => 'nullable|date',
             'payment_method' => 'nullable|string|max:50',
             'reference_number' => 'nullable|string|max:100',
             'notes' => 'nullable|string',
@@ -69,8 +69,8 @@ class ExpenseController extends Controller
         $expense = Expense::create([
             'description' => $request->description,
             'amount' => $request->amount,
-            'category' => $request->category,
-            'expense_date' => $request->expense_date,
+            'category' => $request->category ?? 'General',
+            'expense_date' => $request->expense_date ?? now()->toDateString(),
             'payment_method' => $request->payment_method,
             'reference_number' => $request->reference_number,
             'notes' => $request->notes,
@@ -102,8 +102,8 @@ class ExpenseController extends Controller
         $validator = Validator::make($request->all(), [
             'description' => 'required|string|max:255',
             'amount' => 'required|numeric|min:0',
-            'category' => 'required|string|max:100',
-            'expense_date' => 'required|date',
+            'category' => 'nullable|string|max:100',
+            'expense_date' => 'nullable|date',
             'payment_method' => 'nullable|string|max:50',
             'reference_number' => 'nullable|string|max:100',
             'notes' => 'nullable|string',
@@ -119,8 +119,8 @@ class ExpenseController extends Controller
         $expense->update([
             'description' => $request->description,
             'amount' => $request->amount,
-            'category' => $request->category,
-            'expense_date' => $request->expense_date,
+            'category' => $request->category ?? $expense->category ?? 'General',
+            'expense_date' => $request->expense_date ?? $expense->expense_date ?? now()->toDateString(),
             'payment_method' => $request->payment_method,
             'reference_number' => $request->reference_number,
             'notes' => $request->notes,
