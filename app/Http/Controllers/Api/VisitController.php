@@ -14,6 +14,30 @@ use Illuminate\Support\Facades\DB;
 class VisitController extends Controller
 {
     /**
+     * Helper method to safely parse metadata from visit
+     */
+    private function parseMetadata($visit)
+    {
+        if (!$visit->metadata) {
+            return [];
+        }
+        
+        if (is_array($visit->metadata)) {
+            return $visit->metadata;
+        }
+        
+        if (is_string($visit->metadata)) {
+            try {
+                return json_decode($visit->metadata, true) ?? [];
+            } catch (\Exception $e) {
+                \Log::error('Failed to decode metadata: ' . $e->getMessage());
+                return [];
+            }
+        }
+        
+        return [];
+    }
+    /**
      * Get receipt details for any visit (works for both check-in and patient registration visits)
      * Updated to match UnpaidInvoicesController format
      */
@@ -666,45 +690,77 @@ class VisitController extends Controller
 
     public function update(Request $request, $id)
     {
-        $visit = Visit::findOrFail($id);
-        $validated = $request->validate([
-            'notes' => 'nullable|string',
-            'status' => 'nullable|string',
-            'clinical_data' => 'nullable|string',
-            'specimen_information' => 'nullable|string',
-            'gross_examination' => 'nullable|string',
-            'microscopic_description' => 'nullable|string',
-            'diagnosis' => 'nullable|string',
-            'recommendations' => 'nullable|string',
-            'referred_doctor' => 'nullable|string',
-            'test_status' => 'nullable|string',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,bmp,webp|max:20480', // 20MB limit
-        ]);
-        
-        // Handle image upload
-        if ($request->hasFile('image')) {
-            $image = $request->file('image');
-            $imagePath = $image->store('visit-images', 'public');
+        try {
+            $visit = Visit::findOrFail($id);
             
-            $validated['image_path'] = $imagePath;
-            $validated['image_filename'] = $image->getClientOriginalName();
-            $validated['image_mime_type'] = $image->getMimeType();
-            $validated['image_size'] = $image->getSize();
-            $validated['image_uploaded_at'] = now();
-            $validated['image_uploaded_by'] = auth()->id();
+            // Refresh the model to ensure we have the latest data
+            $visit->refresh();
+            
+            $validated = $request->validate([
+                'notes' => 'nullable|string',
+                'status' => 'nullable|string',
+                'clinical_data' => 'nullable|string',
+                'specimen_information' => 'nullable|string',
+                'gross_examination' => 'nullable|string',
+                'microscopic_description' => 'nullable|string',
+                'diagnosis' => 'nullable|string',
+                'recommendations' => 'nullable|string',
+                'referred_doctor' => 'nullable|string',
+                'test_status' => 'nullable|string',
+                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,bmp,webp|max:20480', // 20MB limit
+                'total_amount' => 'nullable|numeric|min:0',
+                'final_amount' => 'nullable|numeric|min:0',
+                'upfront_payment' => 'nullable|numeric|min:0',
+                'remaining_balance' => 'nullable|numeric',
+                'payment_method' => 'nullable|string|max:50',
+                'metadata' => 'nullable|array',
+            ]);
+            
+            // Handle image upload
+            if ($request->hasFile('image')) {
+                $image = $request->file('image');
+                $imagePath = $image->store('visit-images', 'public');
+                
+                $validated['image_path'] = $imagePath;
+                $validated['image_filename'] = $image->getClientOriginalName();
+                $validated['image_mime_type'] = $image->getMimeType();
+                $validated['image_size'] = $image->getSize();
+                $validated['image_uploaded_at'] = now();
+                $validated['image_uploaded_by'] = auth()->id();
+            }
+            
+            // Handle metadata - merge with existing metadata if provided
+            if ($request->has('metadata') && is_array($request->metadata)) {
+                // Get existing metadata using helper method
+                $existingMetadata = $this->parseMetadata($visit);
+                
+                // Merge with new metadata (new values override existing ones)
+                $validated['metadata'] = array_merge($existingMetadata, $request->metadata);
+            }
+            
+            $visit->update($validated);
+            
+            // If test_status is being set, also update all visit_tests status accordingly
+            if (isset($validated['test_status'])) {
+                $visit->visitTests()->update(['status' => $validated['test_status']]);
+            }
+            
+            return response()->json([
+                'message' => 'Visit updated successfully' . ($request->hasFile('image') ? ' with image' : ''),
+                'visit' => $visit->fresh()
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error updating visit: ' . $e->getMessage(), [
+                'visit_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all()
+            ]);
+            
+            return response()->json([
+                'message' => 'Failed to update visit: ' . $e->getMessage()
+            ], 500);
         }
-        
-        $visit->update($validated);
-        
-        // If test_status is being set, also update all visit_tests status accordingly
-        if (isset($validated['test_status'])) {
-            $visit->visitTests()->update(['status' => $validated['test_status']]);
-        }
-        
-        return response()->json([
-            'message' => 'Visit updated successfully' . ($request->hasFile('image') ? ' with image' : ''),
-            'visit' => $visit->fresh()
-        ]);
     }
 
     public function updateTestResult(Request $request, $visitId, $testId)

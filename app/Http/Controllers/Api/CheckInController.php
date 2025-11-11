@@ -31,6 +31,31 @@ class CheckInController extends Controller
         $this->barcodeService = $barcodeService;
     }
 
+    /**
+     * Helper method to safely parse metadata from visit
+     */
+    private function parseMetadata($visit)
+    {
+        if (!$visit->metadata) {
+            return [];
+        }
+        
+        if (is_array($visit->metadata)) {
+            return $visit->metadata;
+        }
+        
+        if (is_string($visit->metadata)) {
+            try {
+                return json_decode($visit->metadata, true) ?? [];
+            } catch (\Exception $e) {
+                \Log::error('Failed to decode metadata: ' . $e->getMessage());
+                return [];
+            }
+        }
+        
+        return [];
+    }
+
     public function registerPatient(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -500,7 +525,7 @@ class CheckInController extends Controller
         }
         
         // Get payment breakdown from visit metadata
-        $metadata = json_decode($visit->metadata ?? '{}', true);
+        $metadata = $this->parseMetadata($visit);
         $financialData = $metadata['financial_data'] ?? []; // Added to read financial_data
         $paymentDetails = $metadata['payment_details'] ?? [];
         
@@ -717,7 +742,7 @@ class CheckInController extends Controller
         }
         
         // If no visitTests, try to get from patient registration metadata
-        $metadata = json_decode($visit->metadata ?? '{}', true);
+        $metadata = $this->parseMetadata($visit);
         $patientData = $metadata['patient_data'] ?? [];
         
         // Also check lab request metadata for patient registration data
@@ -816,7 +841,7 @@ class CheckInController extends Controller
             }
             
             // Get patient registration data from metadata
-            $metadata = json_decode($visit->metadata ?? '{}', true);
+            $metadata = $this->parseMetadata($visit);
             $patientData = $metadata['patient_data'] ?? [];
             
             // Also check lab request metadata for patient registration data
@@ -1000,7 +1025,7 @@ class CheckInController extends Controller
             // Use the same payment breakdown logic as the normal receipt
             try {
                 // Get payment breakdown from visit metadata (same as getUnpaidInvoiceReceiptData)
-                $metadata = json_decode($visit->metadata ?? '{}', true);
+                $metadata = $this->parseMetadata($visit);
                 $financialData = $metadata['financial_data'] ?? [];
                 $paymentDetails = $metadata['payment_details'] ?? [];
                 
@@ -1262,7 +1287,7 @@ class CheckInController extends Controller
         }
         
         // Get payment data from visit metadata
-        $metadata = json_decode($visit->metadata ?? '{}', true);
+        $metadata = $this->parseMetadata($visit);
         $paymentDetails = $metadata['payment_details'] ?? [];
         $patientData = $metadata['patient_data'] ?? [];
         
@@ -1365,7 +1390,20 @@ class CheckInController extends Controller
         }
         
         // Get payment breakdown from visit metadata
-        $metadata = json_decode($visit->metadata ?? '{}', true);
+        // Handle metadata - it might be an array (from cast) or a JSON string
+        $metadata = [];
+        if ($visit->metadata) {
+            if (is_array($visit->metadata)) {
+                $metadata = $visit->metadata;
+            } elseif (is_string($visit->metadata)) {
+                try {
+                    $metadata = json_decode($visit->metadata, true) ?? [];
+                } catch (\Exception $e) {
+                    \Log::error('Failed to decode metadata in generateUnpaidInvoiceReceipt: ' . $e->getMessage());
+                    $metadata = [];
+                }
+            }
+        }
         $financialData = $metadata['financial_data'] ?? [];
         $paymentDetails = $metadata['payment_details'] ?? [];
         
@@ -1404,7 +1442,7 @@ class CheckInController extends Controller
             'tests' => $this->getTestsForReceipt($visit),
             'total_amount' => $financialData['total_amount'] ?? ($invoice ? $invoice->total_amount : ($visit->total_amount ?: 0)),
             'discount_amount' => $visit->discount_amount ?: 0,
-            'final_amount' => $financialData['total_amount'] ?? ($invoice ? $invoice->total_amount : ($visit->final_amount ?: 0)),
+            'final_amount' => $financialData['final_amount'] ?? ($invoice ? $invoice->total_amount : ($visit->final_amount ?: 0)),
             'upfront_payment' => $financialData['amount_paid'] ?? $this->calculatePaidAmount($visit, $invoice),
             'remaining_balance' => $financialData['remaining_balance'] ?? $this->calculateRemainingBalance($visit, $invoice),
             'payment_method' => $this->getPaymentMethod($visit, $payments),
@@ -1511,7 +1549,7 @@ class CheckInController extends Controller
         }
         
         // Get payment breakdown from visit metadata
-        $metadata = json_decode($visit->metadata ?? '{}', true);
+        $metadata = $this->parseMetadata($visit);
         $financialData = $metadata['financial_data'] ?? [];
         $paymentDetails = $metadata['payment_details'] ?? [];
         
@@ -1604,7 +1642,7 @@ class CheckInController extends Controller
         }
         
         // Get payment breakdown from visit metadata
-        $metadata = json_decode($visit->metadata ?? '{}', true);
+        $metadata = $this->parseMetadata($visit);
         $financialData = $metadata['financial_data'] ?? [];
         $paymentDetails = $metadata['payment_details'] ?? [];
         
