@@ -71,7 +71,7 @@ class LabRequestController extends Controller
                 if ($labRequest->visits && $labRequest->visits->count() > 0) {
                     $latestVisit = $labRequest->visits->sortByDesc('created_at')->first();
                     if ($latestVisit && $latestVisit->metadata) {
-                        $metadata = json_decode($latestVisit->metadata, true);
+                        $metadata = is_string($latestVisit->metadata) ? json_decode($latestVisit->metadata, true) : ($latestVisit->metadata ?? []);
                         $patientData = $metadata['patient_data'] ?? [];
                         $numberOfSamples = intval($patientData['number_of_samples'] ?? 0);
                     }
@@ -497,7 +497,7 @@ class LabRequestController extends Controller
                     if ($latestVisit && $latestVisit->metadata) {
                         try {
                             // Handle both string and array metadata
-                            $metadata = is_string($latestVisit->metadata) ? json_decode($latestVisit->metadata, true) : $latestVisit->metadata;
+                            $metadata = is_string($latestVisit->metadata) ? json_decode($latestVisit->metadata, true) : ($latestVisit->metadata ?? []);
                             $patientData = $metadata['patient_data'] ?? [];
                             
                             // Prioritize visit metadata over patient record (visit data is more accurate)
@@ -555,7 +555,7 @@ class LabRequestController extends Controller
                 // Try to get data from lab request metadata as fallback
                 if ($labRequest->metadata) {
                     try {
-                        $labRequestMetadata = is_string($labRequest->metadata) ? json_decode($labRequest->metadata, true) : $labRequest->metadata;
+                        $labRequestMetadata = is_string($labRequest->metadata) ? json_decode($labRequest->metadata, true) : ($labRequest->metadata ?? []);
                         $labRequestPatientData = $labRequestMetadata['patient_data'] ?? [];
                         
                         \Log::info('Lab request details - sample data fallback debug', [
@@ -772,6 +772,12 @@ class LabRequestController extends Controller
                 if ($labRequest->visits && $labRequest->visits->count() > 0) {
                     $latestVisit = $labRequest->visits->sortByDesc('created_at')->first();
                     if ($latestVisit) {
+                        // Initialize variables to avoid undefined variable errors
+                        $paymentDetails = [];
+                        $patientData = [];
+                        $financialData = [];
+                        $visitMetadata = [];
+                        
                         // PRIORITY 1: Get payment data from patient table (source of truth - same as UnpaidInvoicesController)
                         // This ensures consistency across the system
                         $totalAmount = $patient->total_amount ?? 0;
@@ -804,9 +810,7 @@ class LabRequestController extends Controller
                                 'visit_id' => $latestVisit->id,
                                 'lab_request_id' => $labRequest->id
                             ]);
-                            $paymentDetails = [];
-                            $patientData = [];
-                            $financialData = [];
+                            // Variables already initialized above, so no need to set them again
                         }
                         
                         $remainingAmount = $totalAmount - $paidAmount;

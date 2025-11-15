@@ -225,7 +225,7 @@ class OrganizationController extends Controller
                         $visitSamples = 0;
                         foreach ($visits as $visit) {
                             if (isset($visit->metadata) && $visit->metadata) {
-                                $metadata = json_decode($visit->metadata, true);
+                                $metadata = is_string($visit->metadata) ? json_decode($visit->metadata, true) : ($visit->metadata ?? []);
                                 if (isset($metadata['number_of_samples'])) {
                                     $visitSamples = max($visitSamples, (int)$metadata['number_of_samples']);
                                 } elseif (isset($metadata['patient_data']['number_of_samples'])) {
@@ -250,7 +250,7 @@ class OrganizationController extends Controller
                             // Try to get delivery date from metadata or calculate it
                             $deliveryDate = null;
                             if (isset($visit->metadata) && $visit->metadata) {
-                                $metadata = json_decode($visit->metadata, true);
+                                $metadata = is_string($visit->metadata) ? json_decode($visit->metadata, true) : ($visit->metadata ?? []);
                                 if (isset($metadata['delivery_date'])) {
                                     $deliveryDate = $metadata['delivery_date'];
                                 } elseif (isset($metadata['patient_data']['delivery_date'])) {
