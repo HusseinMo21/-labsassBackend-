@@ -772,12 +772,33 @@ class LabRequestController extends Controller
                 if ($labRequest->visits && $labRequest->visits->count() > 0) {
                     $latestVisit = $labRequest->visits->sortByDesc('created_at')->first();
                     if ($latestVisit) {
-                        // Get payment data from visit metadata first
+                        // PRIORITY 1: Get payment data from patient table (source of truth - same as UnpaidInvoicesController)
+                        // This ensures consistency across the system
+                        $totalAmount = $patient->total_amount ?? 0;
+                        $paidAmount = $patient->amount_paid ?? 0;
+                        
+                        // PRIORITY 2: If patient table doesn't have data, try visit direct fields
+                        if ($totalAmount == 0) {
+                            $totalAmount = $latestVisit->total_amount ?? $latestVisit->final_amount ?? 0;
+                        }
+                        if ($paidAmount == 0) {
+                            $paidAmount = $latestVisit->upfront_payment ?? 0;
+                        }
+                        
+                        // PRIORITY 3: Fallback to visit metadata if still no data
                         try {
                             $visitMetadata = is_string($latestVisit->metadata) ? json_decode($latestVisit->metadata ?? '{}', true) : ($latestVisit->metadata ?? []);
                             $paymentDetails = $visitMetadata['payment_details'] ?? [];
                             $patientData = $visitMetadata['patient_data'] ?? [];
                             $financialData = $visitMetadata['financial_data'] ?? [];
+                            
+                            // Only use metadata if patient table doesn't have the data
+                            if ($totalAmount == 0) {
+                                $totalAmount = $financialData['total_amount'] ?? $patientData['total_amount'] ?? 0;
+                            }
+                            if ($paidAmount == 0) {
+                                $paidAmount = $financialData['amount_paid'] ?? $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? 0;
+                            }
                         } catch (\Exception $e) {
                             \Log::warning('Error parsing visit metadata for payment: ' . $e->getMessage(), [
                                 'visit_id' => $latestVisit->id,
@@ -788,32 +809,21 @@ class LabRequestController extends Controller
                             $financialData = [];
                         }
                         
-                        // Calculate amounts from metadata or direct fields (prioritize financial_data, then visit data)
-                        $visitTotalAmount = $financialData['total_amount'] ?? $patientData['total_amount'] ?? $latestVisit->total_amount ?? 0;
-                        $visitPaidAmount = $financialData['amount_paid'] ?? $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? $latestVisit->upfront_payment ?? 0;
-                        
-                        // Prioritize visit data over patient data (visit data is more accurate)
-                        if ($visitTotalAmount > 0) {
-                            $totalAmount = $visitTotalAmount;
-                        }
-                        if ($visitPaidAmount > 0) {
-                            $paidAmount = $visitPaidAmount;
-                        }
-                        
                         $remainingAmount = $totalAmount - $paidAmount;
-                        $paymentStatus = $financialData['payment_status'] ?? $visitMetadata['payment_status'] ?? ($remainingAmount > 0 ? 'partial' : 'paid');
+                        $paymentStatus = $remainingAmount <= 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'unpaid');
                         
-                        \Log::info('Lab request details - financial calculation', [
+                        \Log::info('Lab request details - financial calculation (using patient table as source of truth)', [
                             'lab_request_id' => $labRequest->id,
                             'lab_no' => $labNo,
                             'visit_id' => $latestVisit->id,
-                            'total_amount' => $totalAmount,
-                            'paid_amount' => $paidAmount,
+                            'patient_id' => $patient->id,
+                            'patient_total_amount' => $patient->total_amount ?? 0,
+                            'patient_amount_paid' => $patient->amount_paid ?? 0,
+                            'calculated_total_amount' => $totalAmount,
+                            'calculated_paid_amount' => $paidAmount,
                             'remaining_amount' => $remainingAmount,
                             'payment_status' => $paymentStatus,
-                            'visit_metadata' => $visitMetadata,
-                            'payment_details' => $paymentDetails,
-                            'patient_data' => $patientData
+                            'data_source' => 'patient_table_prioritized'
                         ]);
                     
                     // Create payment history entry
@@ -840,14 +850,6 @@ class LabRequestController extends Controller
                             'card_method' => $paymentDetails['additional_payment_method'] ?? $patientData['additional_payment_method'] ?? null,
                         ],
                     ];
-                    
-                    // Fallback to patient data if visit data is missing
-                    if ($totalAmount == 0) {
-                        $totalAmount = $patient->total_amount ?? 0;
-                        $paidAmount = $patient->amount_paid ?? 0;
-                        $remainingAmount = $totalAmount - $paidAmount;
-                        $paymentStatus = $remainingAmount > 0 ? 'partial' : 'paid';
-                    }
                 }
             }
             } catch (\Exception $e) {

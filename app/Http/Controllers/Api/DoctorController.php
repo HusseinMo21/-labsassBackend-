@@ -118,18 +118,25 @@ class DoctorController extends Controller
         ]);
     }
 
-    public function patients(Doctor $doctor)
+    public function patients(Doctor $doctor, Request $request)
     {
         try {
-            // Get patients with basic data first - simplified approach
-            $patients = $doctor->patients()
+            // Get pagination parameters
+            $perPage = $request->get('per_page', 10); // Default 10 per page
+            $page = $request->get('page', 1);
+            
+            // Get patients with basic data first - simplified approach with pagination
+            $patientsQuery = $doctor->patients()
                 ->withCount('visits')
-                ->orderBy('id', 'desc')
-                ->get();
+                ->orderBy('id', 'desc');
+            
+            // Paginate the query
+            $patients = $patientsQuery->paginate($perPage, ['*'], 'page', $page);
 
-            // Transform patients to include basic data first
-            $transformedPatients = $patients->map(function ($patient) {
-                // Debug patient data
+
+            // Transform paginated collection
+            $transformedPatients = $patients->getCollection()->map(function ($patient) {
+                // Same transformation logic as before
                 \Log::info("Patient {$patient->id} ({$patient->name}) - lab={$patient->lab}, phone={$patient->phone}");
 
                 // Try to get lab number from lab requests if patient doesn't have one
@@ -282,9 +289,18 @@ class DoctorController extends Controller
                 return $result;
             });
 
+            // Set the transformed collection back to paginator
+            $patients->setCollection($transformedPatients);
+
             return response()->json([
                 'doctor' => $doctor,
-                'patients' => $transformedPatients,
+                'patients' => $patients->items(),
+                'current_page' => $patients->currentPage(),
+                'last_page' => $patients->lastPage(),
+                'per_page' => $patients->perPage(),
+                'total' => $patients->total(),
+                'from' => $patients->firstItem(),
+                'to' => $patients->lastItem(),
             ]);
         } catch (\Exception $e) {
             \Log::error('Error in DoctorController patients method: ' . $e->getMessage(), [

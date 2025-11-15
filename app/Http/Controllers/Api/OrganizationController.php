@@ -118,17 +118,23 @@ class OrganizationController extends Controller
         ]);
     }
 
-    public function patients(Organization $organization)
+    public function patients(Organization $organization, Request $request)
     {
         try {
-            // Get patients with basic data first - simplified approach
-            $patients = $organization->patients()
+            // Get pagination parameters
+            $perPage = $request->get('per_page', 10); // Default 10 per page
+            $page = $request->get('page', 1);
+            
+            // Get patients with basic data first - simplified approach with pagination
+            $patientsQuery = $organization->patients()
                 ->withCount('visits')
-                ->orderBy('id', 'desc')
-                ->get();
+                ->orderBy('id', 'desc');
+            
+            // Paginate the query
+            $patients = $patientsQuery->paginate($perPage, ['*'], 'page', $page);
 
-            // Transform patients to include basic data first
-            $transformedPatients = $patients->map(function ($patient) {
+            // Transform paginated collection
+            $transformedPatients = $patients->getCollection()->map(function ($patient) {
                 // Debug patient data
                 \Log::info("Patient {$patient->id} ({$patient->name}) - lab={$patient->lab}, phone={$patient->phone}");
 
@@ -282,9 +288,18 @@ class OrganizationController extends Controller
                 return $result;
             });
 
+            // Set the transformed collection back to paginator
+            $patients->setCollection($transformedPatients);
+
             return response()->json([
                 'organization' => $organization,
-                'patients' => $transformedPatients,
+                'patients' => $patients->items(),
+                'current_page' => $patients->currentPage(),
+                'last_page' => $patients->lastPage(),
+                'per_page' => $patients->perPage(),
+                'total' => $patients->total(),
+                'from' => $patients->firstItem(),
+                'to' => $patients->lastItem(),
             ]);
         } catch (\Exception $e) {
             \Log::error('Error in OrganizationController patients method: ' . $e->getMessage(), [
