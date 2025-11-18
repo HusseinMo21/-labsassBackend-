@@ -1538,6 +1538,7 @@ class PatientController extends Controller
             return response()->json(['data' => []]);
         }
 
+        // First, try to find patients by direct fields
         $patients = Patient::where(function ($q) use ($query) {
             $q->where('name', 'like', "%{$query}%")
               ->orWhere('phone', 'like', "%{$query}%")
@@ -1550,16 +1551,46 @@ class PatientController extends Controller
         ->limit(10)
         ->get();
 
-        // Update lab number from latest lab request
-        $patients->transform(function ($patient) {
+        // Also search by lab_requests table (lab number might be stored there)
+        // Handle different lab number formats: "58984", "58984-2025", "58984-2025m", etc.
+        $labRequestPatients = \App\Models\LabRequest::where(function ($q) use ($query) {
+            // Search in lab_no field
+            $q->where('lab_no', 'like', "%{$query}%")
+              // Search in full_lab_no (lab_no + suffix)
+              ->orWhereRaw("CONCAT(lab_no, COALESCE(suffix, '')) LIKE ?", ["%{$query}%"])
+              // Also try searching without dashes (in case user searches "58984" for "58984-2025")
+              ->orWhereRaw("REPLACE(lab_no, '-', '') LIKE ?", ["%" . str_replace('-', '', $query) . "%"])
+              ->orWhereRaw("REPLACE(CONCAT(lab_no, COALESCE(suffix, '')), '-', '') LIKE ?", ["%" . str_replace('-', '', $query) . "%"]);
+        })
+        ->with(['patient.labRequests' => function($q) {
+            $q->latest()->limit(1);
+        }])
+        ->get()
+        ->pluck('patient')
+        ->filter()
+        ->unique('id');
+
+        // Merge both results and remove duplicates
+        $allPatients = $patients->merge($labRequestPatients)->unique('id')->take(10);
+
+        // Update lab number from latest lab request for all patients
+        $allPatients->transform(function ($patient) {
+            if (!$patient) return null;
+            
             $latestLabRequest = $patient->labRequests->first();
-            if ($latestLabRequest && $latestLabRequest->full_lab_no) {
+            if ($latestLabRequest) {
+                // Set both lab and labRequest for easier matching in frontend
                 $patient->lab = $latestLabRequest->full_lab_no;
+                $patient->labRequest = [
+                    'lab_no' => $latestLabRequest->lab_no,
+                    'full_lab_no' => $latestLabRequest->full_lab_no,
+                    'suffix' => $latestLabRequest->suffix,
+                ];
             }
             return $patient;
-        });
+        })->filter();
 
-        return response()->json(['data' => $patients]);
+        return response()->json(['data' => $allPatients->values()]);
     }
 
     /**
