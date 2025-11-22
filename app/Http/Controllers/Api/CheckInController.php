@@ -873,6 +873,62 @@ class CheckInController extends Controller
             }
             
             // Generate sample labels based on number of samples
+            // Get attendance date and delivery date from patient or visit metadata
+            $attendanceDate = null;
+            $deliveryDate = null;
+            
+            // Try to get attendance date from multiple sources
+            if (!empty($patientData['attendance_date'])) {
+                try {
+                    $attendanceDate = \Carbon\Carbon::parse($patientData['attendance_date'])->format('Y-m-d');
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to parse attendance_date from patient_data: ' . $e->getMessage());
+                }
+            }
+            if (!$attendanceDate && $visit->patient->attendance_date) {
+                try {
+                    $attendanceDate = \Carbon\Carbon::parse($visit->patient->attendance_date)->format('Y-m-d');
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to parse attendance_date from patient: ' . $e->getMessage());
+                }
+            }
+            if (!$attendanceDate && $visit->visit_date) {
+                try {
+                    $attendanceDate = \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d');
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to parse visit_date: ' . $e->getMessage());
+                }
+            }
+            if (!$attendanceDate) {
+                $attendanceDate = now()->format('Y-m-d');
+            }
+            
+            // Try to get delivery date from multiple sources
+            if (!empty($patientData['delivery_date'])) {
+                try {
+                    $deliveryDate = \Carbon\Carbon::parse($patientData['delivery_date'])->format('Y-m-d');
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to parse delivery_date from patient_data: ' . $e->getMessage());
+                }
+            }
+            if (!$deliveryDate && $visit->patient->delivery_date) {
+                try {
+                    $deliveryDate = \Carbon\Carbon::parse($visit->patient->delivery_date)->format('Y-m-d');
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to parse delivery_date from patient: ' . $e->getMessage());
+                }
+            }
+            if (!$deliveryDate && $visit->expected_delivery_date) {
+                try {
+                    $deliveryDate = \Carbon\Carbon::parse($visit->expected_delivery_date)->format('Y-m-d');
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to parse expected_delivery_date: ' . $e->getMessage());
+                }
+            }
+            if (!$deliveryDate) {
+                $deliveryDate = now()->addDays(1)->format('Y-m-d');
+            }
+            
             $sampleLabels = [];
             for ($i = 1; $i <= $numberOfSamples; $i++) {
                 // Generate sample ID like "2025-19-S1", "2025-19-S2", etc.
@@ -888,7 +944,8 @@ class CheckInController extends Controller
                     'patient_name' => $visit->patient->name,
                     'patient_id' => $visit->patient->id,
                     'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?? 'N/A'),
-                    'sample_date' => $visit->visit_date,
+                    'attendance_date' => $attendanceDate,
+                    'delivery_date' => $deliveryDate,
                     'sample_time' => $visit->visit_time ? date('H:i', strtotime($visit->visit_time)) : date('H:i'),
                     'barcode' => $barcodeImage,
                     'barcode_text' => $sampleId,
@@ -1432,6 +1489,19 @@ class CheckInController extends Controller
             }
         }
         
+        // Get attendance date and delivery date from patient or visit metadata
+        $patientData = $metadata['patient_data'] ?? [];
+        $attendanceDate = $patientData['attendance_date'] ?? ($visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : now()->format('Y-m-d'));
+        $deliveryDate = $patientData['delivery_date'] ?? ($visit->expected_delivery_date ? \Carbon\Carbon::parse($visit->expected_delivery_date)->format('Y-m-d') : now()->addDays(1)->format('Y-m-d'));
+        
+        // Also check patient record directly
+        if (!$attendanceDate && $visit->patient->attendance_date) {
+            $attendanceDate = \Carbon\Carbon::parse($visit->patient->attendance_date)->format('Y-m-d');
+        }
+        if (!$deliveryDate && $visit->patient->delivery_date) {
+            $deliveryDate = \Carbon\Carbon::parse($visit->patient->delivery_date)->format('Y-m-d');
+        }
+        
         $receiptData = [
             'receipt_number' => $visit->visit_number,
             'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?: 'N/A'),
@@ -1439,6 +1509,8 @@ class CheckInController extends Controller
             'patient_name' => $visit->patient->name ?: 'N/A',
             'patient_age' => $patientAge ?: 'N/A',
             'patient_phone' => $visit->patient->phone ?: 'N/A',
+            'attendance_date' => $attendanceDate,
+            'delivery_date' => $deliveryDate,
             'tests' => $this->getTestsForReceipt($visit),
             'total_amount' => $financialData['total_amount'] ?? ($invoice ? $invoice->total_amount : ($visit->total_amount ?: 0)),
             'discount_amount' => $visit->discount_amount ?: 0,
