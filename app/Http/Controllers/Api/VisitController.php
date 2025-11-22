@@ -193,19 +193,45 @@ class VisitController extends Controller
         
         // Search functionality
         if ($request->has('search') && !empty($request->search)) {
-            $searchTerm = $request->search;
+            $searchTerm = trim($request->search);
             $query->where(function ($q) use ($searchTerm) {
-                // Note: receipt_number column doesn't exist in original visits table
-                // $q->where('receipt_number', 'like', "%{$searchTerm}%")
-                $q->where('visit_number', 'like', "%{$searchTerm}%")
-                  ->orWhereHas('patient', function ($patientQuery) use ($searchTerm) {
-                      $patientQuery->where('name', 'like', "%{$searchTerm}%")
-                                  ->orWhere('phone', 'like', "%{$searchTerm}%")
-                                  ->orWhere('id', 'like', "%{$searchTerm}%");
-                  })
-                  ->orWhereHas('labRequest', function ($labQuery) use ($searchTerm) {
-                      $labQuery->where('lab_no', 'like', "%{$searchTerm}%");
-                  });
+                // Check if search term looks like a lab number (numeric or numeric with dash)
+                // Also check if it contains numbers (could be lab number with format like "8242-2025")
+                $isNumericSearch = is_numeric($searchTerm) || preg_match('/^\d+(-\d+)?$/', $searchTerm) || preg_match('/\d/', $searchTerm);
+                
+                // Always search in lab number fields if search term contains numbers
+                if ($isNumericSearch) {
+                    $q->where(function ($subQ) use ($searchTerm) {
+                        // Search in patient.lab field
+                        $subQ->whereHas('patient', function ($patientQuery) use ($searchTerm) {
+                            $patientQuery->where(function ($pQ) use ($searchTerm) {
+                                // Exact match
+                                $pQ->where('lab', '=', $searchTerm)
+                                   // Or contains the search term
+                                   ->orWhere('lab', 'like', "%{$searchTerm}%");
+                            });
+                        })
+                        // Search in labRequest fields
+                        ->orWhereHas('labRequest', function ($labQuery) use ($searchTerm) {
+                            $labQuery->where(function ($lQ) use ($searchTerm) {
+                                // Exact match on lab_no
+                                $lQ->where('lab_no', '=', $searchTerm)
+                                   // Or contains the search term
+                                   ->orWhere('lab_no', 'like', "%{$searchTerm}%")
+                                   // Or exact match on full_lab_no
+                                   ->orWhereRaw("CONCAT(lab_no, COALESCE(suffix, '')) = ?", [$searchTerm])
+                                   // Or contains in full_lab_no
+                                   ->orWhereRaw("CONCAT(lab_no, COALESCE(suffix, '')) LIKE ?", ["%{$searchTerm}%"]);
+                            });
+                        });
+                    });
+                }
+                
+                // Also search in patient name and phone (for all searches)
+                $q->orWhereHas('patient', function ($patientQuery) use ($searchTerm) {
+                    $patientQuery->where('name', 'like', "%{$searchTerm}%")
+                                ->orWhere('phone', 'like', "%{$searchTerm}%");
+                });
             });
         }
         
