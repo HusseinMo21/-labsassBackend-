@@ -59,13 +59,13 @@
         /* Patient Information Table */
         .patient-info {
             width: 100%;
-            margin-bottom: 15px;
+            margin-bottom: 8px;
             border-collapse: collapse;
             background-color: transparent;
         }
         
         .patient-info td {
-            padding: 12px 15px;
+            padding: 6px 15px;
             border: none;
             font-size: 13px;
             text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
@@ -114,17 +114,17 @@
         .section-title {
             font-weight: bold;
             font-size: 12px;
-            margin: 15px 0 8px 0;
+            margin: 8px 0 4px 0;
             color: #333;
             text-decoration: underline;
-            padding: 5px 0;
+            padding: 3px 0;
             background-color: transparent;
             text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
         }
         
         .section-content {
-            margin-bottom: 15px;
-            padding: 10px 12px;
+            margin-bottom: 8px;
+            padding: 8px 12px;
             border: 1px solid #ddd;
             background-color: rgba(255, 255, 255, 0.95);
             min-height: 30px;
@@ -216,23 +216,23 @@
             <tr>
                 <td class="label">Name:</td>
                 <td class="value arabic-text">{{ $visit->patient->name ?? 'N/A' }}</td>
-                <td class="label">Pathology ID:</td>
+                <td class="label">Lab No:</td>
                 <td class="value">{{ $visit->labRequest->full_lab_no ?? $visit->lab_number ?? $visit->visit_number ?? 'N/A' }}</td>
             </tr>
             <tr>
                 <td class="label">Gender:</td>
                 <td class="value">{{ ucfirst($visit->patient->gender ?? 'N/A') }}</td>
-                <td class="label">Patient ID:</td>
-                <td class="value">{{ $visit->patient->id ?? 'N/A' }}</td>
+                <td class="label">تاريخ الحضور:</td>
+                <td class="value">{{ $attendance_date ?? 'N/A' }}</td>
             </tr>
             <tr>
                 <td class="label">Age:</td>
                 <td class="value">{{ $visit->patient->age ?? 'N/A' }} Year</td>
-                <td class="label">Receiving Date:</td>
-                <td class="value">{{ $visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('d/m/Y') : 'N/A' }}</td>
+                <td class="label">تاريخ الاستلام:</td>
+                <td class="value">{{ $delivery_date ?? 'N/A' }}</td>
             </tr>
             <tr>
-                <td class="label">Referred by Prof. Dr:</td>
+                <td class="label">Referred By:</td>
                 <td class="value arabic-text">{{ $visit->patient->doctor_id ?? $visit->referred_doctor ?? 'N/A' }}</td>
                 <td class="label">Barcode:</td>
                 <td class="value">

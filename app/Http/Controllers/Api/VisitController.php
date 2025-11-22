@@ -993,32 +993,87 @@ class VisitController extends Controller
             'completed_at' => now()
         ]);
         
-        // Create a completed report to trigger Enhanced Report creation
+        // Update or create a completed report to trigger Enhanced Report creation
         if ($visit->labRequest) {
             try {
-                \Log::info('Creating completed report for visit', [
+                \Log::info('Creating/updating completed report for visit', [
                     'visit_id' => $visit->id,
                     'lab_request_id' => $visit->labRequest->id,
                     'visit_number' => $visit->visit_number
                 ]);
                 
-                $report = \App\Models\Report::create([
-                    'lab_request_id' => $visit->labRequest->id,
-                    'title' => 'Lab Report - ' . $visit->visit_number,
-                    'content' => 'Report completed for visit ' . $visit->visit_number,
-                    'status' => 'completed',
-                    'generated_by' => auth()->id() ?? 1,
-                    'generated_at' => now(),
-                ]);
+                // Check if report already exists
+                $existingReport = \App\Models\Report::where('lab_request_id', $visit->labRequest->id)->first();
                 
-                \Log::info('Completed report created successfully', [
-                    'visit_id' => $visit->id,
-                    'report_id' => $report->id,
-                    'lab_request_id' => $visit->labRequest->id,
-                    'report_status' => $report->status
-                ]);
+                if ($existingReport) {
+                    // Update existing report to completed status
+                    // Build content from visit data if report content is empty or minimal
+                    $content = $existingReport->content;
+                    
+                    // If content is empty or just placeholder, build it from visit data
+                    if (empty($content) || $content === 'Report completed for visit ' . $visit->visit_number) {
+                        $contentData = [];
+                        
+                        // Get data from visit
+                        if ($visit->clinical_data) $contentData['clinical_data'] = $visit->clinical_data;
+                        if ($visit->specimen_information) $contentData['nature_of_specimen'] = $visit->specimen_information;
+                        if ($visit->gross_examination) $contentData['gross_pathology'] = $visit->gross_examination;
+                        if ($visit->microscopic_description) $contentData['microscopic_examination'] = $visit->microscopic_description;
+                        if ($visit->diagnosis) $contentData['conclusion'] = $visit->diagnosis;
+                        if ($visit->recommendations) $contentData['recommendations'] = $visit->recommendations;
+                        if ($visit->referred_doctor) $contentData['referred_by'] = $visit->referred_doctor;
+                        
+                        $content = !empty($contentData) ? json_encode($contentData) : $content;
+                    }
+                    
+                    $existingReport->update([
+                        'status' => 'completed',
+                        'content' => $content,
+                    ]);
+                    
+                    $report = $existingReport;
+                    
+                    \Log::info('Existing report updated to completed', [
+                        'visit_id' => $visit->id,
+                        'report_id' => $report->id,
+                        'lab_request_id' => $visit->labRequest->id,
+                        'report_status' => $report->status,
+                        'has_content' => !empty($content)
+                    ]);
+                } else {
+                    // Create new report with data from visit
+                    $contentData = [];
+                    
+                    // Get data from visit
+                    if ($visit->clinical_data) $contentData['clinical_data'] = $visit->clinical_data;
+                    if ($visit->specimen_information) $contentData['nature_of_specimen'] = $visit->specimen_information;
+                    if ($visit->gross_examination) $contentData['gross_pathology'] = $visit->gross_examination;
+                    if ($visit->microscopic_description) $contentData['microscopic_examination'] = $visit->microscopic_description;
+                    if ($visit->diagnosis) $contentData['conclusion'] = $visit->diagnosis;
+                    if ($visit->recommendations) $contentData['recommendations'] = $visit->recommendations;
+                    if ($visit->referred_doctor) $contentData['referred_by'] = $visit->referred_doctor;
+                    
+                    $content = !empty($contentData) ? json_encode($contentData) : json_encode(['note' => 'Report completed for visit ' . $visit->visit_number]);
+                    
+                    $report = \App\Models\Report::create([
+                        'lab_request_id' => $visit->labRequest->id,
+                        'title' => 'Lab Report - ' . $visit->visit_number,
+                        'content' => $content,
+                        'status' => 'completed',
+                        'generated_by' => auth()->id() ?? 1,
+                        'generated_at' => now(),
+                    ]);
+                    
+                    \Log::info('New completed report created with visit data', [
+                        'visit_id' => $visit->id,
+                        'report_id' => $report->id,
+                        'lab_request_id' => $visit->labRequest->id,
+                        'report_status' => $report->status,
+                        'has_content' => !empty($contentData)
+                    ]);
+                }
             } catch (\Exception $e) {
-                \Log::error('Failed to create completed report for visit', [
+                \Log::error('Failed to create/update completed report for visit', [
                     'visit_id' => $visit->id,
                     'error' => $e->getMessage(),
                     'trace' => $e->getTraceAsString()

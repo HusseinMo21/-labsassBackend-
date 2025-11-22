@@ -129,20 +129,38 @@ class Report extends Model
         }
 
         try {
-            // Create Enhanced Report with data from the visit and patient
+            // Extract data from report content (JSON)
+            $reportContent = [];
+            if (!empty($this->content)) {
+                $decoded = json_decode($this->content, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                    $reportContent = $decoded;
+                }
+            }
+            
+            // Get data from report content first, then fallback to visit
+            $clinical = $reportContent['clinical_data'] ?? ($visit ? ($visit->clinical_data ?? null) : null);
+            $nature = $reportContent['nature_of_specimen'] ?? ($visit ? ($visit->specimen_information ?? null) : null);
+            $gross = $reportContent['gross_pathology'] ?? ($visit ? ($visit->gross_examination ?? null) : null);
+            $micro = $reportContent['microscopic_examination'] ?? ($visit ? ($visit->microscopic_description ?? null) : null);
+            $conc = $reportContent['conclusion'] ?? ($visit ? ($visit->diagnosis ?? null) : null);
+            $reco = $reportContent['recommendations'] ?? ($visit ? ($visit->recommendations ?? null) : null);
+            $reff = $reportContent['referred_by'] ?? ($visit ? ($visit->referred_doctor ?? null) : null);
+            
+            // Create Enhanced Report with data from report content, visit, and patient
             $enhancedReport = EnhancedReport::create([
                 'nos' => $patient->name,
-                'reff' => $patient->sender ?: ($patient->doctor ? $patient->doctor->name : 'N/A'),
-                'clinical' => $visit ? ($visit->clinical_data ?? 'Clinical information not provided') : 'Clinical information not provided',
-                'nature' => $this->extractNatureFromContent(),
+                'reff' => $reff ?: ($patient->sender ?: ($patient->doctor ? $patient->doctor->name : 'N/A')),
+                'clinical' => $clinical ?: 'Clinical information not provided',
+                'nature' => $nature ?: 'Specimen information not specified',
                 'report_date' => $this->generated_at ?? now(),
                 'lab_no' => $labRequest->full_lab_no,
                 'age' => $patient->age ?: 'N/A',
-                'gross' => $visit ? ($visit->microscopic_description ?? 'Gross examination details not provided') : 'Gross examination details not provided',
-                'micro' => $visit ? ($visit->microscopic_description ?? 'Microscopic examination details not provided') : 'Microscopic examination details not provided',
-                'conc' => $visit ? ($visit->diagnosis ?? 'Diagnosis pending') : 'Diagnosis pending',
-                'reco' => $visit ? ($visit->recommendations ?? 'Recommendations pending') : 'Recommendations pending',
-                'type' => 'PATH', // Default type
+                'gross' => $gross ?: 'Gross examination details not provided',
+                'micro' => $micro ?: 'Microscopic examination details not provided',
+                'conc' => $conc ?: 'Diagnosis pending',
+                'reco' => $reco ?: 'Recommendations pending',
+                'type' => $reportContent['type_of_analysis'] ?? 'PATH',
                 'sex' => $patient->gender ?? 'N/A',
                 'recieving' => $visit && $visit->visit_date ? $visit->visit_date->format('d/m/Y') : now()->format('d/m/Y'),
                 'discharge' => $visit && $visit->expected_delivery_date ? $visit->expected_delivery_date->format('d/m/Y') : now()->addDays(1)->format('d/m/Y'),
@@ -153,6 +171,13 @@ class Report extends Model
                 'priority' => 'normal',
                 'examination_details' => $this->extractExaminationDetails(),
                 'quality_control' => $this->extractQualityControl(),
+                // Copy image data if available
+                'image_path' => $this->image_path,
+                'image_filename' => $this->image_filename,
+                'image_mime_type' => $this->image_mime_type,
+                'image_size' => $this->image_size,
+                'image_uploaded_at' => $this->image_uploaded_at,
+                'image_uploaded_by' => $this->image_uploaded_by,
             ]);
 
             // Generate barcode for the enhanced report

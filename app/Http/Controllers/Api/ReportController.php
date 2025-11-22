@@ -640,9 +640,25 @@ class ReportController extends Controller
         $mpdf->autoScriptToLang = true;
         $mpdf->autoLangToFont = true;
         
+        // Get attendance date and delivery date
+        $metadata = $visit->metadata ? json_decode($visit->metadata, true) : [];
+        $patientData = $metadata['patient_data'] ?? [];
+        $attendanceDate = $patientData['attendance_date'] ?? ($visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('d/m/Y') : 'N/A');
+        $deliveryDate = $patientData['delivery_date'] ?? ($visit->expected_delivery_date ? \Carbon\Carbon::parse($visit->expected_delivery_date)->format('d/m/Y') : 'N/A');
+        
+        // Also check patient record directly
+        if ($attendanceDate === 'N/A' && $visit->patient->attendance_date) {
+            $attendanceDate = \Carbon\Carbon::parse($visit->patient->attendance_date)->format('d/m/Y');
+        }
+        if ($deliveryDate === 'N/A' && $visit->patient->delivery_date) {
+            $deliveryDate = \Carbon\Carbon::parse($visit->patient->delivery_date)->format('d/m/Y');
+        }
+        
         $html = view('reports.pathology_report_with_header', [
             'visit' => $visit,
             'backgroundImage' => $backgroundImage,
+            'attendance_date' => $attendanceDate,
+            'delivery_date' => $deliveryDate,
         ])->render();
         
         $mpdf->WriteHTML($html);
@@ -685,8 +701,24 @@ class ReportController extends Controller
         $mpdf->autoScriptToLang = true;
         $mpdf->autoLangToFont = true;
         
+        // Get attendance date and delivery date
+        $metadata = $visit->metadata ? json_decode($visit->metadata, true) : [];
+        $patientData = $metadata['patient_data'] ?? [];
+        $attendanceDate = $patientData['attendance_date'] ?? ($visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('d/m/Y') : 'N/A');
+        $deliveryDate = $patientData['delivery_date'] ?? ($visit->expected_delivery_date ? \Carbon\Carbon::parse($visit->expected_delivery_date)->format('d/m/Y') : 'N/A');
+        
+        // Also check patient record directly
+        if ($attendanceDate === 'N/A' && $visit->patient->attendance_date) {
+            $attendanceDate = \Carbon\Carbon::parse($visit->patient->attendance_date)->format('d/m/Y');
+        }
+        if ($deliveryDate === 'N/A' && $visit->patient->delivery_date) {
+            $deliveryDate = \Carbon\Carbon::parse($visit->patient->delivery_date)->format('d/m/Y');
+        }
+        
         $html = view('reports.pathology_report_without_header', [
             'visit' => $visit,
+            'attendance_date' => $attendanceDate,
+            'delivery_date' => $deliveryDate,
         ])->render();
         
         $mpdf->WriteHTML($html);
