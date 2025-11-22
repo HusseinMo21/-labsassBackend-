@@ -840,9 +840,20 @@ class LabRequestController extends Controller
                         $paymentMethod = $latestVisit->payment_method;
                     }
                     
+                    // Get invoice number - try multiple sources
+                    $invoiceNumber = $latestVisit->invoice_number;
+                    if (!$invoiceNumber && $labRequest->full_lab_no) {
+                        $invoiceNumber = $labRequest->full_lab_no;
+                    } elseif (!$invoiceNumber && $labRequest->lab_no) {
+                        $invoiceNumber = $labRequest->lab_no;
+                    } elseif (!$invoiceNumber && $latestVisit->visit_number) {
+                        $invoiceNumber = $latestVisit->visit_number;
+                    }
+                    
                     $paymentHistory[] = [
+                        'visit_id' => $latestVisit->id,
                         'visit_date' => $latestVisit->visit_date,
-                        'invoice_number' => $latestVisit->invoice_number ?? 'N/A',
+                        'invoice_number' => $invoiceNumber ?? 'N/A',
                         'total_amount' => $totalAmount,
                         'amount_paid' => $paidAmount,
                         'balance' => $remainingAmount,
@@ -853,6 +864,7 @@ class LabRequestController extends Controller
                             'card' => $paymentDetails['amount_paid_card'] ?? $patientData['amount_paid_card'] ?? 0,
                             'card_method' => $paymentDetails['additional_payment_method'] ?? $patientData['additional_payment_method'] ?? null,
                         ],
+                        'created_at' => $latestVisit->created_at ?? now(),
                     ];
                 }
             }
@@ -860,21 +872,6 @@ class LabRequestController extends Controller
                 \Log::warning('Error processing financial data: ' . $e->getMessage(), [
                     'lab_request_id' => $labRequest->id,
                     'lab_no' => $labNo
-                ]);
-            }
-            
-            // Add payment history entry if we have financial data
-            if ($totalAmount > 0) {
-                $paymentHistory->push([
-                    'visit_id' => $visits->first() ? $visits->first()->id : null,
-                    'visit_date' => $visits->first() ? $visits->first()->visit_date : null,
-                    'invoice_number' => $labRequest->full_lab_no, // Using lab number as invoice number
-                    'total_amount' => $totalAmount,
-                    'amount_paid' => $paidAmount,
-                    'balance' => $remainingAmount,
-                    'status' => $paymentStatus,
-                    'payment_method' => 'cash', // Default method
-                    'created_at' => $visits->first() ? $visits->first()->created_at : now(),
                 ]);
             }
 
