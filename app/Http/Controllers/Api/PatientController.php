@@ -67,6 +67,14 @@ class PatientController extends Controller
             });
         }
 
+        // Get filter parameters
+        $labNoFilter = $request->get('lab_no', '');
+        $attendanceDateFilter = $request->get('attendance_date', '');
+        $deliveryDateFilter = $request->get('delivery_date', '');
+        
+        // Get per_page parameter
+        $perPage = $request->get('per_page', 15);
+
         $patients = $query->with([
             'visits' => function($q) {
                 $q->latest()->limit(5); // Get the latest 5 visits for financial info
@@ -74,7 +82,7 @@ class PatientController extends Controller
             'labRequests' => function($q) {
                 $q->latest()->limit(1); // Get the latest lab request for lab number
             }
-        ])->orderBy('id', 'desc')->paginate(15);
+        ])->orderBy('id', 'desc')->paginate($perPage);
         
         // Transform the data to ensure proper formatting and avoid N/A values
         $patients->getCollection()->transform(function ($patient) {
@@ -112,6 +120,44 @@ class PatientController extends Controller
             if ($latestLabRequest && $latestLabRequest->full_lab_no) {
                 $patient->lab = $latestLabRequest->full_lab_no;
             }
+            
+            // Get attendance and delivery dates from visits
+            $attendanceDates = [];
+            $deliveryDates = [];
+            foreach ($patient->visits as $visit) {
+                // Get attendance date from visit_date
+                if ($visit->visit_date) {
+                    $attendanceDates[] = $visit->visit_date;
+                }
+                
+                // Try to get delivery date from metadata or calculate it
+                $deliveryDate = null;
+                if (isset($visit->metadata) && $visit->metadata) {
+                    $metadata = is_string($visit->metadata) ? json_decode($visit->metadata, true) : ($visit->metadata ?? []);
+                    if (isset($metadata['delivery_date'])) {
+                        $deliveryDate = $metadata['delivery_date'];
+                    } elseif (isset($metadata['patient_data']['delivery_date'])) {
+                        $deliveryDate = $metadata['patient_data']['delivery_date'];
+                    }
+                }
+                
+                // If no delivery date in metadata, try to get from patient record
+                if (!$deliveryDate && isset($patient->delivery_date)) {
+                    $deliveryDate = $patient->delivery_date;
+                }
+                
+                // If still no delivery date, use attendance date + 1 day as fallback
+                if (!$deliveryDate && $visit->visit_date) {
+                    $deliveryDate = date('Y-m-d', strtotime($visit->visit_date . ' +1 day'));
+                }
+                
+                if ($deliveryDate) {
+                    $deliveryDates[] = $deliveryDate;
+                }
+            }
+            
+            $patient->attendance_dates = array_values(array_unique($attendanceDates));
+            $patient->delivery_dates = array_values(array_unique($deliveryDates));
             
             // Add financial information from latest visit
             $latestVisit = $patient->visits->first();
@@ -236,20 +282,113 @@ class PatientController extends Controller
         });
         
         // Convert to array and ensure proper formatting
-        $patientsArray = $patients->toArray();
+        // Apply filters after transformation
+        $transformedPatients = $patients->getCollection();
+        $hasFilters = !empty($labNoFilter) || !empty($attendanceDateFilter) || !empty($deliveryDateFilter);
+        
+        if ($hasFilters) {
+            $transformedPatients = $transformedPatients->filter(function ($patient) use ($labNoFilter, $attendanceDateFilter, $deliveryDateFilter) {
+                // Filter by lab number
+                if (!empty($labNoFilter)) {
+                    $labMatch = false;
+                    if ($patient->lab && stripos($patient->lab, $labNoFilter) !== false) {
+                        $labMatch = true;
+                    }
+                    if (!$labMatch) {
+                        return false;
+                    }
+                }
+
+                // Filter by attendance date
+                if (!empty($attendanceDateFilter)) {
+                    $attendanceMatch = false;
+                    if (!empty($patient->attendance_dates)) {
+                        foreach ($patient->attendance_dates as $attendanceDate) {
+                            if (date('Y-m-d', strtotime($attendanceDate)) === $attendanceDateFilter) {
+                                $attendanceMatch = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!$attendanceMatch) {
+                        return false;
+                    }
+                }
+
+                // Filter by delivery date
+                if (!empty($deliveryDateFilter)) {
+                    $deliveryMatch = false;
+                    if (!empty($patient->delivery_dates)) {
+                        foreach ($patient->delivery_dates as $deliveryDate) {
+                            if (date('Y-m-d', strtotime($deliveryDate)) === $deliveryDateFilter) {
+                                $deliveryMatch = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!$deliveryMatch) {
+                        return false;
+                    }
+                }
+
+                return true;
+            })->values();
+            
+            // Get total count before pagination (when filters are applied)
+            $totalFiltered = $transformedPatients->count();
+            
+            // Apply pagination to filtered results
+            $page = $request->get('page', 1);
+            $offset = ($page - 1) * $perPage;
+            $paginatedPatients = $transformedPatients->slice($offset, $perPage)->values();
+            
+            // Calculate pagination info
+            $lastPage = $totalFiltered > 0 ? ceil($totalFiltered / $perPage) : 1;
+            $from = $totalFiltered > 0 ? $offset + 1 : 0;
+            $to = min($offset + $perPage, $totalFiltered);
+            
+            $total = $totalFiltered;
+        } else {
+            // No filters - use original pagination data
+            $paginatedPatients = $transformedPatients;
+            $page = $patients->currentPage();
+            $lastPage = $patients->lastPage();
+            $from = $patients->firstItem();
+            $to = $patients->lastItem();
+            $total = $patients->total();
+        }
+
+        // Convert to array and process
+        $patientsArray = [
+            'current_page' => (int)$page,
+            'data' => $paginatedPatients->map(function ($patient) {
+                return $patient->toArray();
+            })->toArray(),
+            'first_page_url' => $request->url() . '?page=1',
+            'from' => $from,
+            'last_page' => $lastPage,
+            'last_page_url' => $request->url() . '?page=' . $lastPage,
+            'next_page_url' => $page < $lastPage ? $request->url() . '?page=' . ($page + 1) : null,
+            'path' => $request->url(),
+            'per_page' => $perPage,
+            'prev_page_url' => $page > 1 ? $request->url() . '?page=' . ($page - 1) : null,
+            'to' => $to,
+            'total' => $total,
+        ];
+        
         foreach ($patientsArray['data'] as &$patient) {
             // Calculate birth_date from age if not set
-            if ($patient['age'] && !$patient['birth_date']) {
+            if (isset($patient['age']) && $patient['age'] && !isset($patient['birth_date'])) {
                 $patient['birth_date'] = now()->subYears($patient['age'])->format('Y-m-d');
             }
             
             // Calculate age from birth_date if not set
-            if (!$patient['age'] && $patient['birth_date']) {
+            if ((!isset($patient['age']) || !$patient['age']) && isset($patient['birth_date']) && $patient['birth_date']) {
                 $patient['age'] = \Carbon\Carbon::parse($patient['birth_date'])->age;
             }
             
             // Handle address - prioritize address_required or address_optional
-            if (!$patient['address']) {
+            if (!isset($patient['address']) || !$patient['address']) {
                 if (isset($patient['address_required']) && $patient['address_required']) {
                     $patient['address'] = $patient['address_required'];
                 } elseif (isset($patient['address_optional']) && $patient['address_optional']) {
@@ -258,20 +397,20 @@ class PatientController extends Controller
             }
             
             // Handle doctor name - prioritize sender, then doctor_id
-            if (!$patient['sender'] && isset($patient['doctor_id']) && $patient['doctor_id']) {
+            if ((!isset($patient['sender']) || !$patient['sender']) && isset($patient['doctor_id']) && $patient['doctor_id']) {
                 $patient['sender'] = $patient['doctor_id'];
             }
             
             // Handle organization - use organization_id if available
-            if (!$patient['organization'] && isset($patient['organization_id']) && $patient['organization_id']) {
+            if ((!isset($patient['organization']) || !$patient['organization']) && isset($patient['organization_id']) && $patient['organization_id']) {
                 $patient['organization'] = $patient['organization_id'];
             }
             
             // Ensure we don't have empty strings showing as N/A
-            $patient['address'] = $patient['address'] ?: null;
-            $patient['sender'] = $patient['sender'] ?: null;
-            $patient['organization'] = $patient['organization'] ?: null;
-            $patient['emergency_contact'] = $patient['emergency_contact'] ?: null;
+            $patient['address'] = $patient['address'] ?? null;
+            $patient['sender'] = $patient['sender'] ?? null;
+            $patient['organization'] = $patient['organization'] ?? null;
+            $patient['emergency_contact'] = $patient['emergency_contact'] ?? null;
         }
 
         return response()->json($patientsArray);
