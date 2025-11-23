@@ -125,17 +125,21 @@ class DoctorController extends Controller
             $perPage = $request->get('per_page', 10); // Default 10 per page
             $page = $request->get('page', 1);
             
-            // Get patients with basic data first - simplified approach with pagination
+            // Get filter parameters
+            $labNoFilter = $request->get('lab_no', '');
+            $attendanceDateFilter = $request->get('attendance_date', '');
+            $deliveryDateFilter = $request->get('delivery_date', '');
+            
+            // Get all patients first (we need to filter after transformation)
             $patientsQuery = $doctor->patients()
                 ->withCount('visits')
                 ->orderBy('id', 'desc');
             
-            // Paginate the query
-            $patients = $patientsQuery->paginate($perPage, ['*'], 'page', $page);
+            // Get all patients (we'll paginate after filtering)
+            $allPatients = $patientsQuery->get();
 
-
-            // Transform paginated collection
-            $transformedPatients = $patients->getCollection()->map(function ($patient) {
+            // Transform collection
+            $transformedPatients = $allPatients->map(function ($patient) {
                 // Same transformation logic as before
                 \Log::info("Patient {$patient->id} ({$patient->name}) - lab={$patient->lab}, phone={$patient->phone}");
 
@@ -289,18 +293,80 @@ class DoctorController extends Controller
                 return $result;
             });
 
-            // Set the transformed collection back to paginator
-            $patients->setCollection($transformedPatients);
+            // Apply filters after transformation
+            $filteredPatients = $transformedPatients->filter(function ($patient) use ($labNoFilter, $attendanceDateFilter, $deliveryDateFilter) {
+                // Filter by lab number
+                if (!empty($labNoFilter)) {
+                    $labMatch = false;
+                    if (!empty($patient['lab_numbers'])) {
+                        foreach ($patient['lab_numbers'] as $labNo) {
+                            if (stripos($labNo, $labNoFilter) !== false) {
+                                $labMatch = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!$labMatch) {
+                        return false;
+                    }
+                }
+
+                // Filter by attendance date
+                if (!empty($attendanceDateFilter)) {
+                    $attendanceMatch = false;
+                    if (!empty($patient['attendance_dates'])) {
+                        foreach ($patient['attendance_dates'] as $attendanceDate) {
+                            if (date('Y-m-d', strtotime($attendanceDate)) === $attendanceDateFilter) {
+                                $attendanceMatch = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!$attendanceMatch) {
+                        return false;
+                    }
+                }
+
+                // Filter by delivery date
+                if (!empty($deliveryDateFilter)) {
+                    $deliveryMatch = false;
+                    if (!empty($patient['delivery_dates'])) {
+                        foreach ($patient['delivery_dates'] as $deliveryDate) {
+                            if (date('Y-m-d', strtotime($deliveryDate)) === $deliveryDateFilter) {
+                                $deliveryMatch = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!$deliveryMatch) {
+                        return false;
+                    }
+                }
+
+                return true;
+            })->values();
+
+            // Get total count before pagination (for accurate pagination info)
+            $totalFiltered = $filteredPatients->count();
+            
+            // Apply pagination to filtered results
+            $offset = ($page - 1) * $perPage;
+            $paginatedPatients = $filteredPatients->slice($offset, $perPage)->values();
+            
+            // Calculate pagination info
+            $lastPage = $totalFiltered > 0 ? ceil($totalFiltered / $perPage) : 1;
+            $from = $totalFiltered > 0 ? $offset + 1 : 0;
+            $to = min($offset + $perPage, $totalFiltered);
 
             return response()->json([
                 'doctor' => $doctor,
-                'patients' => $patients->items(),
-                'current_page' => $patients->currentPage(),
-                'last_page' => $patients->lastPage(),
-                'per_page' => $patients->perPage(),
-                'total' => $patients->total(),
-                'from' => $patients->firstItem(),
-                'to' => $patients->lastItem(),
+                'patients' => $paginatedPatients,
+                'current_page' => $page,
+                'last_page' => $lastPage,
+                'per_page' => $perPage,
+                'total' => $totalFiltered,
+                'from' => $from,
+                'to' => $to,
             ]);
         } catch (\Exception $e) {
             \Log::error('Error in DoctorController patients method: ' . $e->getMessage(), [
