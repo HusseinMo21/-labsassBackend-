@@ -88,9 +88,16 @@ class AuthController extends Controller
                        ->update(['is_revoked' => true]);
         }
 
-        Auth::logout();
-        $request->session()->invalidate();
-        $request->session()->regenerateToken();
+        // For Sanctum API authentication, delete the current access token
+        if ($request->user() && $request->user()->currentAccessToken()) {
+            $request->user()->currentAccessToken()->delete();
+        }
+        
+        // Only handle session for web routes, not API routes
+        if (!$request->is('api/*')) {
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+        }
 
         return response()->json([
             'message' => 'Logged out successfully',

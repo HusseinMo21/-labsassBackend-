@@ -10,14 +10,27 @@ class CheckRole
 {
     public function handle(Request $request, Closure $next, ...$roles): Response
     {
+        // Handle OPTIONS requests for CORS preflight
+        if ($request->getMethod() === 'OPTIONS') {
+            return $next($request);
+        }
+        
         if (!$request->user()) {
-            return response()->json(['message' => 'Unauthorized'], 401);
+            $response = response()->json(['message' => 'Unauthorized'], 401);
+            $response->headers->set('Access-Control-Allow-Origin', '*');
+            $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+            $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+            return $response;
         }
 
         $userRole = $this->mapRole($request->user()->role);
         
         if (!in_array($userRole, $roles)) {
-            return response()->json(['message' => 'Access denied'], 403);
+            $response = response()->json(['message' => 'Access denied'], 403);
+            $response->headers->set('Access-Control-Allow-Origin', '*');
+            $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+            $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+            return $response;
         }
 
         return $next($request);

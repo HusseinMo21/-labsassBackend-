@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
 use App\Models\Patient;
 use App\Models\Visit;
 use App\Models\LabTest;
@@ -13,7 +14,6 @@ use App\Models\LabRequest;
 use App\Services\LabNoGenerator;
 use App\Services\BarcodeGenerator;
 use App\Services\BarcodeService;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
@@ -353,25 +353,28 @@ class CheckInController extends Controller
                 
                 \Log::info('Samples added to lab request: ' . $labRequest->id);
                 
-                // Create initial report automatically for each visit test
-                foreach ($visit->visitTests as $visitTest) {
-                    $existingReport = \App\Models\Report::where('lab_request_id', $labRequest->id)
-                        ->where('visit_test_id', $visitTest->id)
-                        ->first();
+                // Create initial report automatically for the lab request (one report for all tests)
+                $existingReport = \App\Models\Report::where('lab_request_id', $labRequest->id)->first();
+                
+                if (!$existingReport) {
+                    // Get all test names for the report title
+                    $testNames = $visit->visitTests->map(function($visitTest) {
+                        return $visitTest->labTest->name ?? 'Test';
+                    })->unique()->implode(', ');
                     
-                    if (!$existingReport) {
-                        \App\Models\Report::create([
-                            'lab_request_id' => $labRequest->id,
-                            'title' => 'Lab Report - ' . $visitTest->labTest->name ?? 'Test Report',
-                            'content' => 'Report generated automatically for ' . $patient->name,
-                            'status' => 'pending',
-                            'generated_by' => auth()->id() ?? 1,
-                            'generated_at' => now(),
-                            'created_at' => now(),
-                        ]);
-                        
-                        \Log::info('Report created automatically for visit test: ' . $visitTest->id);
-                    }
+                    $reportTitle = $testNames ? 'Lab Report - ' . $testNames : 'Lab Report - ' . $visit->visit_number;
+                    
+                    \App\Models\Report::create([
+                        'lab_request_id' => $labRequest->id,
+                        'title' => $reportTitle,
+                        'content' => 'Report generated automatically for ' . $patient->name,
+                        'status' => 'pending',
+                        'generated_by' => auth()->id() ?? 1,
+                        'generated_at' => now(),
+                        'created_at' => now(),
+                    ]);
+                    
+                    \Log::info('Report created automatically for lab request: ' . $labRequest->id . ' with ' . $visit->visitTests->count() . ' tests');
                 }
             } catch (\Exception $e) {
                 \Log::error('Failed to create/update lab request for visit: ' . $e->getMessage());
@@ -1339,8 +1342,18 @@ class CheckInController extends Controller
 
     private function calculatePaidAmount($visit, $invoice = null)
     {
+        // Priority: invoice > visit upfront_payment > metadata > patient amount_paid
         if ($invoice) {
-            return $invoice->amount_paid;
+            $invoicePaid = floatval($invoice->amount_paid ?? $invoice->paid ?? 0);
+            if ($invoicePaid > 0) {
+                return $invoicePaid;
+            }
+        }
+        
+        // Check visit upfront_payment directly first
+        $visitPaid = floatval($visit->upfront_payment ?? 0);
+        if ($visitPaid > 0) {
+            return $visitPaid;
         }
         
         // Get payment data from visit metadata
@@ -1348,19 +1361,19 @@ class CheckInController extends Controller
         $paymentDetails = $metadata['payment_details'] ?? [];
         $patientData = $metadata['patient_data'] ?? [];
         
-        // Get paid amount from metadata first
-        $paidAmount = $paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? 0;
+        // Get paid amount from metadata
+        $paidAmount = floatval($paymentDetails['total_paid'] ?? $patientData['amount_paid'] ?? 0);
         
         // If still 0, calculate from payment breakdown
         if ($paidAmount == 0) {
-            $cashPaid = $paymentDetails['amount_paid_cash'] ?? $patientData['amount_paid_cash'] ?? 0;
-            $cardPaid = $paymentDetails['amount_paid_card'] ?? $patientData['amount_paid_card'] ?? 0;
+            $cashPaid = floatval($paymentDetails['amount_paid_cash'] ?? $patientData['amount_paid_cash'] ?? 0);
+            $cardPaid = floatval($paymentDetails['amount_paid_card'] ?? $patientData['amount_paid_card'] ?? 0);
             $paidAmount = $cashPaid + $cardPaid;
         }
         
-        // Final fallback to direct fields
+        // Final fallback to patient amount_paid
         if ($paidAmount == 0) {
-            $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            $paidAmount = floatval($visit->patient->amount_paid ?? 0);
         }
         
         return $paidAmount;
@@ -1383,210 +1396,391 @@ class CheckInController extends Controller
      */
     public function generateUnpaidInvoiceReceipt($visitId)
     {
-        $visit = Visit::with(['patient', 'visitTests.testCategory', 'labRequest'])->findOrFail($visitId);
+        \Log::info('generateUnpaidInvoiceReceipt called for visit ID: ' . $visitId);
         
-        // Read background image and convert to base64
-        $backgroundImagePath = public_path('templete/b2.jpg');
-        $backgroundImage = null;
-        
-        if (file_exists($backgroundImagePath)) {
-            $imageData = file_get_contents($backgroundImagePath);
-            $backgroundImage = base64_encode($imageData);
-        }
-        
-        // Get the related invoice for financial data (if exists)
-        $invoice = null;
-        $payments = collect();
-        
-        // Try to find invoice by lab_request_id or visit_id
-        if ($visit->labRequest) {
-            $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
-        }
-        
-        if (!$invoice) {
-            $invoice = \App\Models\Invoice::where('visit_id', $visit->id)->first();
-        }
-        
-        if ($invoice) {
-            $payments = \App\Models\Payment::where('invoice_id', $invoice->id)->get();
-        }
-        
-        // Get current user who is printing the receipt
-        $currentUser = auth()->user();
-        $printedBy = $currentUser ? $currentUser->name : 'System';
-        
-        // Generate barcode for the lab number
-        $barcodeData = null;
-        $barcodeText = null;
-        
-        // Try different lab number sources for barcode
-        if ($visit->labRequest && $visit->labRequest->full_lab_no) {
-            $barcodeText = $visit->labRequest->full_lab_no;
-        } elseif ($visit->labRequest && $visit->labRequest->lab_no) {
-            $barcodeText = $visit->labRequest->lab_no;
-        } elseif ($visit->patient && $visit->patient->lab) {
-            $barcodeText = $visit->patient->lab;
-        }
-        
-        if ($barcodeText) {
+        // Check authentication - if not authenticated, try token from request
+        $request = request();
+        if (!auth()->user() && $request->has('token')) {
             try {
-                // Generate base64 barcode image
-                $barcodeData = $this->generateBase64Barcode($barcodeText);
+                $token = $request->get('token');
+                $personalAccessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
+                if ($personalAccessToken && $personalAccessToken->tokenable) {
+                    auth()->setUser($personalAccessToken->tokenable);
+                    \Log::info('Authenticated user via token parameter: ' . $personalAccessToken->tokenable->id);
+                }
             } catch (\Exception $e) {
-                \Log::warning('Failed to generate barcode for receipt', [
-                    'barcode_text' => $barcodeText,
-                    'error' => $e->getMessage()
-                ]);
+                \Log::warning('Failed to authenticate via token parameter: ' . $e->getMessage());
             }
         }
         
-        // Get patient age - calculate from birth_date if available, otherwise use age field
-        $patientAge = $visit->patient->age;
-        if (!$patientAge && $visit->patient->birth_date) {
-            $patientAge = $visit->patient->birth_date->age;
-        }
+        // Log current authentication status
+        $currentUser = auth()->user();
+        \Log::info('Current authenticated user: ' . ($currentUser ? $currentUser->id . ' (' . $currentUser->email . ')' : 'None'));
         
-        // Get payment breakdown from visit metadata
-        // Handle metadata - it might be an array (from cast) or a JSON string
-        $metadata = [];
-        if ($visit->metadata) {
-            if (is_array($visit->metadata)) {
-                $metadata = $visit->metadata;
-            } elseif (is_string($visit->metadata)) {
-                try {
-                    $metadata = json_decode($visit->metadata, true) ?? [];
-                } catch (\Exception $e) {
-                    \Log::error('Failed to decode metadata in generateUnpaidInvoiceReceipt: ' . $e->getMessage());
-                    $metadata = [];
-                }
-            }
+        // If still no authentication, try to continue without auth for public receipts
+        if (!$currentUser) {
+            \Log::warning('No authenticated user found for PDF generation, proceeding without authentication for visit: ' . $visitId);
         }
-        $financialData = $metadata['financial_data'] ?? [];
-        $paymentDetails = $metadata['payment_details'] ?? [];
-        
-        // Build payment breakdown
-        $paymentBreakdown = [];
-        if (isset($paymentDetails['amount_paid_cash']) && $paymentDetails['amount_paid_cash'] > 0) {
-            $paymentBreakdown['cash'] = $paymentDetails['amount_paid_cash'];
-        }
-        if (isset($paymentDetails['amount_paid_card']) && $paymentDetails['amount_paid_card'] > 0) {
-            $paymentBreakdown['card'] = $paymentDetails['amount_paid_card'];
-            $paymentBreakdown['card_method'] = $paymentDetails['additional_payment_method'] ?? 'Card';
-        }
-        
-        // If no breakdown exists but we have a payment method, create a simple breakdown
-        if (empty($paymentBreakdown)) {
-            $currentPaymentMethod = $this->getPaymentMethod($visit, $payments);
-            $paidAmount = $invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0);
-            
-            if ($paidAmount > 0) {
-                if ($currentPaymentMethod === 'cash') {
-                    $paymentBreakdown['cash'] = $paidAmount;
-                } else {
-                    $paymentBreakdown['card'] = $paidAmount;
-                    $paymentBreakdown['card_method'] = $currentPaymentMethod;
-                }
-            }
-        }
-        
-        // Get attendance date and delivery date from patient or visit metadata
-        $patientData = $metadata['patient_data'] ?? [];
-        $attendanceDate = $patientData['attendance_date'] ?? ($visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : now()->format('Y-m-d'));
-        $deliveryDate = $patientData['delivery_date'] ?? ($visit->expected_delivery_date ? \Carbon\Carbon::parse($visit->expected_delivery_date)->format('Y-m-d') : now()->addDays(1)->format('Y-m-d'));
-        
-        // Also check patient record directly
-        if (!$attendanceDate && $visit->patient->attendance_date) {
-            $attendanceDate = \Carbon\Carbon::parse($visit->patient->attendance_date)->format('Y-m-d');
-        }
-        if (!$deliveryDate && $visit->patient->delivery_date) {
-            $deliveryDate = \Carbon\Carbon::parse($visit->patient->delivery_date)->format('Y-m-d');
-        }
-        
-        $receiptData = [
-            'receipt_number' => $visit->visit_number,
-            'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?: 'N/A'),
-            'date' => $visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : now()->format('Y-m-d'),
-            'patient_name' => $visit->patient->name ?: 'N/A',
-            'patient_age' => $patientAge ?: 'N/A',
-            'patient_phone' => $visit->patient->phone ?: 'N/A',
-            'attendance_date' => $attendanceDate,
-            'delivery_date' => $deliveryDate,
-            'tests' => $this->getTestsForReceipt($visit),
-            'total_amount' => $financialData['total_amount'] ?? ($invoice ? $invoice->total_amount : ($visit->total_amount ?: 0)),
-            'discount_amount' => $visit->discount_amount ?: 0,
-            'final_amount' => $financialData['final_amount'] ?? ($invoice ? $invoice->total_amount : ($visit->final_amount ?: 0)),
-            'upfront_payment' => $financialData['amount_paid'] ?? $this->calculatePaidAmount($visit, $invoice),
-            'remaining_balance' => $financialData['remaining_balance'] ?? $this->calculateRemainingBalance($visit, $invoice),
-            'payment_method' => $this->getPaymentMethod($visit, $payments),
-            'billing_status' => $financialData['payment_status'] ?? $this->getPaymentStatus($invoice, $visit),
-            'expected_delivery_date' => $visit->getExpectedDeliveryDate(),
-            'barcode' => $barcodeData,
-            'barcode_text' => $barcodeText ?: 'N/A',
-            'check_in_by' => $visit->check_in_by ?: 'N/A',
-            'check_in_at' => $visit->check_in_at ?: 'N/A',
-            'payment_breakdown' => $paymentBreakdown,
-            'visit_id' => $visit->id,
-            'patient_credentials' => $visit->patient->getPortalCredentials(),
-            'printed_by' => $printedBy,
-            'printed_at' => now()->format('Y-m-d H:i:s'),
-            'doctor' => 'عهدة الأورام',
-            'doctor_name' => 'عمرو عبد العزيز عبد السيد',
-        ];
-        
-        // Debug: Log the receipt data
-        \Log::info('Unpaid Invoice Receipt Data:', $receiptData);
         
         try {
-            $mpdf = new \Mpdf\Mpdf([
-                'mode' => 'utf-8', 
-                'format' => 'A4', 
-                'orientation' => 'P',
-                'margin_left' => 15, 
-                'margin_right' => 15, 
-                'margin_top' => 15, 
-                'margin_bottom' => 15,
-                'tempDir' => storage_path('app/temp'),
-                'default_font_size' => 11, 
-                'default_font' => 'dejavusans',
-                'autoPageBreak' => false,
-                'setAutoTopMargin' => false,
-                'setAutoBottomMargin' => false
+            $visit = Visit::with(['patient', 'visitTests.testCategory', 'labRequest'])->findOrFail($visitId);
+            \Log::info('Visit found: ' . $visit->id);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            \Log::error('Visit not found in generateUnpaidInvoiceReceipt: ' . $e->getMessage());
+            return response()->json(['error' => 'Visit not found', 'message' => $e->getMessage()], 404, [
+                'Access-Control-Allow-Origin' => '*',
+                'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin',
+                'Access-Control-Allow-Credentials' => 'true',
             ]);
-            
-            $mpdf->autoScriptToLang = true;
-            $mpdf->autoLangToFont = true;
-            $mpdf->showImageErrors = false;
-            
-            // Render the view
-            $html = view('receipts.unpaid_invoice_receipt', [
-                'receiptData' => $receiptData,
-                'backgroundImage' => $backgroundImage,
-            ])->render();
-            
-            // Log HTML length for debugging
-            \Log::info('HTML length: ' . strlen($html) . ' characters');
-            
-            $mpdf->WriteHTML($html);
-            $filename = 'receipt_' . $visit->visit_number . '.pdf';
-            $pdfContent = $mpdf->Output('', 'S');
-            
-            \Log::info("Receipt PDF generated successfully. Size: " . strlen($pdfContent) . " bytes");
         } catch (\Exception $e) {
-            \Log::error('Unpaid Invoice Receipt PDF generation error: ' . $e->getMessage());
-            \Log::error('Stack trace: ' . $e->getTraceAsString());
-            return response()->json(['error' => 'PDF generation failed', 'message' => $e->getMessage()], 500);
+            \Log::error('Error loading visit in generateUnpaidInvoiceReceipt: ' . $e->getMessage());
+            return response()->json(['error' => 'Error loading visit', 'message' => $e->getMessage()], 500, [
+                'Access-Control-Allow-Origin' => '*',
+                'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin',
+                'Access-Control-Allow-Credentials' => 'true',
+            ]);
         }
         
-        $response = response($pdfContent, 200, [
-            'Content-Type' => 'application/pdf',
-            'Content-Disposition' => 'inline; filename="' . $filename . '"',
-            'Access-Control-Allow-Origin' => '*',
-            'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
-            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin',
-            'Access-Control-Allow-Credentials' => 'true',
-            'Access-Control-Expose-Headers' => 'Content-Type, Content-Disposition, Content-Length'
-        ]);
-        return $response;
+        try {
+            // Read background image and convert to base64
+            $backgroundImagePath = public_path('templete/b2.jpg');
+            $backgroundImage = null;
+            
+            if (file_exists($backgroundImagePath)) {
+                $imageData = file_get_contents($backgroundImagePath);
+                $backgroundImage = base64_encode($imageData);
+            }
+            
+            // Read logo image and convert to base64
+            $logoImagePath = public_path('templete/logoreceipt.jpg');
+            $logoImage = null;
+            
+            if (file_exists($logoImagePath)) {
+                $logoData = file_get_contents($logoImagePath);
+                $logoImage = base64_encode($logoData);
+            }
+            
+            // Get the related invoice for financial data (if exists)
+            $invoice = null;
+            $payments = collect();
+            
+            // Try to find invoice by lab_request_id or visit_id
+            if ($visit->labRequest) {
+                $invoice = \App\Models\Invoice::where('lab_request_id', $visit->labRequest->id)->first();
+            }
+            
+            if (!$invoice) {
+                $invoice = \App\Models\Invoice::where('visit_id', $visit->id)->first();
+            }
+            
+            if ($invoice) {
+                $payments = \App\Models\Payment::where('invoice_id', $invoice->id)->get();
+            }
+            
+            // Get current user who is printing the receipt
+            $currentUser = auth()->user();
+            $printedBy = $currentUser ? $currentUser->name : 'System';
+            
+            // Generate barcode for the lab number
+            $barcodeData = null;
+            $barcodeText = null;
+            
+            // Try different lab number sources for barcode
+            if ($visit->labRequest && $visit->labRequest->full_lab_no) {
+                $barcodeText = $visit->labRequest->full_lab_no;
+            } elseif ($visit->labRequest && $visit->labRequest->lab_no) {
+                $barcodeText = $visit->labRequest->lab_no;
+            } elseif ($visit->patient && $visit->patient->lab) {
+                $barcodeText = $visit->patient->lab;
+            }
+            
+            if ($barcodeText) {
+                try {
+                    // Generate base64 barcode image
+                    $barcodeData = $this->generateBase64Barcode($barcodeText);
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to generate barcode for receipt', [
+                        'barcode_text' => $barcodeText,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+            
+            // Get patient age - calculate from birth_date if available, otherwise use age field
+            $patientAge = $visit->patient->age;
+            if (!$patientAge && $visit->patient->birth_date) {
+                $patientAge = $visit->patient->birth_date->age;
+            }
+            
+            // Get payment breakdown from visit metadata
+            // Handle metadata - it might be an array (from cast) or a JSON string
+            $metadata = [];
+            if ($visit->metadata) {
+                if (is_array($visit->metadata)) {
+                    $metadata = $visit->metadata;
+                } elseif (is_string($visit->metadata)) {
+                    try {
+                        $metadata = json_decode($visit->metadata, true) ?? [];
+                    } catch (\Exception $e) {
+                        \Log::error('Failed to decode metadata in generateUnpaidInvoiceReceipt: ' . $e->getMessage());
+                        $metadata = [];
+                    }
+                }
+            }
+            $financialData = $metadata['financial_data'] ?? [];
+            $paymentDetails = $metadata['payment_details'] ?? [];
+            
+            // Build payment breakdown
+            $paymentBreakdown = [];
+            if (isset($paymentDetails['amount_paid_cash']) && $paymentDetails['amount_paid_cash'] > 0) {
+                $paymentBreakdown['cash'] = $paymentDetails['amount_paid_cash'];
+            }
+            if (isset($paymentDetails['amount_paid_card']) && $paymentDetails['amount_paid_card'] > 0) {
+                $paymentBreakdown['card'] = $paymentDetails['amount_paid_card'];
+                $paymentBreakdown['card_method'] = $paymentDetails['additional_payment_method'] ?? 'Card';
+            }
+            
+            // If no breakdown exists but we have a payment method, create a simple breakdown
+            if (empty($paymentBreakdown)) {
+                $currentPaymentMethod = $this->getPaymentMethod($visit, $payments);
+                $paidAmount = $invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0);
+                
+                if ($paidAmount > 0) {
+                    if ($currentPaymentMethod === 'cash') {
+                        $paymentBreakdown['cash'] = $paidAmount;
+                    } else {
+                        $paymentBreakdown['card'] = $paidAmount;
+                        $paymentBreakdown['card_method'] = $currentPaymentMethod;
+                    }
+                }
+            }
+            
+            // Get attendance date and delivery date from patient or visit metadata
+            $patientData = $metadata['patient_data'] ?? [];
+            $attendanceDate = $patientData['attendance_date'] ?? ($visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : now()->format('Y-m-d'));
+            $deliveryDate = $patientData['delivery_date'] ?? ($visit->expected_delivery_date ? \Carbon\Carbon::parse($visit->expected_delivery_date)->format('Y-m-d') : now()->addDays(1)->format('Y-m-d'));
+            
+            // Also check patient record directly
+            if (!$attendanceDate && $visit->patient->attendance_date) {
+                $attendanceDate = \Carbon\Carbon::parse($visit->patient->attendance_date)->format('Y-m-d');
+            }
+            if (!$deliveryDate && $visit->patient->delivery_date) {
+                $deliveryDate = \Carbon\Carbon::parse($visit->patient->delivery_date)->format('Y-m-d');
+            }
+            
+            // Calculate financial values with proper fallbacks
+            // Priority: visit fields > invoice fields > metadata > patient fields
+            $totalAmount = floatval($visit->total_amount ?? 0);
+            if ($totalAmount == 0 && $invoice) {
+                $totalAmount = floatval($invoice->total_amount ?? $invoice->total ?? 0);
+            }
+            if ($totalAmount == 0 && isset($financialData['total_amount'])) {
+                $totalAmount = floatval($financialData['total_amount']);
+            }
+            if ($totalAmount == 0 && isset($patientData['total_amount'])) {
+                $totalAmount = floatval($patientData['total_amount']);
+            }
+            if ($totalAmount == 0) {
+                $totalAmount = floatval($visit->patient->total_amount ?? 0);
+            }
+            
+            $finalAmount = floatval($visit->final_amount ?? 0);
+            if ($finalAmount == 0) {
+                $finalAmount = $totalAmount; // Use total_amount if final_amount is not set
+            }
+            if ($finalAmount == 0 && $invoice) {
+                $finalAmount = floatval($invoice->total_amount ?? $invoice->total ?? 0);
+            }
+            
+            $discountAmount = floatval($visit->discount_amount ?? 0);
+            
+            $paidAmount = $this->calculatePaidAmount($visit, $invoice);
+            $remainingBalance = max(0, $finalAmount - $paidAmount);
+            
+            \Log::info('Financial calculations for visit ' . $visit->id . ':', [
+                'visit_total_amount' => $visit->total_amount,
+                'visit_final_amount' => $visit->final_amount,
+                'visit_upfront_payment' => $visit->upfront_payment,
+                'calculated_total_amount' => $totalAmount,
+                'calculated_final_amount' => $finalAmount,
+                'calculated_paid_amount' => $paidAmount,
+                'calculated_remaining_balance' => $remainingBalance,
+                'invoice_total' => $invoice ? ($invoice->total_amount ?? $invoice->total) : null,
+            ]);
+            
+            // Get additional patient data from metadata
+            $organization = $patientData['organization'] ?? $visit->patient->organization ?? '';
+            $sampleType = $patientData['sample_type'] ?? $visit->patient->sample_type ?? 'Pathology';
+            $sampleSize = $patientData['sample_size'] ?? $visit->patient->sample_size ?? '1';
+            $numberOfSamples = $patientData['number_of_samples'] ?? $visit->patient->number_of_samples ?? '1';
+            $medicalHistory = $patientData['medical_history'] ?? $visit->patient->medical_history ?? '';
+            $previousTests = $patientData['previous_tests'] ?? $visit->patient->previous_tests ?? '';
+            $patientGender = $visit->patient->gender ?? '';
+            
+            // Get day names
+            $attendanceDay = $patientData['attendance_day'] ?? $patientData['day_of_week'] ?? $visit->patient->day_of_week ?? 'السبت';
+            $deliveryDay = $patientData['delivery_day'] ?? $patientData['day_of_week'] ?? $visit->patient->day_of_week ?? 'السبت';
+            
+            // Get doctor name
+            $doctorName = $patientData['doctor'] ?? $patientData['referring_doctor'] ?? $visit->patient->doctor ?? 'د. ياسر محمد الدويك';
+            
+            $receiptData = [
+                'receipt_number' => $visit->visit_number,
+                'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?: 'N/A'),
+                'date' => $visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : now()->format('Y-m-d'),
+                'patient_name' => $visit->patient->name ?: 'N/A',
+                'patient_age' => $patientAge ?: 'N/A',
+                'patient_phone' => $visit->patient->phone ?: 'N/A',
+                'patient_gender' => $patientGender,
+                'attendance_date' => $attendanceDate,
+                'attendance_day' => $attendanceDay,
+                'delivery_date' => $deliveryDate,
+                'delivery_day' => $deliveryDay,
+                'organization' => $organization,
+                'sample_type' => $sampleType,
+                'sample_size' => $sampleSize,
+                'number_of_samples' => $numberOfSamples,
+                'medical_history' => $medicalHistory,
+                'previous_tests' => $previousTests,
+                'referring_doctor' => $doctorName,
+                'doctor_name' => $doctorName,
+                'tests' => $this->getTestsForReceipt($visit),
+                'total_amount' => $totalAmount,
+                'discount_amount' => $discountAmount,
+                'final_amount' => $finalAmount,
+                'upfront_payment' => $paidAmount,
+                'remaining_balance' => $remainingBalance,
+                'payment_method' => $this->getPaymentMethod($visit, $payments),
+                'billing_status' => $financialData['payment_status'] ?? $this->getPaymentStatus($invoice, $visit),
+                'expected_delivery_date' => $visit->getExpectedDeliveryDate(),
+                'barcode' => $barcodeData,
+                'barcode_text' => $barcodeText ?: 'N/A',
+                'check_in_by' => $visit->check_in_by ?: 'N/A',
+                'check_in_at' => $visit->check_in_at ?: 'N/A',
+                'payment_breakdown' => $paymentBreakdown,
+                'visit_id' => $visit->id,
+                'patient_credentials' => $visit->patient->getPortalCredentials(),
+                'printed_by' => $printedBy,
+                'printed_at' => now()->format('Y-m-d H:i:s'),
+                'doctor' => 'عهدة الأورام',
+            ];
+            
+            // Debug: Log the receipt data
+            \Log::info('Unpaid Invoice Receipt Data:', $receiptData);
+            
+            try {
+                $mpdf = new \Mpdf\Mpdf([
+                    'mode' => 'utf-8', 
+                    'format' => [210, 148.5], // Half A4: width=210mm, height=148.5mm (A4 height/2)
+                    'orientation' => 'P',
+                    'margin_left' => 5, 
+                    'margin_right' => 5, 
+                    'margin_top' => 3, 
+                    'margin_bottom' => 3,
+                    'margin_header' => 0,
+                    'margin_footer' => 0,
+                    'tempDir' => storage_path('app/temp'),
+                    'default_font_size' => 7, 
+                    'default_font' => 'dejavusans',
+                    'autoPageBreak' => false,
+                    'setAutoTopMargin' => false,
+                    'setAutoBottomMargin' => false,
+                    'ignore_invalid_utf8' => true,
+                    'allow_charset_conversion' => false,
+                    'shrink_tables_to_fit' => 1,
+                    'use_kwt' => true,
+                    'keep_table_proportions' => true,
+                    'useSubstitutions' => false,
+                ]);
+                
+                $mpdf->autoScriptToLang = true;
+                $mpdf->autoLangToFont = true;
+                $mpdf->showImageErrors = false;
+                
+                // Set watermark/background image BEFORE writing HTML - use same logo image, centered in the middle of the page
+                // This ensures the watermark is behind all content
+                try {
+                    $watermarkPath = public_path('templete/logoreceipt.jpg');
+                    if (file_exists($watermarkPath)) {
+                        // CRITICAL: Set watermarkImgBehind BEFORE SetWatermarkImage
+                        $mpdf->watermarkImgBehind = true;
+                        // Set watermark image with center position and opacity 0.2
+                        // Parameters: image path, alpha (opacity 0-1), size ('D' for default or [width, height]), position ('P' for page center)
+                        // Position 'P' centers the image on the page
+                        // Size 'D' uses the image's default size
+                        $mpdf->SetWatermarkImage($watermarkPath, 0.2, 'D', 'P');
+                        $mpdf->showWatermarkImage = true;
+                    }
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to set watermark: ' . $e->getMessage());
+                }
+                
+                // Disable automatic page breaks
+                $mpdf->SetHTMLHeader('');
+                $mpdf->SetHTMLFooter('');
+                
+                // Render the view
+                $html = view('receipts.unpaid_invoice_receipt', [
+                    'receiptData' => $receiptData,
+                    'backgroundImage' => $backgroundImage,
+                    'logoImage' => $logoImage ?? null,
+                ])->render();
+                
+                // Log HTML length for debugging
+                \Log::info('HTML length: ' . strlen($html) . ' characters');
+                
+                // Write HTML with strict page break control
+                $mpdf->WriteHTML($html, 0);
+                
+                $filename = 'receipt_' . ($visit->visit_number ?? $visit->id) . '.pdf';
+                $pdfContent = $mpdf->Output('', 'S');
+                
+                \Log::info("Receipt PDF generated successfully. Size: " . strlen($pdfContent) . " bytes");
+                
+                // Create response with binary content and CORS headers
+                $response = response($pdfContent, 200, [
+                    'Content-Type' => 'application/pdf',
+                    'Content-Disposition' => 'inline; filename="' . $filename . '"',
+                    'Content-Length' => strlen($pdfContent),
+                    'Access-Control-Allow-Origin' => '*',
+                    'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
+                    'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin',
+                    'Access-Control-Allow-Credentials' => 'true',
+                    'Access-Control-Expose-Headers' => 'Content-Type, Content-Disposition, Content-Length',
+                ]);
+                
+                // Ensure headers are set using headers->set() as well (for compatibility)
+                $response->headers->set('Access-Control-Allow-Origin', '*', true);
+                $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS', true);
+                $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin', true);
+                $response->headers->set('Access-Control-Allow-Credentials', 'true', true);
+                $response->headers->set('Access-Control-Expose-Headers', 'Content-Type, Content-Disposition, Content-Length', true);
+                
+                \Log::info('Response created. Status: ' . $response->getStatusCode() . ', Content-Length: ' . strlen($pdfContent));
+                \Log::info('Response headers: ' . json_encode($response->headers->all()));
+                return $response;
+            } catch (\Exception $e) {
+                \Log::error('Unpaid Invoice Receipt PDF generation error: ' . $e->getMessage());
+                \Log::error('Stack trace: ' . $e->getTraceAsString());
+                return response()->json(['error' => 'PDF generation failed', 'message' => $e->getMessage()], 500, [
+                    'Access-Control-Allow-Origin' => '*',
+                    'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
+                    'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin',
+                    'Access-Control-Allow-Credentials' => 'true',
+                ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error('Unexpected error in generateUnpaidInvoiceReceipt: ' . $e->getMessage());
+            \Log::error('Stack trace: ' . $e->getTraceAsString());
+            return response()->json(['error' => 'Unexpected error', 'message' => $e->getMessage()], 500, [
+                'Access-Control-Allow-Origin' => '*',
+                'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin',
+                'Access-Control-Allow-Credentials' => 'true',
+            ]);
+        }
     }
 
     public function getUnpaidInvoiceReceiptData($visitId)

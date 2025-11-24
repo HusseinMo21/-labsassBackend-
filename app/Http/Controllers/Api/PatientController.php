@@ -520,15 +520,23 @@ class PatientController extends Controller
         // Handle payment data and preserve lab_number
         $paymentData = [];
         $manualLabNumber = null;
+        $totalAmount = null;
+        
+        // Preserve total_amount before unsetting it
+        if (isset($patientData['total_amount'])) {
+            $totalAmount = floatval($patientData['total_amount']);
+        } elseif (isset($request->total_amount)) {
+            $totalAmount = floatval($request->total_amount);
+        }
         
         if (isset($patientData['amount_paid'])) {
-            $paymentData['amount_paid'] = $patientData['amount_paid'];
+            $paymentData['amount_paid'] = floatval($patientData['amount_paid']);
         }
         if (isset($patientData['amount_paid_cash'])) {
-            $paymentData['amount_paid_cash'] = $patientData['amount_paid_cash'];
+            $paymentData['amount_paid_cash'] = floatval($patientData['amount_paid_cash']);
         }
         if (isset($patientData['amount_paid_card'])) {
-            $paymentData['amount_paid_card'] = $patientData['amount_paid_card'];
+            $paymentData['amount_paid_card'] = floatval($patientData['amount_paid_card']);
         }
         if (isset($patientData['additional_payment_method'])) {
             $paymentData['additional_payment_method'] = $patientData['additional_payment_method'];
@@ -568,34 +576,57 @@ class PatientController extends Controller
 
         // Create visit record if payment data is provided
         $visit = null;
-        if (!empty($paymentData) || isset($request->total_amount)) {
+        if (!empty($paymentData) || $totalAmount !== null) {
             // Get current staff shift
             $currentShift = \App\Models\Shift::where('staff_id', auth()->id())
                 ->where('status', 'open')
                 ->whereDate('opened_at', today())
                 ->first();
 
+            // Use preserved total_amount or get from request
+            $visitTotalAmount = $totalAmount ?? floatval($request->total_amount ?? 0);
+            $finalAmount = $visitTotalAmount;
+            $paidAmount = floatval($paymentData['amount_paid'] ?? 0);
+            
+            \Log::info('Creating visit from PatientController:', [
+                'patient_id' => $patient->id,
+                'total_amount' => $visitTotalAmount,
+                'final_amount' => $finalAmount,
+                'upfront_payment' => $paidAmount,
+                'payment_method' => $paymentData['additional_payment_method'] ?? 'cash',
+                'request_total_amount' => $request->total_amount,
+                'preserved_total_amount' => $totalAmount,
+                'payment_data' => $paymentData,
+            ]);
+            
             $visitData = [
                 'patient_id' => $patient->id,
                 'visit_number' => \App\Models\Visit::generateVisitNumber(),
                 'visit_date' => $request->attendance_date ?? now()->toDateString(),
                 'visit_time' => now()->toTimeString(),
                 'expected_delivery_date' => $request->delivery_date ?? now()->addDays(1)->toDateString(),
-                'total_amount' => $request->total_amount ?? 0,
-                'final_amount' => $request->total_amount ?? 0,
-                'upfront_payment' => $paymentData['amount_paid'] ?? 0,
+                'total_amount' => $visitTotalAmount,
+                'final_amount' => $finalAmount,
+                'upfront_payment' => $paidAmount,
                 'payment_method' => $paymentData['additional_payment_method'] ?? 'cash',
-                'billing_status' => ($paymentData['amount_paid'] ?? 0) >= ($request->total_amount ?? 0) ? 'paid' : 'partial',
+                'billing_status' => $paidAmount >= $visitTotalAmount && $visitTotalAmount > 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'unpaid'),
                 'status' => 'pending',
                 'created_by' => auth()->id() ?? 1,
                 'shift_id' => $currentShift?->id, // Link to current shift
                 'processed_by_staff' => auth()->id(),
                 'metadata' => json_encode([
+                    'financial_data' => [
+                        'total_amount' => $visitTotalAmount,
+                        'final_amount' => $finalAmount,
+                        'amount_paid' => $paidAmount,
+                        'remaining_balance' => max(0, $finalAmount - $paidAmount),
+                        'payment_status' => $paidAmount >= $visitTotalAmount && $visitTotalAmount > 0 ? 'paid' : ($paidAmount > 0 ? 'partial' : 'unpaid'),
+                    ],
                     'payment_details' => [
                         'amount_paid_cash' => $paymentData['amount_paid_cash'] ?? 0,
                         'amount_paid_card' => $paymentData['amount_paid_card'] ?? 0,
                         'additional_payment_method' => $paymentData['additional_payment_method'] ?? 'cash',
-                        'total_paid' => $paymentData['amount_paid'] ?? 0,
+                        'total_paid' => $paidAmount,
                     ],
                     'created_via' => 'patient_registration',
                     'patient_data' => $request->all(),
@@ -603,6 +634,14 @@ class PatientController extends Controller
             ];
             
             $visit = \App\Models\Visit::create($visitData);
+            
+            \Log::info('Visit created successfully:', [
+                'visit_id' => $visit->id,
+                'visit_number' => $visit->visit_number,
+                'total_amount' => $visit->total_amount,
+                'final_amount' => $visit->final_amount,
+                'upfront_payment' => $visit->upfront_payment,
+            ]);
             
             // Update patient with payment information
             if (isset($paymentData['amount_paid'])) {
