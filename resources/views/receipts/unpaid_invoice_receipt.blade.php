@@ -7,6 +7,7 @@
         @page {
             margin: 0;
             size: 210mm 148.5mm;
+            background-color: #F7F7F7;
         }
         
         * {
@@ -130,25 +131,35 @@
             font-size: 18px;
         }
         
+        .financial-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .financial-table td {
+            padding: 2px 8px;
+            text-align: right;
+            vertical-align: top;
+            font-size: 16px;
+        }
+        
+        .financial-label {
+            font-weight: bold;
+            white-space: nowrap;
+        }
+        
+        .financial-value {
+            font-weight: normal;
+            white-space: nowrap;
+        }
+        
         .financial-row {
             display: table;
             width: 100%;
             margin: 0;
             padding: 0;
-        }
-        
-        .financial-label {
-            display: table-cell;
-            font-weight: bold;
-            text-align: right;
-            width: 60%;
-            padding-right: 5px;
-        }
-        
-        .financial-value {
-            display: table-cell;
-            text-align: right;
-            width: 40%;
         }
         
         .footer-section {
@@ -269,22 +280,63 @@
                     <div class="patient-value">{{ $receiptData['previous_tests'] ?? '' }}</div>
                 </td>
             </tr>
+            @if(isset($receiptData['patient_credentials']) && $receiptData['patient_credentials'])
+                @php
+                    $credentials = $receiptData['patient_credentials'];
+                    $username = $credentials['username'] ?? null;
+                    $password = $credentials['password'] ?? null;
+                @endphp
+                @if($username || $password)
+                <tr>
+                    <td colspan="2">
+                        <div class="patient-label">اسم المستخدم (Username):</div>
+                        <div class="patient-value" style="font-weight: bold; font-size: 16px;">{{ $username ?? 'غير متوفر' }}</div>
+                    </td>
+                    <td colspan="2">
+                        <div class="patient-label">كلمة المرور (Password):</div>
+                        <div class="patient-value" style="font-weight: bold; font-size: 16px;">{{ $password ?? 'غير متوفر' }}</div>
+                    </td>
+                </tr>
+                @endif
+            @endif
         </table>
 
         <!-- Financial Summary -->
         <div class="financial-section arabic-text">
-            <div class="financial-row">
-                <span class="financial-label">أجمالي المبلغ :</span>
-                <span class="financial-value">{{ number_format($receiptData['total_amount'] ?? 0, 0) }}</span>
-            </div>
-            <div class="financial-row">
-                <span class="financial-label">المبلغ المدفوع :</span>
-                <span class="financial-value">{{ number_format($receiptData['upfront_payment'] ?? 0, 0) }}</span>
-            </div>
-            <div class="financial-row">
-                <span class="financial-label">المبلغ المتبقي :</span>
-                <span class="financial-value">{{ number_format($receiptData['remaining_balance'] ?? 0, 0) }}</span>
-            </div>
+            <table class="financial-table" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                    <td class="financial-label">أجمالي المبلغ :</td>
+                    <td class="financial-value">{{ number_format($receiptData['total_amount'] ?? 0, 0) }} جنيه</td>
+                    @if(isset($receiptData['discount_amount']) && $receiptData['discount_amount'] > 0)
+                    <td class="financial-label">الخصم :</td>
+                    <td class="financial-value">{{ number_format($receiptData['discount_amount'] ?? 0, 0) }} جنيه</td>
+                    @endif
+                    <td class="financial-label">المبلغ النهائي :</td>
+                    <td class="financial-value">{{ number_format($receiptData['final_amount'] ?? ($receiptData['total_amount'] ?? 0), 0) }} جنيه</td>
+                </tr>
+                <tr>
+                    <td class="financial-label">المبلغ المدفوع :</td>
+                    <td class="financial-value">{{ number_format($receiptData['upfront_payment'] ?? 0, 0) }} جنيه</td>
+                    @if(isset($receiptData['payment_breakdown']))
+                        @php
+                            $paymentBreakdown = $receiptData['payment_breakdown'];
+                            $cashAmount = floatval($paymentBreakdown['cash'] ?? 0);
+                            $cardAmount = floatval($paymentBreakdown['card'] ?? 0);
+                            $cardMethod = $paymentBreakdown['card_method'] ?? 'Card';
+                        @endphp
+                        @if($cashAmount > 0)
+                        <td class="financial-label">- نقدي :</td>
+                        <td class="financial-value">{{ number_format($cashAmount, 0) }} جنيه</td>
+                        @endif
+                        @if($cardAmount > 0)
+                        <td class="financial-label">- {{ $cardMethod == 'Card' ? 'بطاقة' : $cardMethod }} :</td>
+                        <td class="financial-value">{{ number_format($cardAmount, 0) }} جنيه</td>
+                        @endif
+                    @endif
+                    <td class="financial-label">المبلغ المتبقي :</td>
+                    <td class="financial-value">{{ number_format($receiptData['remaining_balance'] ?? 0, 0) }} جنيه</td>
+                </tr>
+            </table>
         </div>
 
         <!-- Footer -->
