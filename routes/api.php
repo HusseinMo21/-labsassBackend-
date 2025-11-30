@@ -415,6 +415,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/shifts/open', [App\Http\Controllers\Api\ShiftController::class, 'openShift']);
         Route::post('/shifts/close', [App\Http\Controllers\Api\ShiftController::class, 'closeShift']);
         Route::get('/shifts/history', [App\Http\Controllers\Api\ShiftController::class, 'getShiftHistory']);
+        Route::get('/shifts/by-date', [App\Http\Controllers\Api\ShiftController::class, 'getShiftsByDate']);
         Route::get('/shifts/{shiftId}/report', [App\Http\Controllers\Api\ShiftController::class, 'getShiftReport']);
     });
 

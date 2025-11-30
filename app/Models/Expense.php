@@ -16,6 +16,7 @@ class Expense extends Model
         'reference_number',
         'notes',
         'created_by',
+        'shift_id',
     ];
 
     protected $casts = [
@@ -29,6 +30,14 @@ class Expense extends Model
     public function author(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    /**
+     * Get the shift this expense belongs to
+     */
+    public function shift(): BelongsTo
+    {
+        return $this->belongsTo(Shift::class);
     }
 
     /**

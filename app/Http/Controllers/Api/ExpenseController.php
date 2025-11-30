@@ -57,6 +57,7 @@ class ExpenseController extends Controller
             'payment_method' => 'nullable|string|max:50',
             'reference_number' => 'nullable|string|max:100',
             'notes' => 'nullable|string',
+            'shift_id' => 'nullable|exists:shifts,id',
         ]);
 
         if ($validator->fails()) {
@@ -64,6 +65,19 @@ class ExpenseController extends Controller
                 'message' => 'Validation failed',
                 'errors' => $validator->errors(),
             ], 422);
+        }
+
+        // If shift_id is not provided, try to find current open shift for the user
+        $shiftId = $request->shift_id;
+        if (!$shiftId) {
+            $currentShift = \App\Models\Shift::where('staff_id', Auth::id())
+                ->where('status', 'open')
+                ->whereNotNull('opened_at')
+                ->whereDate('opened_at', today())
+                ->first();
+            if ($currentShift) {
+                $shiftId = $currentShift->id;
+            }
         }
 
         $expense = Expense::create([
@@ -75,6 +89,7 @@ class ExpenseController extends Controller
             'reference_number' => $request->reference_number,
             'notes' => $request->notes,
             'created_by' => Auth::id(),
+            'shift_id' => $shiftId,
         ]);
 
         return response()->json([

@@ -54,6 +54,11 @@ class Shift extends Model
         return $this->hasMany(Invoice::class);
     }
 
+    public function expenses(): HasMany
+    {
+        return $this->hasMany(Expense::class);
+    }
+
     // Scopes
     public function scopeOpen($query)
     {
@@ -128,57 +133,72 @@ class Shift extends Model
         $otherPaymentsCollected = 0;
         $paymentBreakdown = [];
 
-        // Get all visits for this shift
-        $visits = $this->visits()->with('patient')->get();
+        try {
+            // Get all visits for this shift
+            $visits = $this->visits()->with('patient')->get();
 
-        foreach ($visits as $visit) {
-            $visitPaymentAmount = $visit->upfront_payment ?? 0;
-            $visitPaymentMethod = $visit->payment_method ?? 'cash';
+            foreach ($visits as $visit) {
+                $visitPaymentAmount = $visit->upfront_payment ?? 0;
+                $visitPaymentMethod = $visit->payment_method ?? 'cash';
 
-            // First, try to get payment details from visit metadata (for patient registration)
-            $metadata = json_decode($visit->metadata ?? '{}', true);
-            $paymentDetails = $metadata['payment_details'] ?? [];
-            $patientData = $metadata['patient_data'] ?? [];
+                // First, try to get payment details from visit metadata (for patient registration)
+                // Handle metadata - it might be an array (from cast) or a JSON string
+                $metadata = [];
+                if ($visit->metadata) {
+                    if (is_array($visit->metadata)) {
+                        $metadata = $visit->metadata;
+                    } elseif (is_string($visit->metadata)) {
+                        $metadata = json_decode($visit->metadata, true) ?? [];
+                    }
+                }
+                $paymentDetails = $metadata['payment_details'] ?? [];
+                $patientData = $metadata['patient_data'] ?? [];
 
-            $amountPaidCash = 0;
-            $amountPaidCard = 0;
-            $cardPaymentMethod = 'Card';
+                $amountPaidCash = 0;
+                $amountPaidCard = 0;
+                $cardPaymentMethod = 'Card';
 
-            // Priority 1: Check payment_details first (most reliable source)
-            if (!empty($paymentDetails)) {
-                $amountPaidCash = $paymentDetails['amount_paid_cash'] ?? 0;
-                $amountPaidCard = $paymentDetails['amount_paid_card'] ?? 0;
-                $cardPaymentMethod = $paymentDetails['additional_payment_method'] ?? 'Card';
-            }
-            // Priority 2: Fall back to patient_data if payment_details is empty
-            elseif (!empty($patientData)) {
-                $amountPaidCash = $patientData['amount_paid_cash'] ?? 0;
-                $amountPaidCard = $patientData['amount_paid_card'] ?? 0;
-                $cardPaymentMethod = $patientData['additional_payment_method'] ?? 'Card';
-            }
-            // Priority 3: Use direct visit payment fields (for CheckIn visits)
-            elseif ($visitPaymentAmount > 0) {
-                if ($visitPaymentMethod === 'cash') {
-                    $amountPaidCash = $visitPaymentAmount;
-                } else {
-                    $amountPaidCard = $visitPaymentAmount;
-                    $cardPaymentMethod = $visitPaymentMethod;
+                // Priority 1: Check payment_details first (most reliable source)
+                if (!empty($paymentDetails)) {
+                    $amountPaidCash = $paymentDetails['amount_paid_cash'] ?? 0;
+                    $amountPaidCard = $paymentDetails['amount_paid_card'] ?? 0;
+                    $cardPaymentMethod = $paymentDetails['additional_payment_method'] ?? 'Card';
+                }
+                // Priority 2: Fall back to patient_data if payment_details is empty
+                elseif (!empty($patientData)) {
+                    $amountPaidCash = $patientData['amount_paid_cash'] ?? 0;
+                    $amountPaidCard = $patientData['amount_paid_card'] ?? 0;
+                    $cardPaymentMethod = $patientData['additional_payment_method'] ?? 'Card';
+                }
+                // Priority 3: Use direct visit payment fields (for CheckIn visits)
+                elseif ($visitPaymentAmount > 0) {
+                    if ($visitPaymentMethod === 'cash') {
+                        $amountPaidCash = $visitPaymentAmount;
+                    } else {
+                        $amountPaidCard = $visitPaymentAmount;
+                        $cardPaymentMethod = $visitPaymentMethod;
+                    }
+                }
+
+                // Add to totals
+                if ($amountPaidCash > 0) {
+                    $cashCollected += $amountPaidCash;
+                }
+
+                if ($amountPaidCard > 0) {
+                    $otherPaymentsCollected += $amountPaidCard;
+                    
+                    if (!isset($paymentBreakdown[$cardPaymentMethod])) {
+                        $paymentBreakdown[$cardPaymentMethod] = 0;
+                    }
+                    $paymentBreakdown[$cardPaymentMethod] += $amountPaidCard;
                 }
             }
-
-            // Add to totals
-            if ($amountPaidCash > 0) {
-                $cashCollected += $amountPaidCash;
-            }
-
-            if ($amountPaidCard > 0) {
-                $otherPaymentsCollected += $amountPaidCard;
-                
-                if (!isset($paymentBreakdown[$cardPaymentMethod])) {
-                    $paymentBreakdown[$cardPaymentMethod] = 0;
-                }
-                $paymentBreakdown[$cardPaymentMethod] += $amountPaidCard;
-            }
+        } catch (\Exception $e) {
+            \Log::error('Error in calculatePaymentBreakdown for shift ' . $this->id . ': ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            // Return default values on error
         }
 
         return [
@@ -186,6 +206,45 @@ class Shift extends Model
             'other_payments_collected' => $otherPaymentsCollected,
             'payment_breakdown' => $paymentBreakdown,
             'total_collected' => $cashCollected + $otherPaymentsCollected,
+        ];
+    }
+
+    /**
+     * Calculate expenses breakdown for this shift
+     */
+    public function calculateExpensesBreakdown(): array
+    {
+        $expenses = $this->expenses()->get();
+        $totalExpenses = 0;
+        $expensesBreakdown = [];
+
+        foreach ($expenses as $expense) {
+            $totalExpenses += $expense->amount;
+            $category = $expense->category ?? 'General';
+            if (!isset($expensesBreakdown[$category])) {
+                $expensesBreakdown[$category] = [];
+            }
+            $expensesBreakdown[$category][] = [
+                'id' => $expense->id,
+                'description' => $expense->description,
+                'amount' => $expense->amount,
+                'payment_method' => $expense->payment_method,
+            ];
+        }
+
+        return [
+            'total_expenses' => $totalExpenses,
+            'expenses_breakdown' => $expensesBreakdown,
+            'expenses_list' => $expenses->map(function ($expense) {
+                return [
+                    'id' => $expense->id,
+                    'description' => $expense->description,
+                    'amount' => $expense->amount,
+                    'category' => $expense->category,
+                    'payment_method' => $expense->payment_method,
+                    'expense_date' => $expense->expense_date,
+                ];
+            })->toArray(),
         ];
     }
 
@@ -222,7 +281,15 @@ class Shift extends Model
             $totalAmount = $invoice?->total ?? $visit->total_amount ?? $visit->final_amount ?? 0;
             
             // Get payment details from visit metadata
-            $metadata = json_decode($visit->metadata ?? '{}', true);
+            // Handle metadata - it might be an array (from cast) or a JSON string
+            $metadata = [];
+            if ($visit->metadata) {
+                if (is_array($visit->metadata)) {
+                    $metadata = $visit->metadata;
+                } elseif (is_string($visit->metadata)) {
+                    $metadata = json_decode($visit->metadata, true) ?? [];
+                }
+            }
             $paymentDetails = $metadata['payment_details'] ?? [];
             $patientData = $metadata['patient_data'] ?? [];
             
