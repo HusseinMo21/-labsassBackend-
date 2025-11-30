@@ -1252,8 +1252,24 @@ class PatientController extends Controller
                 'updated_payment_status' => $paymentStatus,
             ]);
 
-            // Update visit metadata to reflect new financial data
-            $metadata = json_decode($latestVisit->metadata ?? '{}', true);
+            // Update visit metadata to reflect new financial data - handle metadata safely
+            $metadata = [];
+            if ($latestVisit->metadata) {
+                if (is_array($latestVisit->metadata)) {
+                    $metadata = $latestVisit->metadata;
+                } elseif (is_string($latestVisit->metadata)) {
+                    try {
+                        $metadata = json_decode($latestVisit->metadata, true) ?? [];
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to parse visit metadata as JSON in addExtraPayment', [
+                            'visit_id' => $latestVisit->id,
+                            'error' => $e->getMessage()
+                        ]);
+                        $metadata = [];
+                    }
+                }
+            }
+            
             $metadata['financial_data'] = [
                 'total_amount' => $newTotalAmount,
                 'amount_paid' => $newPaidAmount,
@@ -1273,6 +1289,17 @@ class PatientController extends Controller
                 $metadata['patient_data']['remaining_balance'] = $remainingBalance;
                 $metadata['patient_data']['payment_status'] = $paymentStatus;
             }
+            
+            // Update payment_details in metadata
+            $paymentDetails = $metadata['payment_details'] ?? [];
+            if ($paymentMethod === 'cash') {
+                $paymentDetails['amount_paid_cash'] = ($paymentDetails['amount_paid_cash'] ?? 0) + $amount;
+            } else {
+                $paymentDetails['amount_paid_card'] = ($paymentDetails['amount_paid_card'] ?? 0) + $amount;
+                $paymentDetails['additional_payment_method'] = $paymentMethod;
+            }
+            $paymentDetails['total_paid'] = ($paymentDetails['total_paid'] ?? 0) + $amount;
+            $metadata['payment_details'] = $paymentDetails;
             
             $latestVisit->update(['metadata' => json_encode($metadata)]);
 

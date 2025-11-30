@@ -339,12 +339,14 @@ class VisitController extends Controller
             $paymentDetails = $metadata['payment_details'] ?? [];
             $patientData = $metadata['patient_data'] ?? [];
             
-            // Calculate amounts prioritizing financial_data, then fallback to other sources
-            $totalAmount = $financialData['total_amount'] ?? $visit->total_amount ?? 0;
-            $finalAmount = $financialData['total_amount'] ?? $visit->final_amount ?? 0; // Use total_amount for final_amount too
-            $paidAmount = $financialData['amount_paid'] ?? ($invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0));
-            $remainingBalance = $financialData['remaining_balance'] ?? ($invoice ? $invoice->balance : (($visit->final_amount ?? $visit->total_amount ?? 0) - ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0)));
-            $billingStatus = $financialData['payment_status'] ?? $this->getBillingStatus($invoice, $visit);
+            // Calculate amounts - prioritize patient table (same as UnpaidInvoicesController)
+            // Use patient.total_amount and patient.amount_paid first, then fallback to visit fields
+            $totalAmount = $visit->patient->total_amount ?? $visit->final_amount ?? $visit->total_amount ?? 0;
+            $finalAmount = $visit->patient->total_amount ?? $visit->final_amount ?? $visit->total_amount ?? 0;
+            // Use patient.amount_paid first (same as UnpaidInvoicesController), then fallback to visit.upfront_payment
+            $paidAmount = $visit->patient->amount_paid ?? $visit->upfront_payment ?? 0;
+            $remainingBalance = max(0, $totalAmount - $paidAmount);
+            $billingStatus = $this->getBillingStatus($invoice, $visit);
             
             return [
                 'id' => $visit->id,

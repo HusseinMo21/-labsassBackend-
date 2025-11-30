@@ -850,6 +850,45 @@ class LabRequestController extends Controller
                         $invoiceNumber = $latestVisit->visit_number;
                     }
                     
+                    // Build payment breakdown - ensure it matches paidAmount (same as CheckInController)
+                    $paymentBreakdown = [];
+                    $totalPaidFromBreakdown = 0;
+                    
+                    $cashAmount = floatval($paymentDetails['amount_paid_cash'] ?? $patientData['amount_paid_cash'] ?? 0);
+                    $cardAmount = floatval($paymentDetails['amount_paid_card'] ?? $patientData['amount_paid_card'] ?? 0);
+                    
+                    if ($cashAmount > 0) {
+                        $totalPaidFromBreakdown += $cashAmount;
+                        $paymentBreakdown['cash'] = $cashAmount;
+                    }
+                    if ($cardAmount > 0) {
+                        $totalPaidFromBreakdown += $cardAmount;
+                        $paymentBreakdown['card'] = $cardAmount;
+                        $paymentBreakdown['card_method'] = $paymentDetails['additional_payment_method'] ?? $patientData['additional_payment_method'] ?? null;
+                    }
+                    
+                    // If breakdown exists but doesn't match paidAmount, normalize it
+                    if (!empty($paymentBreakdown) && $totalPaidFromBreakdown > 0 && abs($totalPaidFromBreakdown - $paidAmount) > 0.01) {
+                        // Scale down the breakdown to match paidAmount
+                        $scaleFactor = $paidAmount / $totalPaidFromBreakdown;
+                        if (isset($paymentBreakdown['cash'])) {
+                            $paymentBreakdown['cash'] = round($paymentBreakdown['cash'] * $scaleFactor, 2);
+                        }
+                        if (isset($paymentBreakdown['card'])) {
+                            $paymentBreakdown['card'] = round($paymentBreakdown['card'] * $scaleFactor, 2);
+                        }
+                    }
+                    
+                    // If no breakdown exists but we have a payment method, create a simple breakdown
+                    if (empty($paymentBreakdown) && $paidAmount > 0) {
+                        if (strtolower($paymentMethod) === 'cash' || !$paymentMethod) {
+                            $paymentBreakdown['cash'] = $paidAmount;
+                        } else {
+                            $paymentBreakdown['card'] = $paidAmount;
+                            $paymentBreakdown['card_method'] = $paymentMethod;
+                        }
+                    }
+                    
                     $paymentHistory[] = [
                         'visit_id' => $latestVisit->id,
                         'visit_date' => $latestVisit->visit_date,
@@ -859,11 +898,7 @@ class LabRequestController extends Controller
                         'balance' => $remainingAmount,
                         'status' => $remainingAmount <= 0 ? 'Paid' : ($paidAmount > 0 ? 'Partial' : 'Unpaid'),
                         'payment_method' => $paymentMethod,
-                        'payment_breakdown' => [
-                            'cash' => $paymentDetails['amount_paid_cash'] ?? $patientData['amount_paid_cash'] ?? 0,
-                            'card' => $paymentDetails['amount_paid_card'] ?? $patientData['amount_paid_card'] ?? 0,
-                            'card_method' => $paymentDetails['additional_payment_method'] ?? $patientData['additional_payment_method'] ?? null,
-                        ],
+                        'payment_breakdown' => $paymentBreakdown,
                         'created_at' => $latestVisit->created_at ?? now(),
                     ];
                 }

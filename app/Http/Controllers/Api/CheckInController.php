@@ -532,28 +532,46 @@ class CheckInController extends Controller
         $financialData = $metadata['financial_data'] ?? []; // Added to read financial_data
         $paymentDetails = $metadata['payment_details'] ?? [];
         
-        // Build payment breakdown
+        // Build payment breakdown - ensure it matches total_paid
         $paymentBreakdown = [];
+        $totalPaidFromBreakdown = 0;
+        
+        // Get the actual total paid amount
+        $paidAmount = $financialData['amount_paid'] ?? $this->calculatePaidAmount($visit, $invoice);
+        
         if (isset($paymentDetails['amount_paid_cash']) && $paymentDetails['amount_paid_cash'] > 0) {
-            $paymentBreakdown['cash'] = $paymentDetails['amount_paid_cash'];
+            $cashAmount = floatval($paymentDetails['amount_paid_cash']);
+            $totalPaidFromBreakdown += $cashAmount;
+            $paymentBreakdown['cash'] = $cashAmount;
         }
         if (isset($paymentDetails['amount_paid_card']) && $paymentDetails['amount_paid_card'] > 0) {
-            $paymentBreakdown['card'] = $paymentDetails['amount_paid_card'];
+            $cardAmount = floatval($paymentDetails['amount_paid_card']);
+            $totalPaidFromBreakdown += $cardAmount;
+            $paymentBreakdown['card'] = $cardAmount;
             $paymentBreakdown['card_method'] = $paymentDetails['additional_payment_method'] ?? 'Card';
         }
         
+        // If breakdown exists but doesn't match total_paid, normalize it
+        if (!empty($paymentBreakdown) && $totalPaidFromBreakdown > 0 && abs($totalPaidFromBreakdown - $paidAmount) > 0.01) {
+            // Scale down the breakdown to match total_paid
+            $scaleFactor = $paidAmount / $totalPaidFromBreakdown;
+            if (isset($paymentBreakdown['cash'])) {
+                $paymentBreakdown['cash'] = round($paymentBreakdown['cash'] * $scaleFactor, 2);
+            }
+            if (isset($paymentBreakdown['card'])) {
+                $paymentBreakdown['card'] = round($paymentBreakdown['card'] * $scaleFactor, 2);
+            }
+        }
+        
         // If no breakdown exists but we have a payment method, create a simple breakdown
-        if (empty($paymentBreakdown)) {
+        if (empty($paymentBreakdown) && $paidAmount > 0) {
             $currentPaymentMethod = $this->getPaymentMethod($visit, $payments);
-            $paidAmount = $invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0);
             
-            if ($paidAmount > 0) {
-                if ($currentPaymentMethod === 'cash') {
-                    $paymentBreakdown['cash'] = $paidAmount;
-                } else {
-                    $paymentBreakdown['card'] = $paidAmount;
-                    $paymentBreakdown['card_method'] = $currentPaymentMethod;
-                }
+            if ($currentPaymentMethod === 'cash' || !$currentPaymentMethod) {
+                $paymentBreakdown['cash'] = $paidAmount;
+            } else {
+                $paymentBreakdown['card'] = $paidAmount;
+                $paymentBreakdown['card_method'] = $currentPaymentMethod;
             }
         }
         
@@ -1175,28 +1193,46 @@ class CheckInController extends Controller
             $financialData = $metadata['financial_data'] ?? [];
             $paymentDetails = $metadata['payment_details'] ?? [];
             
-            // Build payment breakdown
+            // Build payment breakdown - ensure it matches total_paid
             $paymentBreakdown = [];
+            $totalPaidFromBreakdown = 0;
+            
+            // Get the actual total paid amount (will be calculated later, but we need it here)
+            $paidAmount = $this->calculatePaidAmount($visit, $invoice);
+            
             if (isset($paymentDetails['amount_paid_cash']) && $paymentDetails['amount_paid_cash'] > 0) {
-                $paymentBreakdown['cash'] = $paymentDetails['amount_paid_cash'];
+                $cashAmount = floatval($paymentDetails['amount_paid_cash']);
+                $totalPaidFromBreakdown += $cashAmount;
+                $paymentBreakdown['cash'] = $cashAmount;
             }
             if (isset($paymentDetails['amount_paid_card']) && $paymentDetails['amount_paid_card'] > 0) {
-                $paymentBreakdown['card'] = $paymentDetails['amount_paid_card'];
+                $cardAmount = floatval($paymentDetails['amount_paid_card']);
+                $totalPaidFromBreakdown += $cardAmount;
+                $paymentBreakdown['card'] = $cardAmount;
                 $paymentBreakdown['card_method'] = $paymentDetails['additional_payment_method'] ?? 'Card';
             }
             
+            // If breakdown exists but doesn't match total_paid, normalize it
+            if (!empty($paymentBreakdown) && $totalPaidFromBreakdown > 0 && abs($totalPaidFromBreakdown - $paidAmount) > 0.01) {
+                // Scale down the breakdown to match total_paid
+                $scaleFactor = $paidAmount / $totalPaidFromBreakdown;
+                if (isset($paymentBreakdown['cash'])) {
+                    $paymentBreakdown['cash'] = round($paymentBreakdown['cash'] * $scaleFactor, 2);
+                }
+                if (isset($paymentBreakdown['card'])) {
+                    $paymentBreakdown['card'] = round($paymentBreakdown['card'] * $scaleFactor, 2);
+                }
+            }
+            
             // If no breakdown exists but we have a payment method, create a simple breakdown
-            if (empty($paymentBreakdown)) {
+            if (empty($paymentBreakdown) && $paidAmount > 0) {
                 $currentPaymentMethod = $this->getPaymentMethod($visit, $payments);
-                $paidAmount = $invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0);
                 
-                if ($paidAmount > 0) {
-                    if ($currentPaymentMethod === 'cash') {
-                        $paymentBreakdown['cash'] = $paidAmount;
-                    } else {
-                        $paymentBreakdown['card'] = $paidAmount;
-                        $paymentBreakdown['card_method'] = $currentPaymentMethod;
-                    }
+                if ($currentPaymentMethod === 'cash' || !$currentPaymentMethod) {
+                    $paymentBreakdown['cash'] = $paidAmount;
+                } else {
+                    $paymentBreakdown['card'] = $paidAmount;
+                    $paymentBreakdown['card_method'] = $currentPaymentMethod;
                 }
             }
             
@@ -1214,8 +1250,11 @@ class CheckInController extends Controller
             }
             
             // Calculate financial values with proper fallbacks
-            // Priority: visit fields > invoice fields > metadata > patient fields
-            $totalAmount = floatval($visit->total_amount ?? 0);
+            // Priority: patient.total_amount (same as UnpaidInvoicesController) > visit fields > invoice fields > metadata
+            $totalAmount = floatval($visit->patient->total_amount ?? 0);
+            if ($totalAmount == 0) {
+                $totalAmount = floatval($visit->final_amount ?? $visit->total_amount ?? 0);
+            }
             if ($totalAmount == 0 && $invoice) {
                 $totalAmount = floatval($invoice->total_amount ?? $invoice->total ?? 0);
             }
@@ -1225,11 +1264,11 @@ class CheckInController extends Controller
             if ($totalAmount == 0 && isset($patientData['total_amount'])) {
                 $totalAmount = floatval($patientData['total_amount']);
             }
-            if ($totalAmount == 0) {
-                $totalAmount = floatval($visit->patient->total_amount ?? 0);
-            }
             
-            $finalAmount = floatval($visit->final_amount ?? 0);
+            $finalAmount = floatval($visit->patient->total_amount ?? 0);
+            if ($finalAmount == 0) {
+                $finalAmount = floatval($visit->final_amount ?? $visit->total_amount ?? 0);
+            }
             if ($finalAmount == 0) {
                 $finalAmount = $totalAmount; // Use total_amount if final_amount is not set
             }
@@ -1506,18 +1545,25 @@ class CheckInController extends Controller
 
     private function calculatePaidAmount($visit, $invoice = null)
     {
-        // Priority: invoice > visit upfront_payment > metadata > patient amount_paid
+        // Priority: patient.amount_paid (same as UnpaidInvoicesController) > visit upfront_payment > invoice > metadata
+        // Use patient.amount_paid first (same as UnpaidInvoicesController)
+        $patientPaid = floatval($visit->patient->amount_paid ?? 0);
+        if ($patientPaid > 0) {
+            return $patientPaid;
+        }
+        
+        // Fallback to visit upfront_payment
+        $visitPaid = floatval($visit->upfront_payment ?? 0);
+        if ($visitPaid > 0) {
+            return $visitPaid;
+        }
+        
+        // Fallback to invoice
         if ($invoice) {
             $invoicePaid = floatval($invoice->amount_paid ?? $invoice->paid ?? 0);
             if ($invoicePaid > 0) {
                 return $invoicePaid;
             }
-        }
-        
-        // Check visit upfront_payment directly first
-        $visitPaid = floatval($visit->upfront_payment ?? 0);
-        if ($visitPaid > 0) {
-            return $visitPaid;
         }
         
         // Get payment data from visit metadata
@@ -1533,11 +1579,6 @@ class CheckInController extends Controller
             $cashPaid = floatval($paymentDetails['amount_paid_cash'] ?? $patientData['amount_paid_cash'] ?? 0);
             $cardPaid = floatval($paymentDetails['amount_paid_card'] ?? $patientData['amount_paid_card'] ?? 0);
             $paidAmount = $cashPaid + $cardPaid;
-        }
-        
-        // Final fallback to patient amount_paid
-        if ($paidAmount == 0) {
-            $paidAmount = floatval($visit->patient->amount_paid ?? 0);
         }
         
         return $paidAmount;
@@ -1712,31 +1753,6 @@ class CheckInController extends Controller
                 'doctor' => $patientData['doctor'] ?? 'not_set',
             ]);
             
-            // Build payment breakdown
-            $paymentBreakdown = [];
-            if (isset($paymentDetails['amount_paid_cash']) && $paymentDetails['amount_paid_cash'] > 0) {
-                $paymentBreakdown['cash'] = $paymentDetails['amount_paid_cash'];
-            }
-            if (isset($paymentDetails['amount_paid_card']) && $paymentDetails['amount_paid_card'] > 0) {
-                $paymentBreakdown['card'] = $paymentDetails['amount_paid_card'];
-                $paymentBreakdown['card_method'] = $paymentDetails['additional_payment_method'] ?? 'Card';
-            }
-            
-            // If no breakdown exists but we have a payment method, create a simple breakdown
-            if (empty($paymentBreakdown)) {
-                $currentPaymentMethod = $this->getPaymentMethod($visit, $payments);
-                $paidAmount = $invoice ? $invoice->amount_paid : ($visit->patient->amount_paid ?? $visit->upfront_payment ?? 0);
-                
-                if ($paidAmount > 0) {
-                    if ($currentPaymentMethod === 'cash') {
-                        $paymentBreakdown['cash'] = $paidAmount;
-                    } else {
-                        $paymentBreakdown['card'] = $paidAmount;
-                        $paymentBreakdown['card_method'] = $currentPaymentMethod;
-                    }
-                }
-            }
-            
             // Get attendance date and delivery date from patient or visit metadata
             $patientData = $metadata['patient_data'] ?? [];
             
@@ -1779,44 +1795,78 @@ class CheckInController extends Controller
             }
             
             // Calculate financial values with proper fallbacks
-            // Priority: metadata > visit fields > invoice fields > patient fields
-            $totalAmount = 0;
-            if (isset($financialData['total_amount']) && $financialData['total_amount'] > 0) {
-                $totalAmount = floatval($financialData['total_amount']);
-            } elseif (isset($patientData['total_amount']) && $patientData['total_amount'] > 0) {
-                $totalAmount = floatval($patientData['total_amount']);
-            } elseif ($visit->total_amount && $visit->total_amount > 0) {
-                $totalAmount = floatval($visit->total_amount);
-            } elseif ($invoice) {
+            // Priority: patient.total_amount (same as UnpaidInvoicesController) > visit fields > invoice fields > metadata
+            $totalAmount = floatval($visit->patient->total_amount ?? 0);
+            if ($totalAmount == 0) {
+                $totalAmount = floatval($visit->final_amount ?? $visit->total_amount ?? 0);
+            }
+            if ($totalAmount == 0 && $invoice) {
                 $totalAmount = floatval($invoice->total_amount ?? $invoice->total ?? 0);
-            } else {
-                $totalAmount = floatval($visit->patient->total_amount ?? 0);
+            }
+            if ($totalAmount == 0 && isset($financialData['total_amount'])) {
+                $totalAmount = floatval($financialData['total_amount']);
+            }
+            if ($totalAmount == 0 && isset($patientData['total_amount'])) {
+                $totalAmount = floatval($patientData['total_amount']);
             }
             
-            $finalAmount = 0;
-            if (isset($financialData['final_amount']) && $financialData['final_amount'] > 0) {
-                $finalAmount = floatval($financialData['final_amount']);
-            } elseif ($totalAmount > 0) {
+            $finalAmount = floatval($visit->patient->total_amount ?? 0);
+            if ($finalAmount == 0) {
+                $finalAmount = floatval($visit->final_amount ?? $visit->total_amount ?? 0);
+            }
+            if ($finalAmount == 0) {
                 $finalAmount = $totalAmount; // Use total_amount if final_amount is not set
-            } elseif ($visit->final_amount && $visit->final_amount > 0) {
-                $finalAmount = floatval($visit->final_amount);
-            } elseif ($invoice) {
+            }
+            if ($finalAmount == 0 && $invoice) {
                 $finalAmount = floatval($invoice->total_amount ?? $invoice->total ?? 0);
             }
             
             $discountAmount = floatval($visit->discount_amount ?? 0);
             
-            // Get paid amount - priority: metadata payment_details > visit upfront_payment > calculatePaidAmount
-            $paidAmount = 0;
-            if (isset($paymentDetails['total_paid']) && $paymentDetails['total_paid'] > 0) {
-                $paidAmount = floatval($paymentDetails['total_paid']);
-            } elseif ($visit->upfront_payment && $visit->upfront_payment > 0) {
-                $paidAmount = floatval($visit->upfront_payment);
-            } else {
-                $paidAmount = $this->calculatePaidAmount($visit, $invoice);
-            }
+            // Get paid amount - priority: patient.amount_paid (same as UnpaidInvoicesController) > calculatePaidAmount
+            $paidAmount = $this->calculatePaidAmount($visit, $invoice);
             
             $remainingBalance = max(0, $finalAmount - $paidAmount);
+            
+            // Build payment breakdown - ensure it matches total_paid
+            $paymentBreakdown = [];
+            $totalPaidFromBreakdown = 0;
+            
+            if (isset($paymentDetails['amount_paid_cash']) && $paymentDetails['amount_paid_cash'] > 0) {
+                $cashAmount = floatval($paymentDetails['amount_paid_cash']);
+                $totalPaidFromBreakdown += $cashAmount;
+                $paymentBreakdown['cash'] = $cashAmount;
+            }
+            if (isset($paymentDetails['amount_paid_card']) && $paymentDetails['amount_paid_card'] > 0) {
+                $cardAmount = floatval($paymentDetails['amount_paid_card']);
+                $totalPaidFromBreakdown += $cardAmount;
+                $paymentBreakdown['card'] = $cardAmount;
+                $paymentBreakdown['card_method'] = $paymentDetails['additional_payment_method'] ?? 'Card';
+            }
+            
+            // If breakdown exists but doesn't match total_paid, normalize it
+            if (!empty($paymentBreakdown) && $totalPaidFromBreakdown > 0 && abs($totalPaidFromBreakdown - $paidAmount) > 0.01) {
+                // Scale down the breakdown to match total_paid
+                $scaleFactor = $paidAmount / $totalPaidFromBreakdown;
+                if (isset($paymentBreakdown['cash'])) {
+                    $paymentBreakdown['cash'] = round($paymentBreakdown['cash'] * $scaleFactor, 2);
+                }
+                if (isset($paymentBreakdown['card'])) {
+                    $paymentBreakdown['card'] = round($paymentBreakdown['card'] * $scaleFactor, 2);
+                }
+            }
+            
+            // If no breakdown exists but we have a payment method, create a simple breakdown
+            if (empty($paymentBreakdown) && $paidAmount > 0) {
+                $currentPaymentMethod = $this->getPaymentMethod($visit, $payments);
+                
+                if ($currentPaymentMethod === 'cash' || !$currentPaymentMethod) {
+                    $paymentBreakdown['cash'] = $paidAmount;
+                } else {
+                    $paymentBreakdown['card'] = $paidAmount;
+                    $paymentBreakdown['card_method'] = $currentPaymentMethod;
+                }
+            }
             
             \Log::info('Financial calculations for visit ' . $visit->id . ':', [
                 'visit_total_amount' => $visit->total_amount,
@@ -1826,6 +1876,7 @@ class CheckInController extends Controller
                 'calculated_final_amount' => $finalAmount,
                 'calculated_paid_amount' => $paidAmount,
                 'calculated_remaining_balance' => $remainingBalance,
+                'payment_breakdown' => $paymentBreakdown,
                 'invoice_total' => $invoice ? ($invoice->total_amount ?? $invoice->total) : null,
             ]);
             
