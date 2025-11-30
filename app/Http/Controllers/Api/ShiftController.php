@@ -174,12 +174,22 @@ class ShiftController extends Controller
             'status' => 'open',
         ]);
 
-        Log::info('Shift opened', [
+        // Verify shift was saved
+        $savedShift = Shift::find($shift->id);
+        if (!$savedShift) {
+            Log::error('Shift was not saved to database', [
+                'shift_id' => $shift->id,
+                'staff_id' => $user->id,
+            ]);
+        }
+
+        Log::info('Shift opened and saved to database', [
             'shift_id' => $shift->id,
             'staff_id' => $user->id,
             'staff_name' => $user->name,
             'shift_type' => $request->shift_type,
             'opened_at' => $shift->opened_at,
+            'saved_verified' => $savedShift ? true : false,
         ]);
 
         return response()->json([
@@ -240,15 +250,26 @@ class ShiftController extends Controller
 
         $currentShift->closeShift();
 
-        Log::info('Shift closed', [
+        // Verify shift was saved after closing
+        $closedShift = Shift::find($currentShift->id);
+        if (!$closedShift || $closedShift->status !== 'closed') {
+            Log::error('Shift was not properly saved after closing', [
+                'shift_id' => $currentShift->id,
+                'staff_id' => $user->id,
+            ]);
+        }
+
+        Log::info('Shift closed and saved to database', [
             'shift_id' => $currentShift->id,
             'staff_id' => $user->id,
             'staff_name' => $user->name,
             'shift_type' => $currentShift->shift_type,
+            'opened_at' => $currentShift->opened_at,
             'closed_at' => $currentShift->closed_at,
             'patients_served' => $patients,
             'visits_processed' => $visits,
             'total_collected' => $paymentBreakdown['total_collected'],
+            'saved_verified' => $closedShift && $closedShift->status === 'closed',
         ]);
 
         return response()->json([
@@ -371,10 +392,19 @@ class ShiftController extends Controller
 
             $date = \Carbon\Carbon::parse($request->date)->format('Y-m-d');
 
+            // Get ALL shifts for this date (both open and closed) - no limit to ensure all shifts are accessible
             $shifts = Shift::where('staff_id', $user->id)
                 ->whereDate('opened_at', $date)
                 ->orderBy('opened_at', 'asc')
-                ->get();
+                ->get(); // Get all shifts, no pagination limit
+
+            Log::info('Shifts retrieved by date', [
+                'user_id' => $user->id,
+                'date' => $date,
+                'total_shifts' => $shifts->count(),
+                'open_shifts' => $shifts->where('status', 'open')->count(),
+                'closed_shifts' => $shifts->where('status', 'closed')->count(),
+            ]);
 
             $shiftsData = $shifts->map(function ($shift) {
                 // Calculate payment breakdown
@@ -431,6 +461,7 @@ class ShiftController extends Controller
 
     /**
      * Get shift history for the current user
+     * Returns ALL closed shifts (no pagination limit to ensure all shifts are accessible)
      */
     public function getShiftHistory(Request $request)
     {
@@ -451,13 +482,22 @@ class ShiftController extends Controller
                 ], 403);
             }
 
+            // Get ALL closed shifts for this user (no limit to ensure all historical data is accessible)
             $shifts = Shift::where('staff_id', $user->id)
                 ->where('status', 'closed')
                 ->whereNotNull('closed_at')
                 ->orderBy('closed_at', 'desc')
-                ->get();
+                ->get(); // Get all shifts, no pagination limit
 
             $shiftHistory = $shifts->map(function ($shift) {
+                $paymentBreakdown = $shift->calculatePaymentBreakdown();
+                $expensesBreakdown = $shift->calculateExpensesBreakdown();
+                
+                // Calculate final cash in bucket
+                $cashCollected = $paymentBreakdown['cash_collected'] ?? 0;
+                $totalExpenses = $expensesBreakdown['total_expenses'] ?? 0;
+                $finalCashInBucket = max(0, $cashCollected - $totalExpenses);
+
                 return [
                     'id' => $shift->id,
                     'shift_type' => $shift->shift_type,
@@ -468,16 +508,29 @@ class ShiftController extends Controller
                     'patients_served' => $shift->patients_served ?? 0,
                     'visits_processed' => $shift->visits_processed ?? 0,
                     'payments_processed' => $shift->payments_processed ?? 0,
-                    'total_collected' => $shift->total_collected ?? 0,
-                    'cash_collected' => $shift->cash_collected ?? 0,
-                    'other_payments_collected' => $shift->other_payments_collected ?? 0,
-                    'payment_breakdown' => $shift->payment_breakdown ?? [],
+                    'total_collected' => $paymentBreakdown['total_collected'] ?? 0,
+                    'cash_collected' => $cashCollected,
+                    'other_payments_collected' => $paymentBreakdown['other_payments_collected'] ?? 0,
+                    'payment_breakdown' => $paymentBreakdown['payment_breakdown'] ?? [],
+                    'total_expenses' => $totalExpenses,
+                    'expenses_breakdown' => $expensesBreakdown['expenses_breakdown'] ?? [],
+                    'expenses_list' => $expensesBreakdown['expenses_list'] ?? [],
+                    'final_cash_in_bucket' => $finalCashInBucket,
+                    'notes' => $shift->notes,
                 ];
             });
 
+            Log::info('Shift history retrieved', [
+                'user_id' => $user->id,
+                'total_shifts' => $shiftHistory->count(),
+                'oldest_shift' => $shifts->last() ? $shifts->last()->closed_at : null,
+                'newest_shift' => $shifts->first() ? $shifts->first()->closed_at : null,
+            ]);
+
             return response()->json([
                 'success' => true,
-                'data' => $shiftHistory
+                'data' => $shiftHistory,
+                'total' => $shiftHistory->count()
             ]);
         } catch (\Exception $e) {
             Log::error('Error in getShiftHistory: ' . $e->getMessage(), [

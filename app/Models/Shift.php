@@ -101,27 +101,68 @@ class Shift extends Model
 
     public function getDurationAttribute(): string
     {
-        if (!$this->closed_at) {
-            return 'Ongoing';
+        // If shift is still open, calculate duration from opened_at to now
+        if (!$this->closed_at || $this->status === 'open') {
+            if (!$this->opened_at) {
+                return 'Unknown';
+            }
+            
+            $endTime = now();
+            $duration = $this->opened_at->diffInMinutes($endTime);
+            
+            // If duration is 0 or negative, return at least 1 minute
+            if ($duration < 1) {
+                return '1m';
+            }
+            
+            $hours = floor($duration / 60);
+            $minutes = round($duration % 60);
+            
+            if ($hours > 0) {
+                return "{$hours}h {$minutes}m";
+            } else {
+                return "{$minutes}m";
+            }
         }
 
         // Handle case where closed_at might be before opened_at (data inconsistency)
         if ($this->closed_at < $this->opened_at) {
-            // Try to fix the data inconsistency by setting closed_at to opened_at + 1 minute
-            $this->update(['closed_at' => $this->opened_at->addMinutes(1)]);
-            return '1m'; // Return a minimal duration
+            \Log::warning('Shift has closed_at before opened_at', [
+                'shift_id' => $this->id,
+                'opened_at' => $this->opened_at,
+                'closed_at' => $this->closed_at
+            ]);
+            // Don't update the database, just calculate from opened_at to now
+            $endTime = now();
+            $duration = $this->opened_at->diffInMinutes($endTime);
+            if ($duration < 1) {
+                return '1m';
+            }
+            $hours = floor($duration / 60);
+            $minutes = round($duration % 60);
+            if ($hours > 0) {
+                return "{$hours}h {$minutes}m";
+            } else {
+                return "{$minutes}m";
+            }
         }
 
+        // Calculate duration for closed shift
         $duration = $this->opened_at->diffInMinutes($this->closed_at);
+        
+        // Handle case where duration is less than 1 minute
+        if ($duration < 1) {
+            return "1m"; // Show at least 1 minute for very short shifts
+        }
+
         $hours = floor($duration / 60);
         $minutes = round($duration % 60);
 
-        // Handle case where duration is less than 1 minute
-        if ($duration < 1) {
-            return "0h 1m"; // Show at least 1 minute for very short shifts
+        if ($hours > 0) {
+            return "{$hours}h {$minutes}m";
+        } else {
+            return "{$minutes}m";
         }
-
-        return "{$hours}h {$minutes}m";
     }
 
     /**
@@ -138,17 +179,29 @@ class Shift extends Model
             $visits = $this->visits()->with('patient')->get();
 
             foreach ($visits as $visit) {
-                $visitPaymentAmount = $visit->upfront_payment ?? 0;
-                $visitPaymentMethod = $visit->payment_method ?? 'cash';
+                // Priority 1: Use patient.amount_paid as source of truth (same as UnpaidInvoicesController)
+                $totalPaidAmount = floatval($visit->patient->amount_paid ?? 0);
+                
+                // Fallback to visit upfront_payment if patient.amount_paid is not available
+                if ($totalPaidAmount == 0) {
+                    $totalPaidAmount = floatval($visit->upfront_payment ?? 0);
+                }
 
-                // First, try to get payment details from visit metadata (for patient registration)
-                // Handle metadata - it might be an array (from cast) or a JSON string
+                // Get payment breakdown from visit metadata
                 $metadata = [];
                 if ($visit->metadata) {
                     if (is_array($visit->metadata)) {
                         $metadata = $visit->metadata;
                     } elseif (is_string($visit->metadata)) {
-                        $metadata = json_decode($visit->metadata, true) ?? [];
+                        try {
+                            $metadata = json_decode($visit->metadata, true) ?? [];
+                        } catch (\Exception $e) {
+                            \Log::warning('Failed to parse visit metadata in calculatePaymentBreakdown', [
+                                'visit_id' => $visit->id,
+                                'error' => $e->getMessage()
+                            ]);
+                            $metadata = [];
+                        }
                     }
                 }
                 $paymentDetails = $metadata['payment_details'] ?? [];
@@ -157,25 +210,38 @@ class Shift extends Model
                 $amountPaidCash = 0;
                 $amountPaidCard = 0;
                 $cardPaymentMethod = 'Card';
+                $totalPaidFromBreakdown = 0;
 
-                // Priority 1: Check payment_details first (most reliable source)
+                // Get payment breakdown from metadata
                 if (!empty($paymentDetails)) {
-                    $amountPaidCash = $paymentDetails['amount_paid_cash'] ?? 0;
-                    $amountPaidCard = $paymentDetails['amount_paid_card'] ?? 0;
+                    $amountPaidCash = floatval($paymentDetails['amount_paid_cash'] ?? 0);
+                    $amountPaidCard = floatval($paymentDetails['amount_paid_card'] ?? 0);
                     $cardPaymentMethod = $paymentDetails['additional_payment_method'] ?? 'Card';
+                    $totalPaidFromBreakdown = $amountPaidCash + $amountPaidCard;
                 }
-                // Priority 2: Fall back to patient_data if payment_details is empty
+                // Fall back to patient_data if payment_details is empty
                 elseif (!empty($patientData)) {
-                    $amountPaidCash = $patientData['amount_paid_cash'] ?? 0;
-                    $amountPaidCard = $patientData['amount_paid_card'] ?? 0;
+                    $amountPaidCash = floatval($patientData['amount_paid_cash'] ?? 0);
+                    $amountPaidCard = floatval($patientData['amount_paid_card'] ?? 0);
                     $cardPaymentMethod = $patientData['additional_payment_method'] ?? 'Card';
+                    $totalPaidFromBreakdown = $amountPaidCash + $amountPaidCard;
                 }
-                // Priority 3: Use direct visit payment fields (for CheckIn visits)
-                elseif ($visitPaymentAmount > 0) {
-                    if ($visitPaymentMethod === 'cash') {
-                        $amountPaidCash = $visitPaymentAmount;
+
+                // If breakdown exists but doesn't match total_paid, normalize it (same as CheckInController)
+                if ($totalPaidFromBreakdown > 0 && abs($totalPaidFromBreakdown - $totalPaidAmount) > 0.01 && $totalPaidAmount > 0) {
+                    // Scale down the breakdown to match total_paid
+                    $scaleFactor = $totalPaidAmount / $totalPaidFromBreakdown;
+                    $amountPaidCash = round($amountPaidCash * $scaleFactor, 2);
+                    $amountPaidCard = round($amountPaidCard * $scaleFactor, 2);
+                }
+                
+                // If no breakdown exists but we have total paid amount, create a simple breakdown
+                if ($amountPaidCash == 0 && $amountPaidCard == 0 && $totalPaidAmount > 0) {
+                    $visitPaymentMethod = $visit->payment_method ?? 'cash';
+                    if (strtolower($visitPaymentMethod) === 'cash' || !$visitPaymentMethod) {
+                        $amountPaidCash = $totalPaidAmount;
                     } else {
-                        $amountPaidCard = $visitPaymentAmount;
+                        $amountPaidCard = $totalPaidAmount;
                         $cardPaymentMethod = $visitPaymentMethod;
                     }
                 }
