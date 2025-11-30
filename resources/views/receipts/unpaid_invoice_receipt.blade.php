@@ -6,7 +6,8 @@
     <style>
         @page {
             margin: 0;
-            size: 210mm 148.5mm;
+            margin-bottom: 0;
+            size: 210mm 130mm;
             background-color: #F7F7F7;
         }
         
@@ -18,9 +19,9 @@
         
         html, body {
             margin: 0;
-            padding: 3px 5px;
+            padding: 3px 5px 0 5px;
             width: 100%;
-            height: 148.5mm;
+            height: 130mm;
             font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-serif;
             font-size: 18px;
             line-height: 1.3;
@@ -28,12 +29,15 @@
             direction: rtl;
             background-color: #F7F7F7;
             overflow: hidden;
+            padding-bottom: 0;
         }
         
         .content {
             position: relative;
             z-index: 1;
             width: 100%;
+            padding-bottom: 0;
+            margin-bottom: 0;
         }
         
         .header-table {
@@ -108,26 +112,28 @@
         }
         
         .patient-table td {
-            padding: 0 10px;
+            padding: 2px 8px;
             vertical-align: top;
             text-align: right;
         }
         
         .patient-label {
             font-weight: bold;
-            font-size: 18px;
-            margin-bottom: 2px;
+            font-size: 16px;
+            display: inline;
+            margin-left: 5px;
         }
         
         .patient-value {
-            font-size: 18px;
+            font-size: 16px;
+            display: inline;
         }
         
         .financial-section {
             border-top: 1px solid #ccc;
             padding-top: 3px;
             margin-top: 4px;
-            margin-bottom: 4px;
+            margin-bottom: 2px;
             font-size: 18px;
         }
         
@@ -164,16 +170,19 @@
         
         .footer-section {
             border-top: 1px solid #ccc;
-            padding-top: 3px;
-            margin-top: 4px;
+            padding-top: 2px;
+            margin-top: 2px;
+            padding-bottom: 0;
+            margin-bottom: 0;
             text-align: center;
             font-size: 16px;
-            line-height: 1.4;
+            line-height: 1.1;
         }
         
         .footer-line {
             margin: 0;
             padding: 0;
+            line-height: 1.1;
         }
         
         .arabic-text {
@@ -206,78 +215,90 @@
 
         <!-- Patient Information -->
         <table class="patient-table arabic-text" cellpadding="0" cellspacing="0" border="0">
+            <!-- Row 1: رقم الموبايل | lab no | الاسم -->
             <tr>
                 <td>
-                    <div class="patient-label">الاسم</div>
-                    <div class="patient-value">{{ $receiptData['patient_name'] ?? 'غير متوفر' }}</div>
+                    <span class="patient-label">رقم الموبايل:</span>
+                    <span class="patient-value">{{ $receiptData['patient_phone'] ?? '' }}</span>
                 </td>
                 <td>
-                    <div class="patient-label">الجهة</div>
-                    <div class="patient-value">{{ $receiptData['organization'] ?? '' }}</div>
+                    <span class="patient-label">رقم العينة:</span>
+                    <span class="patient-value">{{ $receiptData['lab_number'] ?? 'غير متوفر' }}</span>
                 </td>
                 <td>
-                    <div class="patient-label">الدكتور المرسل</div>
-                    <div class="patient-value">{{ $receiptData['doctor_name'] ?? ($receiptData['referring_doctor'] ?? 'غير متوفر') }}</div>
-                </td>
-                <td>
-                    <div class="patient-label">السن</div>
-                    <div class="patient-value">{{ $receiptData['patient_age'] ?? 'غير متوفر' }}</div>
+                    <span class="patient-label">الاسم:</span>
+                    <span class="patient-value">{{ $receiptData['patient_name'] ?? 'غير متوفر' }}</span>
                 </td>
             </tr>
+            <!-- Row 2: السن | الجهة | النوع | الدكتور المرسل -->
             <tr>
                 <td>
-                    <div class="patient-label">النوع</div>
-                    <div class="patient-value">
+                    <span class="patient-label">السن:</span>
+                    <span class="patient-value">{{ $receiptData['patient_age'] ?? 'غير متوفر' }}</span>
+                </td>
+                <td>
+                    <span class="patient-label">الجهة:</span>
+                    <span class="patient-value">{{ $receiptData['organization'] ?? '' }}</span>
+                </td>
+                <td>
+                    <span class="patient-label">النوع:</span>
+                    <span class="patient-value">
                         @if(isset($receiptData['patient_gender']))
                             {{ $receiptData['patient_gender'] == 'male' ? 'ذكر' : ($receiptData['patient_gender'] == 'female' ? 'انثي' : $receiptData['patient_gender']) }}
                         @else
                             غير متوفر
                         @endif
-                    </div>
+                    </span>
                 </td>
                 <td>
-                    <div class="patient-label">رقم الموبايل</div>
-                    <div class="patient-value">{{ $receiptData['patient_phone'] ?? '' }}</div>
-                </td>
-                <td>
-                    <div class="patient-label">اليوم</div>
-                    <div class="patient-value">{{ $receiptData['attendance_day'] ?? 'السبت' }}</div>
-                </td>
-                <td>
-                    <div class="patient-label">وقت الحضور</div>
-                    <div class="patient-value">{{ $receiptData['attendance_date'] ?? ($receiptData['date'] ?? 'غير متوفر') }}</div>
+                    <span class="patient-label">الدكتور المرسل:</span>
+                    <span class="patient-value">{{ $receiptData['doctor_name'] ?? ($receiptData['referring_doctor'] ?? 'غير متوفر') }}</span>
                 </td>
             </tr>
+            <!-- Row 3: اليوم | ميعاد التسليم | اليوم | وقت الحضور -->
             <tr>
                 <td>
-                    <div class="patient-label">نوع العينة</div>
-                    <div class="patient-value">{{ $receiptData['sample_type'] ?? 'Pathology' }}</div>
+                    <span class="patient-label">اليوم:</span>
+                    <span class="patient-value">{{ $receiptData['attendance_day'] ?? 'السبت' }}</span>
                 </td>
                 <td>
-                    <div class="patient-label">عدد العينات</div>
-                    <div class="patient-value">{{ $receiptData['number_of_samples'] ?? '1' }}</div>
+                    <span class="patient-label">ميعاد التسليم:</span>
+                    <span class="patient-value">{{ $receiptData['delivery_date'] ?? 'غير متوفر' }}</span>
                 </td>
                 <td>
-                    <div class="patient-label">رقم العينة</div>
-                    <div class="patient-value">{{ $receiptData['lab_number'] ?? 'غير متوفر' }}</div>
+                    <span class="patient-label">اليوم:</span>
+                    <span class="patient-value">{{ $receiptData['delivery_day'] ?? 'السبت' }}</span>
                 </td>
                 <td>
-                    <div class="patient-label">ميعاد التسليم</div>
-                    <div class="patient-value">{{ $receiptData['delivery_date'] ?? 'غير متوفر' }}</div>
+                    <span class="patient-label">وقت الحضور:</span>
+                    <span class="patient-value">{{ $receiptData['attendance_date'] ?? ($receiptData['date'] ?? 'غير متوفر') }}</span>
                 </td>
             </tr>
+            <!-- Row 4: حجم العينة | عدد العينات | نوع العينة -->
             <tr>
                 <td>
-                    <div class="patient-label">حجم العينة</div>
-                    <div class="patient-value">{{ $receiptData['sample_size'] ?? '1' }}</div>
+                    <span class="patient-label">حجم العينة:</span>
+                    <span class="patient-value">{{ $receiptData['sample_size'] ?? '1' }}</span>
                 </td>
                 <td>
-                    <div class="patient-label">هل يوجد تاريخ مرضي ؟</div>
-                    <div class="patient-value">{{ $receiptData['medical_history'] ? 'Yes' : 'No' }}</div>
+                    <span class="patient-label">عدد العينات:</span>
+                    <span class="patient-value">{{ $receiptData['number_of_samples'] ?? '1' }}</span>
                 </td>
-                <td colspan="2">
-                    <div class="patient-label">هل سبق لك تحاليل باتولوجي</div>
-                    <div class="patient-value">{{ $receiptData['previous_tests'] ?? '' }}</div>
+                <td>
+                    <span class="patient-label">نوع العينة:</span>
+                    <span class="patient-value">{{ $receiptData['sample_type'] ?? 'Pathology' }}</span>
+                </td>
+                <td></td>
+            </tr>
+            <!-- Row 5: باقي الحقول -->
+            <tr>
+                <td>
+                    <span class="patient-label">هل يوجد تاريخ مرضي:</span>
+                    <span class="patient-value">{{ $receiptData['medical_history'] ? 'Yes' : 'No' }}</span>
+                </td>
+                <td colspan="3">
+                    <span class="patient-label">هل سبق لك تحاليل باتولوجي:</span>
+                    <span class="patient-value">{{ $receiptData['previous_tests'] ?? '' }}</span>
                 </td>
             </tr>
             @if(isset($receiptData['patient_credentials']) && $receiptData['patient_credentials'])
@@ -288,13 +309,13 @@
                 @endphp
                 @if($username || $password)
                 <tr>
-                    <td colspan="2">
-                        <div class="patient-label">اسم المستخدم (Username):</div>
-                        <div class="patient-value" style="font-weight: bold; font-size: 16px;">{{ $username ?? 'غير متوفر' }}</div>
+                    <td>
+                        <span class="patient-label">اسم المستخدم:</span>
+                        <span class="patient-value" style="font-weight: bold; font-size: 16px;">{{ $username ?? 'غير متوفر' }}</span>
                     </td>
-                    <td colspan="2">
-                        <div class="patient-label">كلمة المرور (Password):</div>
-                        <div class="patient-value" style="font-weight: bold; font-size: 16px;">{{ $password ?? 'غير متوفر' }}</div>
+                    <td colspan="3">
+                        <span class="patient-label">كلمة المرور:</span>
+                        <span class="patient-value" style="font-weight: bold; font-size: 16px;">{{ $password ?? 'غير متوفر' }}</span>
                     </td>
                 </tr>
                 @endif
@@ -311,8 +332,6 @@
                     <td class="financial-label">الخصم :</td>
                     <td class="financial-value">{{ number_format($receiptData['discount_amount'] ?? 0, 0) }} جنيه</td>
                     @endif
-                    <td class="financial-label">المبلغ النهائي :</td>
-                    <td class="financial-value">{{ number_format($receiptData['final_amount'] ?? ($receiptData['total_amount'] ?? 0), 0) }} جنيه</td>
                 </tr>
                 <tr>
                     <td class="financial-label">المبلغ المدفوع :</td>
@@ -349,3 +368,4 @@
     </div>
 </body>
 </html>
+

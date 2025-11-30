@@ -739,7 +739,7 @@ class VisitController extends Controller
                 'upfront_payment' => 'nullable|numeric|min:0',
                 'remaining_balance' => 'nullable|numeric',
                 'payment_method' => 'nullable|string|max:50',
-                'metadata' => 'nullable|array',
+                'metadata' => 'nullable', // Accept both string and array
             ]);
             
             // Handle image upload
@@ -756,12 +756,28 @@ class VisitController extends Controller
             }
             
             // Handle metadata - merge with existing metadata if provided
-            if ($request->has('metadata') && is_array($request->metadata)) {
+            if ($request->has('metadata')) {
                 // Get existing metadata using helper method
                 $existingMetadata = $this->parseMetadata($visit);
                 
-                // Merge with new metadata (new values override existing ones)
-                $validated['metadata'] = array_merge($existingMetadata, $request->metadata);
+                // Parse new metadata - it might be a JSON string or an array
+                $newMetadata = $request->metadata;
+                if (is_string($newMetadata)) {
+                    try {
+                        $newMetadata = json_decode($newMetadata, true) ?? [];
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to decode metadata JSON string: ' . $e->getMessage());
+                        $newMetadata = [];
+                    }
+                }
+                
+                if (is_array($newMetadata)) {
+                    // Merge with new metadata (new values override existing ones)
+                    $validated['metadata'] = array_merge($existingMetadata, $newMetadata);
+                } else {
+                    // If it's not an array, keep existing metadata
+                    $validated['metadata'] = $existingMetadata;
+                }
             }
             
             $visit->update($validated);

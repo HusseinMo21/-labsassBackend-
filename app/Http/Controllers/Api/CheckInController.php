@@ -1316,12 +1316,12 @@ class CheckInController extends Controller
             try {
                 $mpdf = new \Mpdf\Mpdf([
                     'mode' => 'utf-8', 
-                    'format' => [210, 148.5], // Half A4: width=210mm, height=148.5mm (A4 height/2)
+                    'format' => [210, 130], // Reduced height to fit content better
                     'orientation' => 'P',
                     'margin_left' => 5, 
                     'margin_right' => 5, 
                     'margin_top' => 3, 
-                    'margin_bottom' => 3,
+                    'margin_bottom' => 0,
                     'margin_header' => 0,
                     'margin_footer' => 0,
                     'tempDir' => storage_path('app/temp'),
@@ -1588,6 +1588,8 @@ class CheckInController extends Controller
         
         try {
             $visit = Visit::with(['patient', 'visitTests.testCategory', 'labRequest'])->findOrFail($visitId);
+            // Refresh the visit to ensure we have the latest data, especially metadata
+            $visit->refresh();
             \Log::info('Visit found: ' . $visit->id);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             \Log::error('Visit not found in generateUnpaidInvoiceReceipt: ' . $e->getMessage());
@@ -1672,12 +1674,6 @@ class CheckInController extends Controller
                 }
             }
             
-            // Get patient age - calculate from birth_date if available, otherwise use age field
-            $patientAge = $visit->patient->age;
-            if (!$patientAge && $visit->patient->birth_date) {
-                $patientAge = $visit->patient->birth_date->age;
-            }
-            
             // Get payment breakdown from visit metadata
             // Handle metadata - it might be an array (from cast) or a JSON string
             $metadata = [];
@@ -1693,8 +1689,28 @@ class CheckInController extends Controller
                     }
                 }
             }
+            
+            // Log metadata for debugging
+            \Log::info('Metadata in generateUnpaidInvoiceReceipt for visit ' . $visit->id . ':', [
+                'metadata_type' => gettype($visit->metadata),
+                'metadata_keys' => is_array($metadata) ? array_keys($metadata) : 'not_array',
+                'has_patient_data' => isset($metadata['patient_data']),
+                'has_financial_data' => isset($metadata['financial_data']),
+                'has_payment_details' => isset($metadata['payment_details']),
+            ]);
+            
             $financialData = $metadata['financial_data'] ?? [];
             $paymentDetails = $metadata['payment_details'] ?? [];
+            $patientData = $metadata['patient_data'] ?? [];
+            
+            // Log patient data for debugging
+            \Log::info('Patient data from metadata:', [
+                'name' => $patientData['name'] ?? 'not_set',
+                'age' => $patientData['age'] ?? 'not_set',
+                'phone' => $patientData['phone'] ?? 'not_set',
+                'organization' => $patientData['organization'] ?? 'not_set',
+                'doctor' => $patientData['doctor'] ?? 'not_set',
+            ]);
             
             // Build payment breakdown
             $paymentBreakdown = [];
@@ -1723,44 +1739,83 @@ class CheckInController extends Controller
             
             // Get attendance date and delivery date from patient or visit metadata
             $patientData = $metadata['patient_data'] ?? [];
-            $attendanceDate = $patientData['attendance_date'] ?? ($visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : now()->format('Y-m-d'));
-            $deliveryDate = $patientData['delivery_date'] ?? ($visit->expected_delivery_date ? \Carbon\Carbon::parse($visit->expected_delivery_date)->format('Y-m-d') : now()->addDays(1)->format('Y-m-d'));
             
-            // Also check patient record directly
+            // Get attendance date - priority: metadata > visit > patient
+            $attendanceDate = null;
+            if (isset($patientData['attendance_date']) && !empty($patientData['attendance_date'])) {
+                try {
+                    $attendanceDate = \Carbon\Carbon::parse($patientData['attendance_date'])->format('Y-m-d');
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to parse attendance_date from metadata: ' . $e->getMessage());
+                }
+            }
+            if (!$attendanceDate && $visit->visit_date) {
+                $attendanceDate = \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d');
+            }
             if (!$attendanceDate && $visit->patient->attendance_date) {
                 $attendanceDate = \Carbon\Carbon::parse($visit->patient->attendance_date)->format('Y-m-d');
+            }
+            if (!$attendanceDate) {
+                $attendanceDate = now()->format('Y-m-d');
+            }
+            
+            // Get delivery date - priority: metadata > visit > patient
+            $deliveryDate = null;
+            if (isset($patientData['delivery_date']) && !empty($patientData['delivery_date'])) {
+                try {
+                    $deliveryDate = \Carbon\Carbon::parse($patientData['delivery_date'])->format('Y-m-d');
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to parse delivery_date from metadata: ' . $e->getMessage());
+                }
+            }
+            if (!$deliveryDate && $visit->expected_delivery_date) {
+                $deliveryDate = \Carbon\Carbon::parse($visit->expected_delivery_date)->format('Y-m-d');
             }
             if (!$deliveryDate && $visit->patient->delivery_date) {
                 $deliveryDate = \Carbon\Carbon::parse($visit->patient->delivery_date)->format('Y-m-d');
             }
+            if (!$deliveryDate) {
+                $deliveryDate = now()->addDays(1)->format('Y-m-d');
+            }
             
             // Calculate financial values with proper fallbacks
-            // Priority: visit fields > invoice fields > metadata > patient fields
-            $totalAmount = floatval($visit->total_amount ?? 0);
-            if ($totalAmount == 0 && $invoice) {
-                $totalAmount = floatval($invoice->total_amount ?? $invoice->total ?? 0);
-            }
-            if ($totalAmount == 0 && isset($financialData['total_amount'])) {
+            // Priority: metadata > visit fields > invoice fields > patient fields
+            $totalAmount = 0;
+            if (isset($financialData['total_amount']) && $financialData['total_amount'] > 0) {
                 $totalAmount = floatval($financialData['total_amount']);
-            }
-            if ($totalAmount == 0 && isset($patientData['total_amount'])) {
+            } elseif (isset($patientData['total_amount']) && $patientData['total_amount'] > 0) {
                 $totalAmount = floatval($patientData['total_amount']);
-            }
-            if ($totalAmount == 0) {
+            } elseif ($visit->total_amount && $visit->total_amount > 0) {
+                $totalAmount = floatval($visit->total_amount);
+            } elseif ($invoice) {
+                $totalAmount = floatval($invoice->total_amount ?? $invoice->total ?? 0);
+            } else {
                 $totalAmount = floatval($visit->patient->total_amount ?? 0);
             }
             
-            $finalAmount = floatval($visit->final_amount ?? 0);
-            if ($finalAmount == 0) {
+            $finalAmount = 0;
+            if (isset($financialData['final_amount']) && $financialData['final_amount'] > 0) {
+                $finalAmount = floatval($financialData['final_amount']);
+            } elseif ($totalAmount > 0) {
                 $finalAmount = $totalAmount; // Use total_amount if final_amount is not set
-            }
-            if ($finalAmount == 0 && $invoice) {
+            } elseif ($visit->final_amount && $visit->final_amount > 0) {
+                $finalAmount = floatval($visit->final_amount);
+            } elseif ($invoice) {
                 $finalAmount = floatval($invoice->total_amount ?? $invoice->total ?? 0);
             }
             
             $discountAmount = floatval($visit->discount_amount ?? 0);
             
-            $paidAmount = $this->calculatePaidAmount($visit, $invoice);
+            // Get paid amount - priority: metadata payment_details > visit upfront_payment > calculatePaidAmount
+            $paidAmount = 0;
+            if (isset($paymentDetails['total_paid']) && $paymentDetails['total_paid'] > 0) {
+                $paidAmount = floatval($paymentDetails['total_paid']);
+            } elseif ($visit->upfront_payment && $visit->upfront_payment > 0) {
+                $paidAmount = floatval($visit->upfront_payment);
+            } else {
+                $paidAmount = $this->calculatePaidAmount($visit, $invoice);
+            }
+            
             $remainingBalance = max(0, $finalAmount - $paidAmount);
             
             \Log::info('Financial calculations for visit ' . $visit->id . ':', [
@@ -1774,14 +1829,32 @@ class CheckInController extends Controller
                 'invoice_total' => $invoice ? ($invoice->total_amount ?? $invoice->total) : null,
             ]);
             
-            // Get additional patient data from metadata
+            // Get additional patient data from metadata (priority: metadata > visit->patient)
+            // Get patient name, age, phone, and gender from metadata first, then fallback to visit->patient
+            $patientName = $patientData['name'] ?? $visit->patient->name ?? 'N/A';
+            
+            // Get patient age - priority: metadata > visit->patient->age > calculate from birth_date
+            $patientAge = null;
+            if (isset($patientData['age']) && $patientData['age'] > 0) {
+                $patientAge = $patientData['age'];
+            } elseif ($visit->patient->age) {
+                $patientAge = $visit->patient->age;
+            } elseif ($visit->patient->birth_date) {
+                $patientAge = $visit->patient->birth_date->age;
+            }
+            
+            $patientPhone = $patientData['phone'] ?? $visit->patient->phone ?? 'N/A';
+            $patientGender = $patientData['gender'] ?? $visit->patient->gender ?? '';
+            
             $organization = $patientData['organization'] ?? $visit->patient->organization ?? '';
             $sampleType = $patientData['sample_type'] ?? $visit->patient->sample_type ?? 'Pathology';
             $sampleSize = $patientData['sample_size'] ?? $visit->patient->sample_size ?? '1';
             $numberOfSamples = $patientData['number_of_samples'] ?? $visit->patient->number_of_samples ?? '1';
             $medicalHistory = $patientData['medical_history'] ?? $visit->patient->medical_history ?? '';
             $previousTests = $patientData['previous_tests'] ?? $visit->patient->previous_tests ?? '';
-            $patientGender = $visit->patient->gender ?? '';
+            
+            // Get lab number from metadata first
+            $labNumber = $patientData['lab_number'] ?? ($visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?? 'N/A'));
             
             // Get day names
             $attendanceDay = $patientData['attendance_day'] ?? $patientData['day_of_week'] ?? $visit->patient->day_of_week ?? 'السبت';
@@ -1792,11 +1865,11 @@ class CheckInController extends Controller
             
             $receiptData = [
                 'receipt_number' => $visit->visit_number,
-                'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?: 'N/A'),
+                'lab_number' => $labNumber,
                 'date' => $visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : now()->format('Y-m-d'),
-                'patient_name' => $visit->patient->name ?: 'N/A',
+                'patient_name' => $patientName,
                 'patient_age' => $patientAge ?: 'N/A',
-                'patient_phone' => $visit->patient->phone ?: 'N/A',
+                'patient_phone' => $patientPhone,
                 'patient_gender' => $patientGender,
                 'attendance_date' => $attendanceDate,
                 'attendance_day' => $attendanceDay,
@@ -1837,12 +1910,12 @@ class CheckInController extends Controller
             try {
                 $mpdf = new \Mpdf\Mpdf([
                     'mode' => 'utf-8', 
-                    'format' => [210, 148.5], // Half A4: width=210mm, height=148.5mm (A4 height/2)
+                    'format' => [210, 130], // Reduced height to fit content better
                     'orientation' => 'P',
                     'margin_left' => 5, 
                     'margin_right' => 5, 
                     'margin_top' => 3, 
-                    'margin_bottom' => 3,
+                    'margin_bottom' => 0,
                     'margin_header' => 0,
                     'margin_footer' => 0,
                     'tempDir' => storage_path('app/temp'),
