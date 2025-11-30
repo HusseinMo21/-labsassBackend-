@@ -596,146 +596,246 @@ class ReportController extends Controller
 
     public function generateReportWithHeader($visitId)
     {
-        $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest.reports'])
-            ->findOrFail($visitId);
-        
-        \Log::info('Generating PDF with header for visit', [
-            'visit_id' => $visitId,
-            'has_lab_request' => $visit->labRequest ? 'yes' : 'no',
-            'lab_request_id' => $visit->labRequest ? $visit->labRequest->id : 'null',
-            'reports_count' => $visit->labRequest && $visit->labRequest->reports ? $visit->labRequest->reports->count() : 0,
-            'reports_data' => $visit->labRequest && $visit->labRequest->reports ? $visit->labRequest->reports->map(function($r) {
-                return [
-                    'id' => $r->id,
-                    'status' => $r->status,
-                    'content_preview' => substr($r->content, 0, 100) . '...'
-                ];
-            }) : []
-        ]);
-        
-        // Read background image and convert to base64
-        $backgroundImagePath = public_path('templete/background.jpg');
-        $backgroundImage = null;
-        
-        if (file_exists($backgroundImagePath)) {
-            $imageData = file_get_contents($backgroundImagePath);
-            $backgroundImage = base64_encode($imageData);
+        try {
+            $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest.reports'])
+                ->findOrFail($visitId);
+            
+            \Log::info('Generating PDF with header for visit', [
+                'visit_id' => $visitId,
+                'has_lab_request' => $visit->labRequest ? 'yes' : 'no',
+                'lab_request_id' => $visit->labRequest ? $visit->labRequest->id : 'null',
+                'reports_count' => $visit->labRequest && $visit->labRequest->reports ? $visit->labRequest->reports->count() : 0,
+                'reports_data' => $visit->labRequest && $visit->labRequest->reports ? $visit->labRequest->reports->map(function($r) {
+                    return [
+                        'id' => $r->id,
+                        'status' => $r->status,
+                        'content_preview' => substr($r->content, 0, 100) . '...'
+                    ];
+                }) : []
+            ]);
+            
+            // Read background image and convert to base64
+            $backgroundImagePath = public_path('templete/background.jpg');
+            $backgroundImage = null;
+            
+            if (file_exists($backgroundImagePath)) {
+                $imageData = file_get_contents($backgroundImagePath);
+                $backgroundImage = base64_encode($imageData);
+            }
+            
+            // Configure MPDF for Arabic support with proper margins for printing
+            $mpdf = new \Mpdf\Mpdf([
+                'mode' => 'utf-8',
+                'format' => 'A4',
+                'orientation' => 'P',
+                'margin_left' => 0,
+                'margin_right' => 0,
+                'margin_top' => 0,
+                'margin_bottom' => 0,
+                'margin_header' => 0,
+                'margin_footer' => 0,
+                'tempDir' => storage_path('app/temp'),
+            ]);
+            
+            // Set font for Arabic support
+            $mpdf->autoScriptToLang = true;
+            $mpdf->autoLangToFont = true;
+            
+            // Get attendance date and delivery date - handle metadata safely
+            $metadata = [];
+            if ($visit->metadata) {
+                if (is_array($visit->metadata)) {
+                    $metadata = $visit->metadata;
+                } elseif (is_string($visit->metadata)) {
+                    try {
+                        $metadata = json_decode($visit->metadata, true) ?? [];
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to parse visit metadata as JSON in generateReportWithHeader', [
+                            'visit_id' => $visitId,
+                            'error' => $e->getMessage()
+                        ]);
+                        $metadata = [];
+                    }
+                }
+            }
+            $patientData = $metadata['patient_data'] ?? [];
+            $attendanceDate = $patientData['attendance_date'] ?? ($visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('d/m/Y') : 'N/A');
+            $deliveryDate = $patientData['delivery_date'] ?? ($visit->expected_delivery_date ? \Carbon\Carbon::parse($visit->expected_delivery_date)->format('d/m/Y') : 'N/A');
+            
+            // Also check patient record directly
+            if ($visit->patient) {
+                if ($attendanceDate === 'N/A' && $visit->patient->attendance_date) {
+                    try {
+                        $attendanceDate = \Carbon\Carbon::parse($visit->patient->attendance_date)->format('d/m/Y');
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to parse attendance_date', ['error' => $e->getMessage()]);
+                    }
+                }
+                if ($deliveryDate === 'N/A' && $visit->patient->delivery_date) {
+                    try {
+                        $deliveryDate = \Carbon\Carbon::parse($visit->patient->delivery_date)->format('d/m/Y');
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to parse delivery_date', ['error' => $e->getMessage()]);
+                    }
+                }
+            }
+            
+            $html = view('reports.pathology_report_with_header', [
+                'visit' => $visit,
+                'backgroundImage' => $backgroundImage,
+                'attendance_date' => $attendanceDate,
+                'delivery_date' => $deliveryDate,
+            ])->render();
+            
+            $mpdf->WriteHTML($html);
+            
+            $labNumber = $visit->visit_number;
+            if ($visit->labRequest && isset($visit->labRequest->full_lab_no)) {
+                $labNumber = $visit->labRequest->full_lab_no;
+            }
+            
+            $filename = 'pathology_report_with_header_' . $labNumber . '.pdf';
+            
+            // Get PDF content as string
+            $pdfContent = $mpdf->Output('', 'S');
+            
+            // Delete image after PDF generation (only once)
+            try {
+                $this->deleteReportImageAfterPdf($visit);
+            } catch (\Exception $e) {
+                \Log::warning('Failed to delete report image after PDF', [
+                    'visit_id' => $visitId,
+                    'error' => $e->getMessage()
+                ]);
+            }
+            
+            // Return JSON response with base64-encoded content like seafrance
+            return response()->json([
+                'content' => base64_encode($pdfContent),
+                'filename' => $filename
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Failed to generate report with header', [
+                'visit_id' => $visitId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to generate report',
+                'message' => $e->getMessage(),
+            ], 500);
         }
-        
-        // Configure MPDF for Arabic support with proper margins for printing
-        $mpdf = new \Mpdf\Mpdf([
-            'mode' => 'utf-8',
-            'format' => 'A4',
-            'orientation' => 'P',
-            'margin_left' => 0,
-            'margin_right' => 0,
-            'margin_top' => 0,
-            'margin_bottom' => 0,
-            'margin_header' => 0,
-            'margin_footer' => 0,
-            'tempDir' => storage_path('app/temp'),
-        ]);
-        
-        // Set font for Arabic support
-        $mpdf->autoScriptToLang = true;
-        $mpdf->autoLangToFont = true;
-        
-        // Get attendance date and delivery date
-        $metadata = $visit->metadata ? json_decode($visit->metadata, true) : [];
-        $patientData = $metadata['patient_data'] ?? [];
-        $attendanceDate = $patientData['attendance_date'] ?? ($visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('d/m/Y') : 'N/A');
-        $deliveryDate = $patientData['delivery_date'] ?? ($visit->expected_delivery_date ? \Carbon\Carbon::parse($visit->expected_delivery_date)->format('d/m/Y') : 'N/A');
-        
-        // Also check patient record directly
-        if ($attendanceDate === 'N/A' && $visit->patient->attendance_date) {
-            $attendanceDate = \Carbon\Carbon::parse($visit->patient->attendance_date)->format('d/m/Y');
-        }
-        if ($deliveryDate === 'N/A' && $visit->patient->delivery_date) {
-            $deliveryDate = \Carbon\Carbon::parse($visit->patient->delivery_date)->format('d/m/Y');
-        }
-        
-        $html = view('reports.pathology_report_with_header', [
-            'visit' => $visit,
-            'backgroundImage' => $backgroundImage,
-            'attendance_date' => $attendanceDate,
-            'delivery_date' => $deliveryDate,
-        ])->render();
-        
-        $mpdf->WriteHTML($html);
-        
-        $filename = 'pathology_report_with_header_' . ($visit->labRequest->full_lab_no ?? $visit->visit_number) . '.pdf';
-        
-        // Get PDF content as string
-        $pdfContent = $mpdf->Output('', 'S');
-        
-        // Delete image after PDF generation (only once)
-        $this->deleteReportImageAfterPdf($visit);
-        
-        // Return JSON response with base64-encoded content like seafrance
-        return response()->json([
-            'content' => base64_encode($pdfContent),
-            'filename' => $filename
-        ]);
     }
 
     public function generateReportWithoutHeader($visitId)
     {
-        $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest.reports'])
-            ->findOrFail($visitId);
-        
-        // Configure MPDF for Arabic support with proper margins for printing
-        $mpdf = new \Mpdf\Mpdf([
-            'mode' => 'utf-8',
-            'format' => 'A4',
-            'orientation' => 'P',
-            'margin_left' => 20,
-            'margin_right' => 20,
-            'margin_top' => 20,
-            'margin_bottom' => 20,
-            'margin_header' => 0,
-            'margin_footer' => 0,
-            'tempDir' => storage_path('app/temp'),
-        ]);
-        
-        // Set font for Arabic support
-        $mpdf->autoScriptToLang = true;
-        $mpdf->autoLangToFont = true;
-        
-        // Get attendance date and delivery date
-        $metadata = $visit->metadata ? json_decode($visit->metadata, true) : [];
-        $patientData = $metadata['patient_data'] ?? [];
-        $attendanceDate = $patientData['attendance_date'] ?? ($visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('d/m/Y') : 'N/A');
-        $deliveryDate = $patientData['delivery_date'] ?? ($visit->expected_delivery_date ? \Carbon\Carbon::parse($visit->expected_delivery_date)->format('d/m/Y') : 'N/A');
-        
-        // Also check patient record directly
-        if ($attendanceDate === 'N/A' && $visit->patient->attendance_date) {
-            $attendanceDate = \Carbon\Carbon::parse($visit->patient->attendance_date)->format('d/m/Y');
+        try {
+            $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest.reports'])
+                ->findOrFail($visitId);
+            
+            // Configure MPDF for Arabic support with proper margins for printing
+            $mpdf = new \Mpdf\Mpdf([
+                'mode' => 'utf-8',
+                'format' => 'A4',
+                'orientation' => 'P',
+                'margin_left' => 20,
+                'margin_right' => 20,
+                'margin_top' => 20,
+                'margin_bottom' => 20,
+                'margin_header' => 0,
+                'margin_footer' => 0,
+                'tempDir' => storage_path('app/temp'),
+            ]);
+            
+            // Set font for Arabic support
+            $mpdf->autoScriptToLang = true;
+            $mpdf->autoLangToFont = true;
+            
+            // Get attendance date and delivery date - handle metadata safely
+            $metadata = [];
+            if ($visit->metadata) {
+                if (is_array($visit->metadata)) {
+                    $metadata = $visit->metadata;
+                } elseif (is_string($visit->metadata)) {
+                    try {
+                        $metadata = json_decode($visit->metadata, true) ?? [];
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to parse visit metadata as JSON in generateReportWithoutHeader', [
+                            'visit_id' => $visitId,
+                            'error' => $e->getMessage()
+                        ]);
+                        $metadata = [];
+                    }
+                }
+            }
+            $patientData = $metadata['patient_data'] ?? [];
+            $attendanceDate = $patientData['attendance_date'] ?? ($visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('d/m/Y') : 'N/A');
+            $deliveryDate = $patientData['delivery_date'] ?? ($visit->expected_delivery_date ? \Carbon\Carbon::parse($visit->expected_delivery_date)->format('d/m/Y') : 'N/A');
+            
+            // Also check patient record directly
+            if ($visit->patient) {
+                if ($attendanceDate === 'N/A' && $visit->patient->attendance_date) {
+                    try {
+                        $attendanceDate = \Carbon\Carbon::parse($visit->patient->attendance_date)->format('d/m/Y');
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to parse attendance_date', ['error' => $e->getMessage()]);
+                    }
+                }
+                if ($deliveryDate === 'N/A' && $visit->patient->delivery_date) {
+                    try {
+                        $deliveryDate = \Carbon\Carbon::parse($visit->patient->delivery_date)->format('d/m/Y');
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to parse delivery_date', ['error' => $e->getMessage()]);
+                    }
+                }
+            }
+            
+            $html = view('reports.pathology_report_without_header', [
+                'visit' => $visit,
+                'attendance_date' => $attendanceDate,
+                'delivery_date' => $deliveryDate,
+            ])->render();
+            
+            $mpdf->WriteHTML($html);
+            
+            $labNumber = $visit->visit_number;
+            if ($visit->labRequest && isset($visit->labRequest->full_lab_no)) {
+                $labNumber = $visit->labRequest->full_lab_no;
+            }
+            
+            $filename = 'pathology_report_without_header_' . $labNumber . '.pdf';
+            
+            // Get PDF content as string
+            $pdfContent = $mpdf->Output('', 'S');
+            
+            // Delete image after PDF generation (only once)
+            try {
+                $this->deleteReportImageAfterPdf($visit);
+            } catch (\Exception $e) {
+                \Log::warning('Failed to delete report image after PDF', [
+                    'visit_id' => $visitId,
+                    'error' => $e->getMessage()
+                ]);
+            }
+            
+            // Return JSON response with base64-encoded content like seafrance
+            return response()->json([
+                'content' => base64_encode($pdfContent),
+                'filename' => $filename
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Failed to generate report without header', [
+                'visit_id' => $visitId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to generate report',
+                'message' => $e->getMessage(),
+            ], 500);
         }
-        if ($deliveryDate === 'N/A' && $visit->patient->delivery_date) {
-            $deliveryDate = \Carbon\Carbon::parse($visit->patient->delivery_date)->format('d/m/Y');
-        }
-        
-        $html = view('reports.pathology_report_without_header', [
-            'visit' => $visit,
-            'attendance_date' => $attendanceDate,
-            'delivery_date' => $deliveryDate,
-        ])->render();
-        
-        $mpdf->WriteHTML($html);
-        
-        $filename = 'pathology_report_without_header_' . ($visit->labRequest->full_lab_no ?? $visit->visit_number) . '.pdf';
-        
-        // Get PDF content as string
-        $pdfContent = $mpdf->Output('', 'S');
-        
-        // Delete image after PDF generation (only once)
-        $this->deleteReportImageAfterPdf($visit);
-        
-        // Return JSON response with base64-encoded content like seafrance
-        return response()->json([
-            'content' => base64_encode($pdfContent),
-            'filename' => $filename
-        ]);
     }
 
     public function saveReport(Request $request, $visitId)

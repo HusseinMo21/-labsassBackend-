@@ -57,7 +57,22 @@ class VisitController extends Controller
             }
             
             // Get current payment information from visit metadata first
-            $metadata = json_decode($visit->metadata ?? '{}', true);
+            $metadata = [];
+            if ($visit->metadata) {
+                if (is_array($visit->metadata)) {
+                    $metadata = $visit->metadata;
+                } elseif (is_string($visit->metadata)) {
+                    try {
+                        $metadata = json_decode($visit->metadata, true) ?? [];
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to parse visit metadata as JSON', [
+                            'visit_id' => $visitId,
+                            'error' => $e->getMessage()
+                        ]);
+                        $metadata = [];
+                    }
+                }
+            }
             $paymentDetails = $metadata['payment_details'] ?? [];
             $patientData = $metadata['patient_data'] ?? [];
             $financialData = $metadata['financial_data'] ?? [];
@@ -1352,7 +1367,22 @@ class VisitController extends Controller
         }
         
         // If no visitTests, try to get from patient registration metadata
-        $metadata = json_decode($visit->metadata ?? '{}', true);
+        $metadata = [];
+        if ($visit->metadata) {
+            if (is_array($visit->metadata)) {
+                $metadata = $visit->metadata;
+            } elseif (is_string($visit->metadata)) {
+                try {
+                    $metadata = json_decode($visit->metadata, true) ?? [];
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to parse visit metadata as JSON in getTestsForReceipt', [
+                        'visit_id' => $visit->id,
+                        'error' => $e->getMessage()
+                    ]);
+                    $metadata = [];
+                }
+            }
+        }
         $patientData = $metadata['patient_data'] ?? [];
         
         \Log::info('VisitController::getTestsForReceipt - Checking metadata', [
