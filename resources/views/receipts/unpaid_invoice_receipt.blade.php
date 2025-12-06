@@ -19,11 +19,11 @@
         
         html, body {
             margin: 0;
-            padding: 3px 5px 0 5px;
+            padding: 4px 6px 0 6px;
             width: 100%;
             height: 130mm;
             font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-serif;
-            font-size: 18px;
+            font-size: 17px;
             line-height: 1.3;
             color: #000;
             direction: rtl;
@@ -42,12 +42,12 @@
         
         .header-table {
             width: 100%;
-            margin-top: 8px;
-            margin-bottom: 10px;
-            padding-top: 8px;
-            padding-bottom: 8px;
-            padding-left: 8px;
-            padding-right: 8px;
+            margin-top: 6px;
+            margin-bottom: 8px;
+            padding-top: 6px;
+            padding-bottom: 6px;
+            padding-left: 6px;
+            padding-right: 6px;
             border-collapse: collapse;
             border-bottom: 1px solid #ccc;
         }
@@ -59,8 +59,8 @@
         }
         
         .logo-cell {
-            width: 80px;
-            padding-right: 3px;
+            width: 75px;
+            padding-right: 4px;
             padding-left: 0;
         }
         
@@ -80,23 +80,23 @@
         }
         
         .lab-name {
-            font-size: 22px;
+            font-size: 21px;
             font-weight: bold;
-            line-height: 1.4;
+            line-height: 1.35;
             margin: 0;
             padding: 0;
         }
         
         .doctor-name {
-            font-size: 20px;
+            font-size: 19px;
             font-weight: bold;
-            line-height: 1.3;
+            line-height: 1.25;
             margin: 0;
             padding: 0;
         }
         
         .doctor-title {
-            font-size: 18px;
+            font-size: 16px;
             line-height: 1.2;
             margin: 0;
             padding: 0;
@@ -107,34 +107,35 @@
             margin: 4px 0;
             padding: 0;
             border-collapse: collapse;
-            font-size: 18px;
-            line-height: 1.3;
+            font-size: 16px;
+            line-height: 1.25;
         }
         
         .patient-table td {
-            padding: 2px 8px;
+            padding: 3px 7px;
             vertical-align: top;
             text-align: right;
+            border: 2.5px solid #000;
         }
         
         .patient-label {
             font-weight: bold;
-            font-size: 16px;
+            font-size: 15px;
             display: inline;
             margin-left: 5px;
         }
         
         .patient-value {
-            font-size: 16px;
+            font-size: 15px;
             display: inline;
         }
         
         .financial-section {
             border-top: 1px solid #ccc;
-            padding-top: 3px;
+            padding-top: 4px;
             margin-top: 4px;
-            margin-bottom: 2px;
-            font-size: 18px;
+            margin-bottom: 3px;
+            font-size: 16px;
         }
         
         .financial-table {
@@ -145,10 +146,10 @@
         }
         
         .financial-table td {
-            padding: 2px 8px;
+            padding: 3px 7px;
             text-align: right;
             vertical-align: top;
-            font-size: 16px;
+            font-size: 15px;
         }
         
         .financial-label {
@@ -170,19 +171,19 @@
         
         .footer-section {
             border-top: 1px solid #ccc;
-            padding-top: 2px;
-            margin-top: 2px;
+            padding-top: 3px;
+            margin-top: 3px;
             padding-bottom: 0;
             margin-bottom: 0;
             text-align: center;
-            font-size: 16px;
-            line-height: 1.1;
+            font-size: 13px;
+            line-height: 1.15;
         }
         
         .footer-line {
             margin: 0;
             padding: 0;
-            line-height: 1.1;
+            line-height: 1.15;
         }
         
         .arabic-text {

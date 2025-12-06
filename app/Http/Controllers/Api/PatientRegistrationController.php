@@ -18,6 +18,130 @@ use Illuminate\Support\Str;
 class PatientRegistrationController extends Controller
 {
     /**
+     * Parse age format and calculate birth_date
+     * Supports formats: 
+     * - "25" (years)
+     * - "25M" (months)
+     * - "5D" (days)
+     * - "25Y" (years)
+     * - Combined: "25M,5D" (25 months and 5 days)
+     * - Combined: "2Y,5M,3D" (2 years, 5 months, and 3 days)
+     * Also handles formats with spaces: "25 M", "5 D", etc.
+     * 
+     * @param string $ageInput Age input string (e.g., "25M", "5D", "25", "25M,5D", "2Y,5M,3D")
+     * @return array ['age' => int|null, 'birth_date' => string|null]
+     */
+    private function parseAgeAndCalculateBirthDate($ageInput)
+    {
+        if (empty($ageInput)) {
+            return ['age' => null, 'birth_date' => null];
+        }
+
+        // Remove whitespace and convert to uppercase
+        $ageInput = preg_replace('/\s+/', '', trim(strtoupper($ageInput)));
+        
+        $now = now();
+        $birthDate = $now->copy();
+        $totalDays = 0;
+        $totalMonths = 0;
+        $totalYears = 0;
+        
+        // Check if input contains comma (combined format)
+        if (strpos($ageInput, ',') !== false) {
+            // Split by comma and parse each component
+            $components = explode(',', $ageInput);
+            
+            // Collect all components first
+            $years = 0;
+            $months = 0;
+            $days = 0;
+            
+            foreach ($components as $component) {
+                $component = trim($component);
+                
+                // Extract number and unit from each component
+                if (preg_match('/^(\d+)([MDY]?)$/', $component, $matches)) {
+                    $number = (int) $matches[1];
+                    $unit = $matches[2] ?? '';
+                    
+                    if ($unit === 'D') {
+                        // Days
+                        $days += $number;
+                    } elseif ($unit === 'M') {
+                        // Months
+                        $months += $number;
+                    } elseif ($unit === 'Y' || $unit === '') {
+                        // Years (default or 'Y')
+                        $years += $number;
+                    }
+                }
+            }
+            
+            // Subtract in order: years, then months, then days (for accuracy)
+            if ($years > 0) {
+                $birthDate->subYears($years);
+            }
+            if ($months > 0) {
+                $birthDate->subMonths($months);
+            }
+            if ($days > 0) {
+                $birthDate->subDays($days);
+            }
+            
+            // Calculate approximate age in years for display
+            $age = $years + ($months / 12) + ($days / 365);
+            
+            return [
+                'age' => round($age, 1),
+                'birth_date' => $birthDate->format('Y-m-d')
+            ];
+        }
+        
+        // Single component format (no comma)
+        // Extract number and unit (handles formats like "25M", "5D", "25", "25Y")
+        if (preg_match('/^(\d+)([MDY]?)$/', $ageInput, $matches)) {
+            $number = (int) $matches[1];
+            $unit = $matches[2] ?? '';
+            
+            // Calculate birth_date based on unit
+            if ($unit === 'D') {
+                // Days
+                $birthDate = $now->copy()->subDays($number);
+                // For display, calculate approximate age in years
+                $age = round($number / 365, 1);
+            } elseif ($unit === 'M') {
+                // Months
+                $birthDate = $now->copy()->subMonths($number);
+                // For display, calculate approximate age in years
+                $age = round($number / 12, 1);
+            } else {
+                // Years (default or 'Y')
+                $birthDate = $now->copy()->subYears($number);
+                $age = $number;
+            }
+            
+            return [
+                'age' => $age,
+                'birth_date' => $birthDate->format('Y-m-d')
+            ];
+        }
+        
+        // If format doesn't match, try to parse as plain number (years)
+        if (is_numeric($ageInput)) {
+            $number = (int) $ageInput;
+            $birthDate = now()->copy()->subYears($number);
+            
+            return [
+                'age' => $number,
+                'birth_date' => $birthDate->format('Y-m-d')
+            ];
+        }
+        
+        // Invalid format - return null
+        return ['age' => null, 'birth_date' => null];
+    }
+
+    /**
      * Search for existing patients by lab number, mobile, or name
      */
     public function search(Request $request)
@@ -54,6 +178,14 @@ class PatientRegistrationController extends Controller
         }
 
         $patients = $query->get();
+        
+        // Ensure age is returned as string to preserve formats like "25M,5D"
+        $patients->transform(function ($patient) {
+            if (isset($patient->attributes['age']) && $patient->attributes['age'] !== null) {
+                $patient->age = (string) $patient->attributes['age'];
+            }
+            return $patient;
+        });
 
         return response()->json([
             'success' => true,
@@ -199,6 +331,17 @@ class PatientRegistrationController extends Controller
             
             // Check if updating existing patient
             if (isset($data['patient_id'])) {
+                // Parse age format and calculate birth_date for updates too
+                if (isset($data['age']) && !empty($data['age'])) {
+                    $originalAgeFormat = trim($data['age']); // Store original format exactly as entered
+                    $ageData = $this->parseAgeAndCalculateBirthDate($data['age']);
+                    if ($ageData['birth_date']) {
+                        $data['birth_date'] = $ageData['birth_date'];
+                    }
+                    // Store original age format (e.g., "25M,5D") exactly as entered
+                    $data['age'] = $originalAgeFormat;
+                }
+                
                 $patient = Patient::findOrFail($data['patient_id']);
                 $patient->update($data);
             } else {
@@ -216,9 +359,28 @@ class PatientRegistrationController extends Controller
                 $data['user_id'] = $user->id;
                 $data['lab'] = $data['lab_number'];
                 
-                // Convert string values to appropriate types
+                // Parse age format and calculate birth_date
                 if (isset($data['age']) && !empty($data['age'])) {
-                    $data['age'] = intval($data['age']);
+                    $originalAgeFormat = trim($data['age']); // Store original format exactly as entered
+                    
+                    // Debug logging
+                    \Log::info('Age storage - Original format:', [
+                        'original' => $originalAgeFormat,
+                        'type' => gettype($originalAgeFormat)
+                    ]);
+                    
+                    $ageData = $this->parseAgeAndCalculateBirthDate($data['age']);
+                    if ($ageData['birth_date']) {
+                        $data['birth_date'] = $ageData['birth_date'];
+                    }
+                    // Store original age format (e.g., "25M,5D") exactly as entered
+                    $data['age'] = $originalAgeFormat;
+                    
+                    // Debug logging after setting
+                    \Log::info('Age storage - After setting:', [
+                        'age_value' => $data['age'],
+                        'type' => gettype($data['age'])
+                    ]);
                 }
                 if (isset($data['number_of_samples']) && !empty($data['number_of_samples'])) {
                     $data['number_of_samples'] = intval($data['number_of_samples']);
@@ -238,7 +400,28 @@ class PatientRegistrationController extends Controller
                     $data['organization'] = $data['organization'];
                 }
                 
+                // Debug logging before create - check age value
+                \Log::info('BEFORE Patient::create - Age value:', [
+                    'age' => $data['age'] ?? 'NOT_SET',
+                    'age_type' => isset($data['age']) ? gettype($data['age']) : 'NOT_SET',
+                    'age_value_raw' => isset($data['age']) ? var_export($data['age'], true) : 'NOT_SET',
+                    'full_data_age' => $data['age'] ?? 'NOT_SET'
+                ]);
+                
+                // Create patient using mass assignment
                 $patient = Patient::create($data);
+                
+                // Debug logging after create - check what was actually stored
+                \Log::info('AFTER Patient::create - Age value from database:', [
+                    'patient_id' => $patient->id,
+                    'age_from_model' => $patient->age,
+                    'age_from_attributes' => $patient->getAttributes()['age'] ?? 'NOT_SET',
+                    'age_type_from_attributes' => isset($patient->getAttributes()['age']) ? gettype($patient->getAttributes()['age']) : 'NOT_SET',
+                    'raw_query' => \DB::table('patient')->where('id', $patient->id)->value('age')
+                ]);
+                
+                // Refresh patient to ensure we have the latest data from database
+                $patient->refresh();
                 
                 // Create patient credentials
                 $patient->credentials()->create([

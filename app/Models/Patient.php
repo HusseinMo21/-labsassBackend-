@@ -74,7 +74,7 @@ class Patient extends Model
 
     protected $casts = [
         'birth_date' => 'date',
-        'age' => 'integer',
+        // Age is now stored as string to preserve formats like "25M,5D"
         'paid' => 'integer',
         'pleft' => 'integer',
         'total' => 'integer',
@@ -170,12 +170,14 @@ class Patient extends Model
 
     public function getAgeAttribute()
     {
-        if (isset($this->attributes['age']) && $this->attributes['age']) {
-            return $this->attributes['age'];
+        // Always return the raw value from database to preserve formats like "25M,5D"
+        if (isset($this->attributes['age']) && $this->attributes['age'] !== null && $this->attributes['age'] !== '') {
+            return (string) $this->attributes['age'];
         }
         
+        // Only calculate from birth_date if age is not set
         if ($this->birth_date) {
-            return \Carbon\Carbon::parse($this->birth_date)->age;
+            return (string) \Carbon\Carbon::parse($this->birth_date)->age;
         }
         
         return null;
@@ -187,8 +189,9 @@ class Patient extends Model
             return $this->attributes['birth_date'];
         }
         
-        if (isset($this->attributes['age']) && $this->attributes['age']) {
-            return now()->subYears($this->attributes['age'])->format('Y-m-d');
+        // Only calculate from age if age is numeric (not a format like "25M,5D")
+        if (isset($this->attributes['age']) && $this->attributes['age'] && is_numeric($this->attributes['age'])) {
+            return now()->subYears((int)$this->attributes['age'])->format('Y-m-d');
         }
         
         return null;

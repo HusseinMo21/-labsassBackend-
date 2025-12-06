@@ -371,6 +371,25 @@ class Shift extends Model
             
             $remainingAmount = $totalAmount - $paidAmount;
             
+            // Get payment breakdown
+            $cashPaid = floatval($paymentDetails['amount_paid_cash'] ?? $patientData['amount_paid_cash'] ?? 0);
+            $otherPaid = floatval($paymentDetails['amount_paid_card'] ?? $patientData['amount_paid_card'] ?? 0);
+            $otherPaymentMethod = $paymentDetails['additional_payment_method'] ?? $patientData['additional_payment_method'] ?? 'Other';
+            
+            // If no breakdown in metadata, try to calculate from payments
+            if ($cashPaid == 0 && $otherPaid == 0 && $paidAmount > 0) {
+                // Try to get from visit payments
+                $visitPayments = $visit->payments ?? collect();
+                foreach ($visitPayments as $payment) {
+                    $paymentMethod = strtolower($payment->payment_method ?? 'cash');
+                    if (strpos($paymentMethod, 'cash') !== false || strpos($paymentMethod, 'نقد') !== false) {
+                        $cashPaid += floatval($payment->amount ?? 0);
+                    } else {
+                        $otherPaid += floatval($payment->amount ?? 0);
+                    }
+                }
+            }
+            
             // Get lab number from multiple sources
             $labNumber = 'N/A';
             if ($labRequest?->full_lab_no) {
@@ -381,14 +400,27 @@ class Shift extends Model
                 $labNumber = $patient->lab;
             }
             
+            // Get sample type (نوع العينة) from patient data or patient record
+            $sampleType = $patientData['sample_type'] ?? $patient?->sample_type ?? 'PATH';
+            
+            // Get organization
+            $organization = $patientData['organization'] ?? $patient?->organization ?? '';
+            
+            // Get doctor name (instead of sender)
+            $doctorName = $patientData['doctor'] ?? $patientData['referring_doctor'] ?? $patient?->doctor_id ?? $patient?->sender ?? 'N/A';
+            
             $reportData[] = [
                 'patient_name' => $patient?->name ?? 'N/A',
                 'lab_number' => $labNumber,
                 'total_amount' => $totalAmount,
                 'paid_amount' => $paidAmount,
+                'cash_paid' => $cashPaid,
+                'other_paid' => $otherPaid,
+                'other_payment_method' => $otherPaymentMethod,
                 'remaining_amount' => $remainingAmount,
-                'type' => 'PATH', // Default type
-                'sender' => $patient?->sender ?? $patient?->doctor?->name ?? 'N/A',
+                'type' => $sampleType,
+                'doctor' => $doctorName,
+                'organization' => $organization,
                 'visit_date' => $visit->visit_date,
             ];
         }

@@ -32,6 +32,39 @@ class CheckInController extends Controller
     }
 
     /**
+     * Convert date to Arabic day name
+     * 
+     * @param string $date Date string (Y-m-d format)
+     * @return string Arabic day name
+     */
+    private function getArabicDayName($date)
+    {
+        if (!$date) {
+            return 'السبت';
+        }
+        
+        try {
+            $carbon = \Carbon\Carbon::parse($date);
+            $dayOfWeek = $carbon->dayOfWeek; // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+            
+            $arabicDays = [
+                0 => 'الأحد',    // Sunday
+                1 => 'الاثنين',  // Monday
+                2 => 'الثلاثاء',  // Tuesday
+                3 => 'الأربعاء',  // Wednesday
+                4 => 'الخميس',    // Thursday
+                5 => 'الجمعة',    // Friday
+                6 => 'السبت',     // Saturday
+            ];
+            
+            return $arabicDays[$dayOfWeek] ?? 'السبت';
+        } catch (\Exception $e) {
+            \Log::warning('Failed to parse date for day name: ' . $e->getMessage(), ['date' => $date]);
+            return 'السبت';
+        }
+    }
+
+    /**
      * Helper method to safely parse metadata from visit
      */
     private function parseMetadata($visit)
@@ -1301,9 +1334,9 @@ class CheckInController extends Controller
             $previousTests = $patientData['previous_tests'] ?? $visit->patient->previous_tests ?? '';
             $patientGender = $visit->patient->gender ?? '';
             
-            // Get day names
-            $attendanceDay = $patientData['attendance_day'] ?? $patientData['day_of_week'] ?? $visit->patient->day_of_week ?? 'السبت';
-            $deliveryDay = $patientData['delivery_day'] ?? $patientData['day_of_week'] ?? $visit->patient->day_of_week ?? 'السبت';
+            // Calculate day names from actual dates (fallback to stored values if dates not available)
+            $attendanceDay = $patientData['attendance_day'] ?? $this->getArabicDayName($attendanceDate);
+            $deliveryDay = $patientData['delivery_day'] ?? $this->getArabicDayName($deliveryDate);
             
             // Get doctor name
             $doctorName = $patientData['doctor'] ?? $patientData['referring_doctor'] ?? $visit->patient->doctor ?? 'د. ياسر محمد الدويك';
@@ -1907,9 +1940,9 @@ class CheckInController extends Controller
             // Get lab number from metadata first
             $labNumber = $patientData['lab_number'] ?? ($visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?? 'N/A'));
             
-            // Get day names
-            $attendanceDay = $patientData['attendance_day'] ?? $patientData['day_of_week'] ?? $visit->patient->day_of_week ?? 'السبت';
-            $deliveryDay = $patientData['delivery_day'] ?? $patientData['day_of_week'] ?? $visit->patient->day_of_week ?? 'السبت';
+            // Calculate day names from actual dates (fallback to stored values if dates not available)
+            $attendanceDay = $patientData['attendance_day'] ?? $this->getArabicDayName($attendanceDate);
+            $deliveryDay = $patientData['delivery_day'] ?? $this->getArabicDayName($deliveryDate);
             
             // Get doctor name
             $doctorName = $patientData['doctor'] ?? $patientData['referring_doctor'] ?? $visit->patient->doctor ?? 'د. ياسر محمد الدويك';

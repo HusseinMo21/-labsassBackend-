@@ -86,14 +86,22 @@ class PatientController extends Controller
         
         // Transform the data to ensure proper formatting and avoid N/A values
         $patients->getCollection()->transform(function ($patient) {
-            // Calculate birth_date from age if not set
-            if ($patient->age && !$patient->birth_date) {
-                $patient->birth_date = now()->subYears($patient->age)->format('Y-m-d');
+            // Ensure age is returned as string to preserve formats like "25M,5D"
+            if (isset($patient->attributes['age']) && $patient->attributes['age'] !== null && $patient->attributes['age'] !== '') {
+                $patient->age = (string) $patient->attributes['age'];
             }
             
-            // Calculate age from birth_date if not set
+            // Calculate birth_date from age if not set (only if age is numeric)
+            if ($patient->age && !$patient->birth_date) {
+                // Check if age is numeric (not a format like "25M,5D")
+                if (is_numeric($patient->age)) {
+                    $patient->birth_date = now()->subYears($patient->age)->format('Y-m-d');
+                }
+            }
+            
+            // Calculate age from birth_date if not set (only if age is not already a string format)
             if (!$patient->age && $patient->birth_date) {
-                $patient->age = \Carbon\Carbon::parse($patient->birth_date)->age;
+                $patient->age = (string) \Carbon\Carbon::parse($patient->birth_date)->age;
             }
             
             // Handle address - prioritize address_required or address_optional
@@ -377,12 +385,15 @@ class PatientController extends Controller
         ];
         
         foreach ($patientsArray['data'] as &$patient) {
-            // Calculate birth_date from age if not set
+            // Calculate birth_date from age if not set (only if age is numeric)
             if (isset($patient['age']) && $patient['age'] && !isset($patient['birth_date'])) {
-                $patient['birth_date'] = now()->subYears($patient['age'])->format('Y-m-d');
+                // Check if age is numeric (not a format like "25M,5D")
+                if (is_numeric($patient['age'])) {
+                    $patient['birth_date'] = now()->subYears($patient['age'])->format('Y-m-d');
+                }
             }
             
-            // Calculate age from birth_date if not set
+            // Calculate age from birth_date if not set (only if age is not already a string format)
             if ((!isset($patient['age']) || !$patient['age']) && isset($patient['birth_date']) && $patient['birth_date']) {
                 $patient['age'] = \Carbon\Carbon::parse($patient['birth_date'])->age;
             }
@@ -439,7 +450,7 @@ class PatientController extends Controller
             'organization' => 'nullable|string|max:255',
             'sender' => 'nullable|string|max:255', // Doctor name
             'status' => 'nullable|string|max:255',
-            'age' => 'nullable|integer|min:0|max:150',
+            'age' => 'nullable|string|max:50', // Changed to string to support formats like "25M,5D"
             // New payment fields
             'total_amount' => 'nullable|numeric|min:0',
             'amount_paid_cash' => 'nullable|numeric|min:0',
@@ -808,7 +819,7 @@ class PatientController extends Controller
             'organization' => 'nullable|string|max:255',
             'sender' => 'nullable|string|max:255', // Doctor name
             'status' => 'nullable|string|max:255',
-            'age' => 'nullable|integer|min:0|max:150',
+            'age' => 'nullable|string|max:50', // Changed to string to support formats like "25M,5D"
             // New payment fields
             'total_amount' => 'nullable|numeric|min:0',
             'amount_paid_cash' => 'nullable|numeric|min:0',

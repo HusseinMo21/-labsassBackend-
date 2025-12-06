@@ -26,6 +26,28 @@ use App\Http\Controllers\Api\PatientRegistrationController;
 */
 
 // Debug routes (remove in production)
+Route::get('/debug/age-column', function () {
+    try {
+        $columnInfo = DB::select("SHOW COLUMNS FROM `patient` WHERE Field = 'age'");
+        $latestPatient = \App\Models\Patient::latest()->first();
+        
+        return response()->json([
+            'column_info' => $columnInfo,
+            'column_type' => $columnInfo[0]->Type ?? 'unknown',
+            'latest_patient' => $latestPatient ? [
+                'id' => $latestPatient->id,
+                'name' => $latestPatient->name,
+                'age_from_model' => $latestPatient->age,
+                'age_from_attributes' => $latestPatient->getAttributes()['age'] ?? null,
+                'age_from_db_raw' => DB::table('patient')->where('id', $latestPatient->id)->value('age'),
+                'age_type' => gettype($latestPatient->getAttributes()['age'] ?? null),
+            ] : null,
+        ]);
+    } catch (\Exception $e) {
+        return response()->json(['error' => $e->getMessage()], 500);
+    }
+});
+
 Route::get('/debug/db', function () {
     try {
         DB::connection()->getPdo();
