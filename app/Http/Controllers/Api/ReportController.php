@@ -687,6 +687,20 @@ class ReportController extends Controller
                 'delivery_date' => $deliveryDate,
             ])->render();
             
+            // Set background image on all pages using MPDF's page background feature
+            if ($backgroundImage) {
+                $mpdf->SetHTMLHeader('', 'O', true);
+                $mpdf->SetHTMLFooter('', 'O', true);
+                // Use CSS to set background on all pages
+                $backgroundCSS = '<style>
+                    @page {
+                        background-image: url("data:image/jpeg;base64,' . $backgroundImage . '");
+                        background-image-resize: 6;
+                    }
+                </style>';
+                $html = $backgroundCSS . $html;
+            }
+            
             $mpdf->WriteHTML($html);
             
             $labNumber = $visit->visit_number;

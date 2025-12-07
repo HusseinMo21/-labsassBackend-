@@ -7,6 +7,10 @@
     <style>
         @page {
             margin: 0;
+            @if(!empty($backgroundImage))
+            background-image: url('data:image/jpeg;base64,{{ $backgroundImage }}');
+            background-image-resize: 6;
+            @endif
         }
         
         body {
@@ -23,21 +27,17 @@
             z-index: 1;
             margin: 0;
             padding: 0;
-            height: 100vh;
         }
         
         .content-container {
-            position: absolute;
-            top: 120px;
-            left: 40px;
-            right: 40px;
-            bottom: 150px;
+            position: relative;
+            margin: 0;
+            padding: 20px 40px;
+            padding-top: 180px;
+            padding-bottom: 150px;
             background: transparent;
             border: none;
             border-radius: 5px;
-            padding: 20px;
-            padding-top: 180px;
-            overflow: hidden;
             box-sizing: border-box;
         }
         
@@ -147,6 +147,15 @@
             text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
             font-size: 16px;
             border-radius: 4px;
+            page-break-inside: auto;
+            break-inside: auto;
+            orphans: 2;
+            widows: 2;
+        }
+        
+        .section-title {
+            page-break-after: avoid;
+            break-after: avoid;
         }
         
         .arabic-text {
