@@ -1027,6 +1027,11 @@ class ReportController extends Controller
             $content['referred_by'] = $request->referred_by;
         }
         
+        // Store type of analysis
+        if ($request->type_of_analysis) {
+            $content['type_of_analysis'] = $request->type_of_analysis;
+        }
+        
         // Store image placement for PDF generation
         if ($request->image_placement) {
             $content['image_placement'] = $request->image_placement;

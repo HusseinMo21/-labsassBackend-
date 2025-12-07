@@ -61,24 +61,31 @@
             width: 100%;
             margin-bottom: 8px;
             border-collapse: collapse;
+            border-spacing: 0;
             background-color: transparent;
         }
         
         .patient-info td {
-            padding: 6px 15px;
+            padding: 6px 0;
             border: none;
             font-size: 13px;
             text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
             vertical-align: top;
+            white-space: nowrap;
+        }
+        
+        .patient-info .field {
+            display: inline-block;
+            white-space: nowrap;
         }
         
         .patient-info .label {
             font-weight: bold;
             font-size: 14px;
-            width: 20%;
             background-color: transparent;
             color: #333;
-            text-align: left;
+            display: inline;
+            padding-right: 2px;
         }
         
         .patient-info .value {
@@ -86,7 +93,8 @@
             color: #333;
             font-size: 13px;
             font-weight: bold;
-            width: 30%;
+            display: inline;
+            padding-left: 0;
         }
         
         /* Barcode Styling */
@@ -113,13 +121,19 @@
         /* Section Styles */
         .section-title {
             font-weight: bold;
-            font-size: 12px;
+            font-size: 18px;
             margin: 8px 0 4px 0;
             color: #333;
-            text-decoration: underline;
-            padding: 3px 0;
-            background-color: transparent;
+            text-decoration: none;
+            padding: 8px 12px;
+            background-color: rgba(255, 255, 255, 0.95);
             text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
+            border: 2px solid #333;
+            border-radius: 4px;
+            display: inline-block;
+            white-space: nowrap;
+            box-sizing: content-box;
+            width: fit-content;
         }
         
         .section-content {
@@ -131,7 +145,7 @@
             text-align: left;
             line-height: 1.4;
             text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
-            font-size: 11px;
+            font-size: 16px;
             border-radius: 4px;
         }
         
@@ -207,36 +221,44 @@
     @if(!empty($backgroundImage))
     <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; background-image: url('data:image/jpeg;base64,{{ $backgroundImage }}'); background-size: cover; background-position: center; background-repeat: no-repeat; pointer-events: none;"></div>
     @endif
+    @php
+        // Get report content and type of analysis
+        $reportContent = null;
+        $report = null;
+        $typeOfAnalysis = 'Pathology'; // Default value
+        if ($visit->labRequest && $visit->labRequest->reports && $visit->labRequest->reports->count() > 0) {
+            // Get the latest completed report, or fall back to the latest report
+            $report = $visit->labRequest->reports->where('status', 'completed')->sortByDesc('id')->first() 
+                     ?? $visit->labRequest->reports->sortByDesc('id')->first();
+            if ($report) {
+                $reportContent = json_decode($report->content, true);
+                $typeOfAnalysis = $reportContent['type_of_analysis'] ?? 'Pathology';
+            }
+        }
+        // Generate report title based on type of analysis
+        $reportTitle = strtoupper($typeOfAnalysis) . ' REPORT';
+    @endphp
     <div class="main-content">
         <div class="content-container">
-            <div class="report-title">PATHOLOGY REPORT</div>
+            <div class="report-title">{{ $reportTitle }}</div>
 
         <!-- Patient Information -->
         <table class="patient-info">
             <tr>
-                <td class="label">Name:</td>
-                <td class="value arabic-text">{{ $visit->patient->name ?? 'N/A' }}</td>
-                <td class="label">Lab No:</td>
-                <td class="value">{{ $visit->labRequest->full_lab_no ?? $visit->lab_number ?? $visit->visit_number ?? 'N/A' }}</td>
+                <td><span class="label">Name:</span><span class="value arabic-text">{{ $visit->patient->name ?? 'N/A' }}</span></td>
+                <td style="padding-left: 30px;"><span class="label">Lab No:</span><span class="value">{{ $visit->labRequest->full_lab_no ?? $visit->lab_number ?? $visit->visit_number ?? 'N/A' }}</span></td>
             </tr>
             <tr>
-                <td class="label">Gender:</td>
-                <td class="value">{{ ucfirst($visit->patient->gender ?? 'N/A') }}</td>
-                <td class="label">تاريخ الحضور:</td>
-                <td class="value">{{ $attendance_date ?? 'N/A' }}</td>
+                <td><span class="label">Gender:</span><span class="value">{{ ucfirst($visit->patient->gender ?? 'N/A') }}</span></td>
+                <td style="padding-left: 30px;"><span class="label">Attendance Date:</span><span class="value">{{ $attendance_date ?? 'N/A' }}</span></td>
             </tr>
             <tr>
-                <td class="label">Age:</td>
-                <td class="value">{{ $visit->patient->age ?? 'N/A' }} Year</td>
-                <td class="label">تاريخ الاستلام:</td>
-                <td class="value">{{ $delivery_date ?? 'N/A' }}</td>
+                <td><span class="label">Age:</span><span class="value">{{ $visit->patient->age ?? 'N/A' }} Year</span></td>
             </tr>
             <tr>
-                <td class="label">Referred By:</td>
-                <td class="value arabic-text">{{ $visit->patient->doctor_id ?? $visit->referred_doctor ?? 'N/A' }}</td>
-                <td class="label">Barcode:</td>
-                <td class="value">
-                    <div class="barcode-container">
+                <td><span class="label">Referred By:</span><span class="value arabic-text">{{ $visit->patient->doctor_id ?? $visit->referred_doctor ?? 'N/A' }}</span></td>
+                <td style="padding-left: 30px;"><span class="label">Barcode:</span>
+                    <div class="barcode-container" style="display: inline-block; margin-left: 2px;">
                         @php
                             $barcodeValue = $visit->labRequest->full_lab_no ?? $visit->lab_number ?? $visit->visit_number ?? 'N/A';
                             $barcodeValue = str_replace(['-', ' ', '/'], '', $barcodeValue);
@@ -254,24 +276,27 @@
         </table>
 
         @php
-            $reportContent = null;
-            $report = null;
-            $imagePlacement = 'end_of_report';
-            if ($visit->labRequest && $visit->labRequest->reports && $visit->labRequest->reports->count() > 0) {
-                // Get the latest completed report, or fall back to the latest report
-                $report = $visit->labRequest->reports->where('status', 'completed')->sortByDesc('id')->first() 
-                         ?? $visit->labRequest->reports->sortByDesc('id')->first();
-                if ($report) {
-                    $reportContent = json_decode($report->content, true);
-                    $imagePlacement = $reportContent['image_placement'] ?? 'end_of_report';
+            // Reuse report content if already loaded, otherwise load it
+            if (!isset($reportContent)) {
+                $reportContent = null;
+                $report = null;
+                if ($visit->labRequest && $visit->labRequest->reports && $visit->labRequest->reports->count() > 0) {
+                    // Get the latest completed report, or fall back to the latest report
+                    $report = $visit->labRequest->reports->where('status', 'completed')->sortByDesc('id')->first() 
+                             ?? $visit->labRequest->reports->sortByDesc('id')->first();
+                    if ($report) {
+                        $reportContent = json_decode($report->content, true);
+                    }
                 }
             }
+            $imagePlacement = $reportContent['image_placement'] ?? 'end_of_report';
         @endphp
 
         <!-- Clinical Data -->
         @php
             $showImageInClinicalData = ($imagePlacement === 'clinical_data' && isset($reportContent['image_placement']));
         @endphp
+        <span class="section-title">CLINICAL DATA:</span>
         @if($showImageInClinicalData && $report && $report->image_path)
             @php
                 $imagePath = storage_path('app/public/' . $report->image_path);
@@ -284,22 +309,23 @@
                 }
             @endphp
             @if($imageBase64)
-            <div class="section-title">CLINICAL DATA:</div>
             <div class="section-content" style="text-align: center; margin: 20px 0;">
                 <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
                      alt="Clinical Data Image" 
                      style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
             </div>
+            @else
+            <div class="section-content">{{ $reportContent['clinical_data'] ?? '---' }}</div>
             @endif
-        @elseif($reportContent && isset($reportContent['clinical_data']))
-        <div class="section-title">CLINICAL DATA:</div>
-        <div class="section-content">{{ $reportContent['clinical_data'] }}</div>
+        @else
+        <div class="section-content">{{ $reportContent['clinical_data'] ?? '---' }}</div>
         @endif
 
         <!-- Nature of Specimen -->
         @php
             $showImageInNatureOfSpecimen = ($imagePlacement === 'nature_of_specimen' && isset($reportContent['image_placement']));
         @endphp
+        <span class="section-title">NATURE OF SPECIMENS:</span>
         @if($showImageInNatureOfSpecimen && $report && $report->image_path)
             @php
                 $imagePath = storage_path('app/public/' . $report->image_path);
@@ -312,22 +338,35 @@
                 }
             @endphp
             @if($imageBase64)
-            <div class="section-title">NATURE OF SPECIMENS:</div>
             <div class="section-content" style="text-align: center; margin: 20px 0;">
                 <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
                      alt="Nature of Specimen Image" 
                      style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
             </div>
+            @else
+            <div class="section-content">
+                @if($reportContent && isset($reportContent['nature_of_specimen']) && $reportContent['nature_of_specimen'])
+                    {{ $reportContent['nature_of_specimen'] }}
+                @elseif($visit->visitTests && $visit->visitTests->count() > 0)
+                    @foreach($visit->visitTests as $test)
+                        {{ $test->labTest->name ?? 'Lab Test' }}@if(!$loop->last), @endif
+                    @endforeach
+                @else
+                    ---
+                @endif
+            </div>
             @endif
-        @elseif($reportContent && isset($reportContent['nature_of_specimen']))
-        <div class="section-title">NATURE OF SPECIMENS:</div>
-        <div class="section-content">{{ $reportContent['nature_of_specimen'] }}</div>
-        @elseif($visit->visitTests && $visit->visitTests->count() > 0)
-        <div class="section-title">NATURE OF SPECIMENS:</div>
+        @else
         <div class="section-content">
-            @foreach($visit->visitTests as $test)
-                {{ $test->labTest->name ?? 'Lab Test' }}@if(!$loop->last), @endif
-            @endforeach
+            @if($reportContent && isset($reportContent['nature_of_specimen']) && $reportContent['nature_of_specimen'])
+                {{ $reportContent['nature_of_specimen'] }}
+            @elseif($visit->visitTests && $visit->visitTests->count() > 0)
+                @foreach($visit->visitTests as $test)
+                    {{ $test->labTest->name ?? 'Lab Test' }}@if(!$loop->last), @endif
+                @endforeach
+            @else
+                ---
+            @endif
         </div>
         @endif
 
@@ -335,6 +374,7 @@
         @php
             $showImageInGrossPathology = ($imagePlacement === 'gross_pathology' && isset($reportContent['image_placement']));
         @endphp
+        <span class="section-title">GROSS EXAMINATION:</span>
         @if($showImageInGrossPathology && $report && $report->image_path)
             @php
                 $imagePath = storage_path('app/public/' . $report->image_path);
@@ -347,22 +387,23 @@
                 }
             @endphp
             @if($imageBase64)
-            <div class="section-title">GROSS EXAMINATION:</div>
             <div class="section-content" style="text-align: center; margin: 20px 0;">
                 <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
                      alt="Gross Pathology Image" 
                      style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
             </div>
+            @else
+            <div class="section-content">{{ $reportContent['gross_pathology'] ?? '---' }}</div>
             @endif
-        @elseif($reportContent && isset($reportContent['gross_pathology']))
-        <div class="section-title">GROSS EXAMINATION:</div>
-        <div class="section-content">{{ $reportContent['gross_pathology'] }}</div>
+        @else
+        <div class="section-content">{{ $reportContent['gross_pathology'] ?? '---' }}</div>
         @endif
 
         <!-- Microscopic Examination -->
         @php
             $showImageInMicroscopic = ($imagePlacement === 'microscopic_examination' && isset($reportContent['image_placement']));
         @endphp
+        <span class="section-title">MICROSCOPIC EXAMINATION:</span>
         @if($showImageInMicroscopic && $report && $report->image_path)
             @php
                 $imagePath = storage_path('app/public/' . $report->image_path);
@@ -375,22 +416,23 @@
                 }
             @endphp
             @if($imageBase64)
-            <div class="section-title">MICROSCOPIC EXAMINATION:</div>
             <div class="section-content" style="text-align: center; margin: 20px 0;">
                 <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
                      alt="Microscopic Examination Image" 
                      style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
             </div>
+            @else
+            <div class="section-content">{{ $reportContent['microscopic_examination'] ?? '---' }}</div>
             @endif
-        @elseif($reportContent && isset($reportContent['microscopic_examination']))
-        <div class="section-title">MICROSCOPIC EXAMINATION:</div>
-        <div class="section-content">{{ $reportContent['microscopic_examination'] }}</div>
+        @else
+        <div class="section-content">{{ $reportContent['microscopic_examination'] ?? '---' }}</div>
         @endif
 
         <!-- Diagnosis -->
         @php
             $showImageInConclusion = ($imagePlacement === 'conclusion' && isset($reportContent['image_placement']));
         @endphp
+        <span class="section-title">DIAGNOSIS:</span>
         @if($showImageInConclusion && $report && $report->image_path)
             @php
                 $imagePath = storage_path('app/public/' . $report->image_path);
@@ -403,23 +445,21 @@
                 }
             @endphp
             @if($imageBase64)
-            <div class="section-title">DIAGNOSIS:</div>
             <div class="section-content" style="text-align: center; margin: 20px 0;">
                 <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
                      alt="Conclusion Image" 
                      style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
             </div>
+            @else
+            <div class="section-content diagnosis-section">{{ $reportContent['conclusion'] ?? '---' }}</div>
             @endif
-        @elseif($reportContent && isset($reportContent['conclusion']))
-        <div class="section-title">DIAGNOSIS:</div>
-        <div class="section-content diagnosis-section">{{ $reportContent['conclusion'] }}</div>
+        @else
+        <div class="section-content diagnosis-section">{{ $reportContent['conclusion'] ?? '---' }}</div>
         @endif
 
         <!-- Recommendations & Notes -->
-        @if($reportContent && isset($reportContent['recommendations']))
-        <div class="section-title">RECOMMENDATIONS & NOTES:</div>
-        <div class="section-content">{{ $reportContent['recommendations'] }}</div>
-        @endif
+        <span class="section-title">RECOMMENDATIONS & NOTES:</span>
+        <div class="section-content">{{ $reportContent['recommendations'] ?? '---' }}</div>
 
         <!-- Pathology Image (only if placement is end_of_report) -->
         @php
