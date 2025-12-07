@@ -159,11 +159,11 @@
         }
         
         .diagnosis-section {
-            border: 2px solid #dc2626;
+            border: 1px solid #ddd;
             background-color: rgba(255, 255, 255, 0.95);
             font-weight: bold;
-            font-size: 12px;
-            color: #dc2626;
+            font-size: 16px;
+            color: #333;
             border-radius: 4px;
         }
         
