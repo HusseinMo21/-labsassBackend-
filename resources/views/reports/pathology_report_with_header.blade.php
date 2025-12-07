@@ -6,7 +6,10 @@
     <title>Pathology Report - {{ $visit->labRequest->full_lab_no ?? $visit->visit_number }}</title>
     <style>
         @page {
-            margin: 0;
+            margin-top: 120px;
+            margin-bottom: 100px;
+            margin-left: 0;
+            margin-right: 0;
             @if(!empty($backgroundImage))
             background-image: url('data:image/jpeg;base64,{{ $backgroundImage }}');
             background-image-resize: 6;
@@ -32,9 +35,8 @@
         .content-container {
             position: relative;
             margin: 0;
-            padding: 20px 40px;
-            padding-top: 180px;
-            padding-bottom: 150px;
+            padding: 0 40px;
+            padding-top: 60px;
             background: transparent;
             border: none;
             border-radius: 5px;
@@ -211,15 +213,13 @@
             .main-content {
                 position: relative !important;
                 z-index: 1 !important;
-                height: 100vh !important;
             }
             .content-container {
-                position: absolute !important;
-                top: 120px !important;
-                left: 40px !important;
-                right: 40px !important;
-                bottom: 150px !important;
-                padding-top: 180px !important;
+                position: relative !important;
+                margin: 0 !important;
+                padding: 0 40px !important;
+                padding-top: 0 !important;
+                padding-bottom: 0 !important;
                 background: transparent !important;
                 border: none !important;
             }
