@@ -6,8 +6,8 @@
     <title>Pathology Report - {{ $visit->labRequest->full_lab_no ?? $visit->visit_number }}</title>
     <style>
         @page {
-            margin-top: 120px;
-            margin-bottom: 100px;
+            margin-top: 180px;
+            margin-bottom: 120px;
             margin-left: 0;
             margin-right: 0;
             @if(!empty($backgroundImage))
