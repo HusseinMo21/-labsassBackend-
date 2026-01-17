@@ -17,6 +17,45 @@ use Carbon\Carbon;
 
 class ReportController extends Controller
 {
+    /**
+     * Get mPDF configuration with EB Garamond font support
+     */
+    private function getMpdfConfig(array $overrides = [])
+    {
+        $defaultConfig = [
+            'mode' => 'utf-8',
+            'format' => 'A4',
+            'orientation' => 'P',
+            'margin_left' => 0,
+            'margin_right' => 0,
+            'margin_top' => 0,
+            'margin_bottom' => 0,
+            'margin_header' => 0,
+            'margin_footer' => 0,
+            'tempDir' => storage_path('app/temp'),
+            'fontDir' => [
+                storage_path('fonts'),
+                base_path('vendor/mpdf/mpdf/ttfonts'),
+            ],
+        ];
+        
+        // Check if EB Garamond font files exist and configure fontdata
+        $ebGaramondRegular = storage_path('fonts/EBGaramond-Regular.ttf');
+        $ebGaramondBold = storage_path('fonts/EBGaramond-Bold.ttf');
+        $ebGaramondItalic = storage_path('fonts/EBGaramond-Italic.ttf');
+        $ebGaramondBoldItalic = storage_path('fonts/EBGaramond-BoldItalic.ttf');
+        
+        // Always set default font to dejavusans for Arabic support
+        $defaultConfig['default_font'] = 'dejavusans';
+        
+        // DO NOT register EB Garamond in fontdata - it causes Arabic text to break
+        // Even when using inline styles, mPDF's font selection can interfere with Arabic rendering
+        // We'll keep everything as DejaVu Sans for now to ensure Arabic works correctly
+        
+        $config = array_merge($defaultConfig, $overrides);
+        
+        return $config;
+    }
     public function revenue(Request $request)
     {
         $period = $request->get('period', 'month');
@@ -551,23 +590,17 @@ class ReportController extends Controller
         $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest'])
             ->findOrFail($visitId);
         
-        // Configure MPDF for Arabic support with proper margins for printing
-        $mpdf = new \Mpdf\Mpdf([
-            'mode' => 'utf-8',
-            'format' => 'A4',
-            'orientation' => 'P',
-            'margin_left' => 8,
-            'margin_right' => 8,
-            'margin_top' => 20,
-            'margin_bottom' => 20,
-            'margin_header' => 0,
-            'margin_footer' => 0,
-            'tempDir' => storage_path('app/temp'),
-        ]);
-        
-        // Set font for Arabic support
-        $mpdf->autoScriptToLang = true;
-        $mpdf->autoLangToFont = true;
+            // Configure MPDF with EB Garamond font support
+            $mpdf = new \Mpdf\Mpdf($this->getMpdfConfig([
+                'margin_left' => 8,
+                'margin_right' => 8,
+                'margin_top' => 20,
+                'margin_bottom' => 20,
+            ]));
+            
+            // Set font for Arabic support
+            $mpdf->autoScriptToLang = true;
+            $mpdf->autoLangToFont = true;
         
         $html = view('reports.professional_pathology_report', [
             'visit' => $visit,
@@ -623,23 +656,15 @@ class ReportController extends Controller
                 $backgroundImage = base64_encode($imageData);
             }
             
-            // Configure MPDF for Arabic support with proper margins for printing
-            $mpdf = new \Mpdf\Mpdf([
-                'mode' => 'utf-8',
-                'format' => 'A4',
-                'orientation' => 'P',
-                'margin_left' => 0,
-                'margin_right' => 0,
-                'margin_top' => 0,
-                'margin_bottom' => 0,
-                'margin_header' => 0,
-                'margin_footer' => 0,
-                'tempDir' => storage_path('app/temp'),
-            ]);
+            // Configure MPDF with EB Garamond font support
+            $mpdf = new \Mpdf\Mpdf($this->getMpdfConfig());
             
-            // Set font for Arabic support
+            // Set font for Arabic support - ensure Arabic uses DejaVu Sans
             $mpdf->autoScriptToLang = true;
             $mpdf->autoLangToFont = true;
+            
+            // Explicitly set default font to dejavusans to ensure Arabic works
+            $mpdf->default_font = 'dejavusans';
             
             // Get attendance date and delivery date - handle metadata safely
             $metadata = [];
@@ -748,19 +773,13 @@ class ReportController extends Controller
             $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest.reports'])
                 ->findOrFail($visitId);
             
-            // Configure MPDF for Arabic support with proper margins for printing
-            $mpdf = new \Mpdf\Mpdf([
-                'mode' => 'utf-8',
-                'format' => 'A4',
-                'orientation' => 'P',
+            // Configure MPDF with EB Garamond font support
+            $mpdf = new \Mpdf\Mpdf($this->getMpdfConfig([
                 'margin_left' => 20,
                 'margin_right' => 20,
                 'margin_top' => 20,
                 'margin_bottom' => 20,
-                'margin_header' => 0,
-                'margin_footer' => 0,
-                'tempDir' => storage_path('app/temp'),
-            ]);
+            ]));
             
             // Set font for Arabic support
             $mpdf->autoScriptToLang = true;

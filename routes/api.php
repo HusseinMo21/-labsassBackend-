@@ -429,6 +429,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/patient/my-reports/{reportId}', [PatientController::class, 'getMyReport']);
         Route::get('/patient/my-visits', [PatientController::class, 'myVisits']);
         Route::get('/patient/my-invoices', [PatientController::class, 'myInvoices']);
+        Route::middleware('pdf.cors')->group(function () {
+            Route::get('/patient/my-reports/{reportId}/print', [PatientController::class, 'printMyReport']);
+        });
     });
 
     // Shift Management routes (staff and admin)

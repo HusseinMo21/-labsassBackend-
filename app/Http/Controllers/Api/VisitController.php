@@ -189,10 +189,10 @@ class VisitController extends Controller
         $query = Visit::select([
             'id', 'visit_number', 'visit_date', 'status', 'created_at', 'updated_at',
             'patient_id', 'lab_request_id', 'total_amount', 'final_amount', 'upfront_payment', 'metadata',
-            'checked_by_doctors', 'last_checked_at'
+            'checked_by_doctors', 'last_checked_at', 'expected_delivery_date'
         ])
         ->with([
-            'patient:id,name,phone,gender,birth_date,age,amount_paid,lab',
+            'patient:id,name,phone,gender,birth_date,age,amount_paid,lab,delivery_date',
             'visitTests:id,visit_id,lab_test_id,status,result_value,result_status,result_notes,price',
             'visitTests.labTest:id,name,code,reference_range',
             'labRequest:id,lab_no,suffix',
@@ -282,6 +282,22 @@ class VisitController extends Controller
             $query->whereDate('visit_date', '<=', $request->end_date);
         }
         
+        // Filter by delivery date if provided
+        if ($request->has('delivery_date') && !empty($request->delivery_date)) {
+            $deliveryDate = $request->delivery_date;
+            // Filter by patient.delivery_date first (most common case)
+            // Also check expected_delivery_date and metadata
+            $query->where(function ($q) use ($deliveryDate) {
+                // PRIORITY 1: Check patient delivery_date (this is where it's stored from patient registration)
+                $q->whereHas('patient', function ($patientQuery) use ($deliveryDate) {
+                    $patientQuery->whereDate('delivery_date', $deliveryDate);
+                })
+                  // PRIORITY 2: Check expected_delivery_date field
+                  ->orWhereDate('expected_delivery_date', $deliveryDate);
+            });
+            // Note: Metadata filtering will be done in the transformation step below
+        }
+        
         // Exclude completed visits if requested (for Reports & Analytics)
         if ($request->has('exclude_completed') && $request->exclude_completed === 'true') {
             $query->where('status', '!=', 'completed');
@@ -290,6 +306,46 @@ class VisitController extends Controller
         // Pagination
         $perPage = $request->get('per_page', 15);
         $visits = $query->orderBy('created_at', 'desc')->paginate($perPage);
+        
+        // Additional filtering for delivery_date in metadata (if delivery_date filter is active)
+        if ($request->has('delivery_date') && !empty($request->delivery_date)) {
+            $deliveryDate = $request->delivery_date;
+            $visits->setCollection($visits->getCollection()->filter(function ($visit) use ($deliveryDate) {
+                // Check if already matched by expected_delivery_date or patient.delivery_date
+                $matched = false;
+                
+                if ($visit->expected_delivery_date && $visit->expected_delivery_date->format('Y-m-d') === $deliveryDate) {
+                    $matched = true;
+                }
+                
+                if (!$matched && $visit->patient && $visit->patient->delivery_date) {
+                    $patientDeliveryDate = is_string($visit->patient->delivery_date) 
+                        ? $visit->patient->delivery_date 
+                        : $visit->patient->delivery_date->format('Y-m-d');
+                    if ($patientDeliveryDate === $deliveryDate) {
+                        $matched = true;
+                    }
+                }
+                
+                // Check metadata
+                if (!$matched && $visit->metadata) {
+                    $metadata = is_array($visit->metadata) ? $visit->metadata : json_decode($visit->metadata, true);
+                    if ($metadata) {
+                        $metaDeliveryDate = $metadata['delivery_date'] ?? $metadata['patient_data']['delivery_date'] ?? null;
+                        if ($metaDeliveryDate) {
+                            $normalizedMetaDate = is_string($metaDeliveryDate) 
+                                ? (new \DateTime($metaDeliveryDate))->format('Y-m-d')
+                                : $metaDeliveryDate;
+                            if ($normalizedMetaDate === $deliveryDate) {
+                                $matched = true;
+                            }
+                        }
+                    }
+                }
+                
+                return $matched;
+            })->values());
+        }
         
         // Auto-fix: Link visits to lab requests if missing (for visits created through patient registration)
         foreach ($visits->items() as $visit) {
@@ -348,6 +404,18 @@ class VisitController extends Controller
             $remainingBalance = max(0, $totalAmount - $paidAmount);
             $billingStatus = $this->getBillingStatus($invoice, $visit);
             
+            // Get delivery date from multiple sources
+            $deliveryDate = null;
+            if ($visit->patient && $visit->patient->delivery_date) {
+                $deliveryDate = $visit->patient->delivery_date;
+            } elseif (isset($patientData['delivery_date'])) {
+                $deliveryDate = $patientData['delivery_date'];
+            } elseif (isset($metadata['delivery_date'])) {
+                $deliveryDate = $metadata['delivery_date'];
+            } elseif ($visit->expected_delivery_date) {
+                $deliveryDate = $visit->expected_delivery_date;
+            }
+            
             return [
                 'id' => $visit->id,
                 'visit_number' => $visit->visit_number,
@@ -368,6 +436,9 @@ class VisitController extends Controller
                 'billing_status' => $billingStatus,
                 'checked_by_doctors' => $visit->checked_by_doctors,
                 'last_checked_at' => $visit->last_checked_at,
+                'expected_delivery_date' => $visit->expected_delivery_date,
+                'delivery_date' => $deliveryDate,
+                'metadata' => $visit->metadata,
             ];
         });
         

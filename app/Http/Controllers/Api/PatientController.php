@@ -1646,6 +1646,166 @@ class PatientController extends Controller
         ]);
     }
 
+    public function printMyReport(Request $request, $reportId)
+    {
+        $user = $request->user();
+        $patient = Patient::where('user_id', $user->id)->first();
+        
+        if (!$patient) {
+            \Log::warning('Patient not found for user', ['user_id' => $user->id]);
+            return response()->json(['message' => 'Patient not found'], 404);
+        }
+
+        // ONLY get Enhanced Reports that have been delivered (sent by staff)
+        // Triple security: ensure report ID, patient_id, and delivered status
+        $enhancedReport = \App\Models\EnhancedReport::where('id', $reportId)
+            ->where('patient_id', $patient->id)
+            ->where('status', 'delivered')
+            ->with(['patient', 'labRequest.visit', 'createdBy', 'reviewedBy', 'approvedBy', 'imageUploadedBy'])
+            ->first();
+
+        if (!$enhancedReport) {
+            \Log::warning('Patient attempted to access unauthorized report', [
+                'patient_id' => $patient->id,
+                'report_id' => $reportId,
+                'user_id' => $user->id,
+                'ip_address' => $request->ip(),
+            ]);
+            return response()->json(['message' => 'Report not found or not available yet'], 404);
+        }
+
+        // Get the visit from the labRequest
+        $visit = $enhancedReport->labRequest?->visit;
+        if (!$visit) {
+            return response()->json(['message' => 'Visit not found for this report'], 404);
+        }
+
+        // Load the visit with all necessary relationships
+        $visit = \App\Models\Visit::with(['patient', 'visitTests.labTest', 'labRequest.reports'])
+            ->findOrFail($visit->id);
+
+        try {
+            // Read background image and convert to base64
+            $backgroundImagePath = public_path('templete/background.jpg');
+            $backgroundImage = null;
+            
+            if (file_exists($backgroundImagePath)) {
+                $imageData = file_get_contents($backgroundImagePath);
+                $backgroundImage = base64_encode($imageData);
+            }
+
+            // Use the same mPDF config as ReportController
+            $reportController = new \App\Http\Controllers\Api\ReportController();
+            $reflection = new \ReflectionClass($reportController);
+            $method = $reflection->getMethod('getMpdfConfig');
+            $method->setAccessible(true);
+            $mpdfConfig = $method->invoke($reportController);
+            
+            // Configure MPDF with EB Garamond font support (same as generateReportWithHeader)
+            $mpdf = new \Mpdf\Mpdf($mpdfConfig);
+            
+            // Set font for Arabic support - ensure Arabic uses DejaVu Sans
+            $mpdf->autoScriptToLang = true;
+            $mpdf->autoLangToFont = true;
+            
+            // Explicitly set default font to dejavusans to ensure Arabic works
+            $mpdf->default_font = 'dejavusans';
+            
+            // Get attendance date and delivery date - handle metadata safely
+            $metadata = [];
+            if ($visit->metadata) {
+                if (is_array($visit->metadata)) {
+                    $metadata = $visit->metadata;
+                } elseif (is_string($visit->metadata)) {
+                    try {
+                        $metadata = json_decode($visit->metadata, true) ?? [];
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to parse visit metadata as JSON in printMyReport', [
+                            'visit_id' => $visit->id,
+                            'error' => $e->getMessage()
+                        ]);
+                        $metadata = [];
+                    }
+                }
+            }
+            $patientData = $metadata['patient_data'] ?? [];
+            $attendanceDate = $patientData['attendance_date'] ?? ($visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('d/m/Y') : 'N/A');
+            $deliveryDate = $patientData['delivery_date'] ?? ($visit->expected_delivery_date ? \Carbon\Carbon::parse($visit->expected_delivery_date)->format('d/m/Y') : 'N/A');
+            
+            // Also check patient record directly
+            if ($visit->patient) {
+                if ($attendanceDate === 'N/A' && $visit->patient->attendance_date) {
+                    try {
+                        $attendanceDate = \Carbon\Carbon::parse($visit->patient->attendance_date)->format('d/m/Y');
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to parse attendance_date', ['error' => $e->getMessage()]);
+                    }
+                }
+                if ($deliveryDate === 'N/A' && $visit->patient->delivery_date) {
+                    try {
+                        $deliveryDate = \Carbon\Carbon::parse($visit->patient->delivery_date)->format('d/m/Y');
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to parse delivery_date', ['error' => $e->getMessage()]);
+                    }
+                }
+            }
+            
+            // Use the same template as generateReportWithHeader
+            $html = view('reports.pathology_report_with_header', [
+                'visit' => $visit,
+                'backgroundImage' => $backgroundImage,
+                'attendance_date' => $attendanceDate,
+                'delivery_date' => $deliveryDate,
+            ])->render();
+            
+            // Set background image on all pages using MPDF's page background feature
+            if ($backgroundImage) {
+                $mpdf->SetHTMLHeader('', 'O', true);
+                $mpdf->SetHTMLFooter('', 'O', true);
+                // Use CSS to set background on all pages
+                $backgroundCSS = '<style>
+                    @page {
+                        background-image: url("data:image/jpeg;base64,' . $backgroundImage . '");
+                        background-image-resize: 6;
+                    }
+                </style>';
+                $html = $backgroundCSS . $html;
+            }
+            
+            $mpdf->WriteHTML($html);
+            
+            $labNumber = $visit->visit_number;
+            if ($visit->labRequest && isset($visit->labRequest->full_lab_no)) {
+                $labNumber = $visit->labRequest->full_lab_no;
+            }
+            
+            $filename = 'pathology_report_with_header_' . $labNumber . '.pdf';
+            
+            // Get PDF content as string
+            $pdfContent = $mpdf->Output('', 'S');
+            
+            // Create response with CORS headers
+            $response = response($pdfContent, 200, [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' => 'inline; filename="' . $filename . '"',
+                'Access-Control-Allow-Origin' => '*',
+                'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin',
+                'Access-Control-Allow-Credentials' => 'true',
+                'Access-Control-Expose-Headers' => 'Content-Type, Content-Disposition, Content-Length'
+            ]);
+            
+            return $response;
+        } catch (\Exception $e) {
+            \Log::error('PDF generation error for patient: ' . $e->getMessage());
+            \Log::error('Stack trace: ' . $e->getTraceAsString());
+            return response()->json([
+                'error' => 'PDF generation failed',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
     public function myVisits(Request $request)
     {
         $user = $request->user();

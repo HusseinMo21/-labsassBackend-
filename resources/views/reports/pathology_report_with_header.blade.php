@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pathology Report - {{ $visit->labRequest->full_lab_no ?? $visit->visit_number }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400..800;1,400..800&display=swap" rel="stylesheet">
     <style>
         @page {
             margin-top: 180px;
@@ -17,12 +20,23 @@
         }
         
         body {
-            font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-serif;
+            /* Default to DejaVu Sans for ALL text - ensures Arabic works */
+            font-family: 'dejavusans' !important;
+            font-weight: 400;
+            font-style: normal;
             padding: 0;
             margin: 0;
             line-height: 1.3;
             font-size: 12px;
             position: relative;
+        }
+        
+        /* All text uses DejaVu Sans by default - ensures Arabic works */
+        /* EB Garamond will be applied via inline styles to specific section titles only */
+        
+        /* Ensure patient info and labels use DejaVu Sans */
+        .patient-info, .label, .value, .report-title, .section-title, body, * {
+            font-family: 'dejavusans' !important;
         }
         
         .main-content {
@@ -163,10 +177,16 @@
         .arabic-text {
             direction: rtl;
             text-align: right;
-            font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-serif;
+            /* Explicitly use DejaVu Sans for Arabic text - MUST be first to prevent font fallback issues */
+            font-family: 'dejavusans' !important;
             unicode-bidi: bidi-override;
             font-weight: bold;
             font-size: 14px;
+        }
+        
+        /* Ensure all Arabic content uses DejaVu Sans */
+        [dir="rtl"], [lang="ar"] {
+            font-family: 'dejavusans' !important;
         }
         
         .diagnosis-section {
@@ -255,18 +275,14 @@
         <table class="patient-info">
             <tr>
                 <td><span class="label">Name:</span><span class="value arabic-text">{{ $visit->patient->name ?? 'N/A' }}</span></td>
-                <td style="padding-left: 30px;"><span class="label">Lab No:</span><span class="value">{{ $visit->labRequest->full_lab_no ?? $visit->lab_number ?? $visit->visit_number ?? 'N/A' }}</span></td>
-            </tr>
-            <tr>
-                <td><span class="label">Gender:</span><span class="value">{{ ucfirst($visit->patient->gender ?? 'N/A') }}</span></td>
-                <td style="padding-left: 30px;"><span class="label">Attendance Date:</span><span class="value">{{ $attendance_date ?? 'N/A' }}</span></td>
-            </tr>
-            <tr>
-                <td><span class="label">Age:</span><span class="value">{{ $visit->patient->age ?? 'N/A' }} Year</span></td>
+                <td style="padding-left: 20px;"><span class="label">Gender:</span><span class="value">{{ ucfirst($visit->patient->gender ?? 'N/A') }}</span></td>
+                <td style="padding-left: 20px;"><span class="label">Age:</span><span class="value">{{ $visit->patient->age ?? 'N/A' }} Year</span></td>
+                <td style="padding-left: 20px;"><span class="label">Lab No:</span><span class="value">{{ $visit->labRequest->full_lab_no ?? $visit->lab_number ?? $visit->visit_number ?? 'N/A' }}</span></td>
             </tr>
             <tr>
                 <td><span class="label">Referred By:</span><span class="value arabic-text">{{ $visit->patient->doctor_id ?? $visit->referred_doctor ?? 'N/A' }}</span></td>
-                <td style="padding-left: 30px;"><span class="label">Barcode:</span>
+                <td style="padding-left: 20px;"><span class="label">Attendance Date:</span><span class="value">{{ $attendance_date ?? 'N/A' }}</span></td>
+                <td style="padding-left: 20px;"><span class="label">Barcode:</span>
                     <div class="barcode-container" style="display: inline-block; margin-left: 2px;">
                         @php
                             $barcodeValue = $visit->labRequest->full_lab_no ?? $visit->lab_number ?? $visit->visit_number ?? 'N/A';
@@ -327,12 +343,64 @@
             <div class="section-content">{{ $reportContent['clinical_data'] ?? '---' }}</div>
             @endif
         @else
-        <div class="section-content">{{ $reportContent['clinical_data'] ?? '---' }}</div>
+        @php
+            $clinicalData = $reportContent['clinical_data'] ?? '';
+            // Parse clinical data - check if it's in structured format (numbered points)
+            $clinicalDataLines = [];
+            if (!empty($clinicalData)) {
+                $lines = explode("\n", $clinicalData);
+                foreach ($lines as $line) {
+                    $line = trim($line);
+                    if (!empty($line)) {
+                        // Check if line starts with number (e.g., "1-point" or "1- point")
+                        if (preg_match('/^\d+[-.)]\s*(.+)$/', $line, $matches)) {
+                            $clinicalDataLines[] = $matches[1];
+                        } else {
+                            // If not numbered, check if it starts with dash/bullet
+                            if (preg_match('/^[-•]\s*(.+)$/', $line, $matches)) {
+                                $clinicalDataLines[] = $matches[1];
+                            } else {
+                                // Plain line, use as is
+                                $clinicalDataLines[] = $line;
+                            }
+                        }
+                    }
+                }
+            }
+        @endphp
+        <div class="section-content">
+            @if(!empty($clinicalDataLines))
+                @foreach($clinicalDataLines as $index => $point)
+                    <div style="margin-bottom: 8px;">{{ $index + 1 }}-{{ $point }}</div>
+                @endforeach
+            @else
+                {{ $clinicalData ?: '---' }}
+            @endif
+        </div>
         @endif
 
         <!-- Nature of Specimen -->
         @php
             $showImageInNatureOfSpecimen = ($imagePlacement === 'nature_of_specimen' && isset($reportContent['image_placement']));
+            // Helper function to parse structured data
+            $parseStructuredData = function($data) {
+                if (empty($data)) return [];
+                $lines = explode("\n", $data);
+                $parsedLines = [];
+                foreach ($lines as $line) {
+                    $line = trim($line);
+                    if (!empty($line)) {
+                        if (preg_match('/^\d+[-.)]\s*(.+)$/', $line, $matches)) {
+                            $parsedLines[] = $matches[1];
+                        } elseif (preg_match('/^[-•]\s*(.+)$/', $line, $matches)) {
+                            $parsedLines[] = $matches[1];
+                        } else {
+                            $parsedLines[] = $line;
+                        }
+                    }
+                }
+                return $parsedLines;
+            };
         @endphp
         <span class="section-title">NATURE OF SPECIMENS:</span>
         @if($showImageInNatureOfSpecimen && $report && $report->image_path)
@@ -353,28 +421,40 @@
                      style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
             </div>
             @else
+            @php
+                $natureData = $reportContent['nature_of_specimen'] ?? '';
+                $natureLines = $parseStructuredData($natureData);
+            @endphp
             <div class="section-content">
-                @if($reportContent && isset($reportContent['nature_of_specimen']) && $reportContent['nature_of_specimen'])
-                    {{ $reportContent['nature_of_specimen'] }}
+                @if(!empty($natureLines))
+                    @foreach($natureLines as $index => $point)
+                        <div style="margin-bottom: 8px;">{{ $index + 1 }}-{{ $point }}</div>
+                    @endforeach
                 @elseif($visit->visitTests && $visit->visitTests->count() > 0)
                     @foreach($visit->visitTests as $test)
                         {{ $test->labTest->name ?? 'Lab Test' }}@if(!$loop->last), @endif
                     @endforeach
                 @else
-                    ---
+                    {{ $natureData ?: '---' }}
                 @endif
             </div>
             @endif
         @else
+        @php
+            $natureData = ($reportContent['nature_of_specimen'] ?? '');
+            $natureLines = $parseStructuredData($natureData);
+        @endphp
         <div class="section-content">
-            @if($reportContent && isset($reportContent['nature_of_specimen']) && $reportContent['nature_of_specimen'])
-                {{ $reportContent['nature_of_specimen'] }}
+            @if(!empty($natureLines))
+                @foreach($natureLines as $index => $point)
+                    <div style="margin-bottom: 8px;">{{ $index + 1 }}-{{ $point }}</div>
+                @endforeach
             @elseif($visit->visitTests && $visit->visitTests->count() > 0)
                 @foreach($visit->visitTests as $test)
                     {{ $test->labTest->name ?? 'Lab Test' }}@if(!$loop->last), @endif
                 @endforeach
             @else
-                ---
+                {{ $natureData ?: '---' }}
             @endif
         </div>
         @endif
@@ -402,10 +482,34 @@
                      style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
             </div>
             @else
-            <div class="section-content">{{ $reportContent['gross_pathology'] ?? '---' }}</div>
+            @php
+                $grossData = $reportContent['gross_pathology'] ?? '';
+                $grossLines = $parseStructuredData($grossData);
+            @endphp
+            <div class="section-content">
+                @if(!empty($grossLines))
+                    @foreach($grossLines as $index => $point)
+                        <div style="margin-bottom: 8px;">{{ $index + 1 }}-{{ $point }}</div>
+                    @endforeach
+                @else
+                    {{ $grossData ?: '---' }}
+                @endif
+            </div>
             @endif
         @else
-        <div class="section-content">{{ $reportContent['gross_pathology'] ?? '---' }}</div>
+        @php
+            $grossData = $reportContent['gross_pathology'] ?? '';
+            $grossLines = $parseStructuredData($grossData);
+        @endphp
+        <div class="section-content">
+            @if(!empty($grossLines))
+                @foreach($grossLines as $index => $point)
+                    <div style="margin-bottom: 8px;">{{ $index + 1 }}-{{ $point }}</div>
+                @endforeach
+            @else
+                {{ $grossData ?: '---' }}
+            @endif
+        </div>
         @endif
 
         <!-- Microscopic Examination -->
@@ -431,10 +535,34 @@
                      style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
             </div>
             @else
-            <div class="section-content">{{ $reportContent['microscopic_examination'] ?? '---' }}</div>
+            @php
+                $microscopicData = $reportContent['microscopic_examination'] ?? '';
+                $microscopicLines = $parseStructuredData($microscopicData);
+            @endphp
+            <div class="section-content">
+                @if(!empty($microscopicLines))
+                    @foreach($microscopicLines as $index => $point)
+                        <div style="margin-bottom: 8px;">{{ $index + 1 }}-{{ $point }}</div>
+                    @endforeach
+                @else
+                    {{ $microscopicData ?: '---' }}
+                @endif
+            </div>
             @endif
         @else
-        <div class="section-content">{{ $reportContent['microscopic_examination'] ?? '---' }}</div>
+        @php
+            $microscopicData = $reportContent['microscopic_examination'] ?? '';
+            $microscopicLines = $parseStructuredData($microscopicData);
+        @endphp
+        <div class="section-content">
+            @if(!empty($microscopicLines))
+                @foreach($microscopicLines as $index => $point)
+                    <div style="margin-bottom: 8px;">{{ $index + 1 }}-{{ $point }}</div>
+                @endforeach
+            @else
+                {{ $microscopicData ?: '---' }}
+            @endif
+        </div>
         @endif
 
         <!-- Diagnosis -->
@@ -460,15 +588,51 @@
                      style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
             </div>
             @else
-            <div class="section-content diagnosis-section">{{ $reportContent['conclusion'] ?? '---' }}</div>
+            @php
+                $conclusionData = $reportContent['conclusion'] ?? '';
+                $conclusionLines = $parseStructuredData($conclusionData);
+            @endphp
+            <div class="section-content diagnosis-section">
+                @if(!empty($conclusionLines))
+                    @foreach($conclusionLines as $index => $point)
+                        <div style="margin-bottom: 8px;">{{ $index + 1 }}-{{ $point }}</div>
+                    @endforeach
+                @else
+                    {{ $conclusionData ?: '---' }}
+                @endif
+            </div>
             @endif
         @else
-        <div class="section-content diagnosis-section">{{ $reportContent['conclusion'] ?? '---' }}</div>
+        @php
+            $conclusionData = $reportContent['conclusion'] ?? '';
+            $conclusionLines = $parseStructuredData($conclusionData);
+        @endphp
+        <div class="section-content diagnosis-section">
+            @if(!empty($conclusionLines))
+                @foreach($conclusionLines as $index => $point)
+                    <div style="margin-bottom: 8px;">{{ $index + 1 }}-{{ $point }}</div>
+                @endforeach
+            @else
+                {{ $conclusionData ?: '---' }}
+            @endif
+        </div>
         @endif
 
         <!-- Recommendations & Notes -->
+        @php
+            $recommendationsData = $reportContent['recommendations'] ?? '';
+            $recommendationsLines = $parseStructuredData($recommendationsData);
+        @endphp
         <span class="section-title">RECOMMENDATIONS & NOTES:</span>
-        <div class="section-content">{{ $reportContent['recommendations'] ?? '---' }}</div>
+        <div class="section-content">
+            @if(!empty($recommendationsLines))
+                @foreach($recommendationsLines as $index => $point)
+                    <div style="margin-bottom: 8px;">{{ $index + 1 }}-{{ $point }}</div>
+                @endforeach
+            @else
+                {{ $recommendationsData ?: '---' }}
+            @endif
+        </div>
 
         <!-- Pathology Image (only if placement is end_of_report) -->
         @php
