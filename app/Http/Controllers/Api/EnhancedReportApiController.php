@@ -680,4 +680,98 @@ class EnhancedReportApiController extends Controller
             'data' => $report->load(['patient', 'labRequest', 'createdBy', 'reviewedBy', 'approvedBy'])
         ]);
     }
+
+    /**
+     * Search reports across multiple fields
+     */
+    public function search(Request $request)
+    {
+        $request->validate([
+            'search_term' => 'required|string|min:1',
+            'fields' => 'required|string',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
+        ]);
+
+        $searchTerm = $request->search_term;
+        $fields = explode(',', $request->fields);
+        $perPage = $request->per_page ?? 15;
+
+        // Field mapping: frontend field names to database column names
+        $fieldMapping = [
+            'clinical_data' => 'clinical',
+            'nature_of_specimen' => 'nature',
+            'gross_pathology' => 'gross',
+            'microscopic_examination' => 'micro',
+            'conclusion' => 'conc',
+            'recommendations' => 'reco',
+        ];
+
+        // Build query
+        $query = EnhancedReport::with(['patient', 'labRequest.visit']);
+
+        // Apply role-based filtering
+        $user = Auth::user();
+        if ($user->role === 'staff') {
+            $query->whereIn('status', ['approved', 'printed', 'delivered', 'completed']);
+        } elseif ($user->role === 'doctor') {
+            $query->whereIn('status', ['draft', 'under_review', 'approved', 'printed', 'delivered']);
+        }
+        // Admins can see all reports
+
+        // Build search conditions for selected fields
+        $query->where(function ($q) use ($fields, $fieldMapping, $searchTerm) {
+            foreach ($fields as $field) {
+                $field = trim($field);
+                if (isset($fieldMapping[$field])) {
+                    $dbField = $fieldMapping[$field];
+                    $q->orWhere($dbField, 'like', '%' . $searchTerm . '%');
+                }
+            }
+        });
+
+        // Execute query with pagination
+        $reports = $query->orderBy('report_date', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage);
+
+        // Transform results to include matched fields
+        $transformedData = $reports->getCollection()->map(function ($report) use ($fields, $fieldMapping, $searchTerm) {
+            $matchedFields = [];
+            $result = [
+                'id' => $report->id,
+                'patient_id' => $report->patient_id,
+                'patient_name' => $report->patient?->name ?? $report->nos ?? 'N/A',
+                'lab_no' => $report->labRequest?->full_lab_no ?? $report->lab_no ?? 'N/A',
+                'report_date' => $report->report_date?->format('Y-m-d') ?? null,
+                'visit_id' => $report->labRequest?->visit?->id ?? null,
+            ];
+
+            // Check which fields matched
+            foreach ($fields as $field) {
+                $field = trim($field);
+                if (isset($fieldMapping[$field])) {
+                    $dbField = $fieldMapping[$field];
+                    $fieldValue = $report->$dbField;
+                    
+                    if ($fieldValue && stripos($fieldValue, $searchTerm) !== false) {
+                        $matchedFields[] = $field;
+                        // Include the field data in result
+                        $result[$field] = $fieldValue;
+                    }
+                }
+            }
+
+            $result['matched_fields'] = $matchedFields;
+            return $result;
+        });
+
+        return response()->json([
+            'data' => $transformedData,
+            'current_page' => $reports->currentPage(),
+            'last_page' => $reports->lastPage(),
+            'per_page' => $reports->perPage(),
+            'total' => $reports->total(),
+        ]);
+    }
 }

@@ -592,15 +592,15 @@ class ReportController extends Controller
         
             // Configure MPDF with EB Garamond font support
             $mpdf = new \Mpdf\Mpdf($this->getMpdfConfig([
-                'margin_left' => 8,
-                'margin_right' => 8,
-                'margin_top' => 20,
-                'margin_bottom' => 20,
+            'margin_left' => 8,
+            'margin_right' => 8,
+            'margin_top' => 20,
+            'margin_bottom' => 20,
             ]));
-            
-            // Set font for Arabic support
-            $mpdf->autoScriptToLang = true;
-            $mpdf->autoLangToFont = true;
+        
+        // Set font for Arabic support
+        $mpdf->autoScriptToLang = true;
+        $mpdf->autoLangToFont = true;
         
         $html = view('reports.professional_pathology_report', [
             'visit' => $visit,
@@ -904,7 +904,7 @@ class ReportController extends Controller
             'conclusion' => 'nullable|string',
             'recommendations' => 'nullable|string',
             'type_of_analysis' => 'nullable|string|max:255',
-            'test_status' => 'nullable|string|in:pending,completed,under_review',
+            'test_status' => 'nullable|string|in:pending,in_progress,under_review,approved,completed,cancelled',
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB max
         ]);
 

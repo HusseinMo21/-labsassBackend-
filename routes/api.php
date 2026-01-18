@@ -472,6 +472,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/enhanced-reports-statistics', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'statistics']);
         Route::post('/enhanced-reports/{report}/upload-image', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'uploadImage']);
         Route::delete('/enhanced-reports/{report}/remove-image', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'removeImage']);
+        Route::get('/reports/search', [App\Http\Controllers\Api\EnhancedReportApiController::class, 'search']);
     });
 
     // Enhanced Reports PDF routes (with CORS support)

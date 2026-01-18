@@ -266,36 +266,36 @@
         <div class="content-container">
             <div class="report-title">{{ $reportTitle }}</div>
 
-        <!-- Patient Information -->
-        <table class="patient-info">
-            <tr>
+            <!-- Patient Information -->
+            <table class="patient-info">
+                <tr>
                 <td><span class="label">Name:</span><span class="value arabic-text">{{ $visit->patient->name ?? 'N/A' }}</span></td>
                 <td style="padding-left: 20px;"><span class="label">Gender:</span><span class="value">{{ ucfirst($visit->patient->gender ?? 'N/A') }}</span></td>
                 <td style="padding-left: 20px;"><span class="label">Age:</span><span class="value">{{ $visit->patient->age ?? 'N/A' }} Year</span></td>
                 <td style="padding-left: 20px;"><span class="label">Lab No:</span><span class="value">{{ $visit->labRequest->full_lab_no ?? $visit->lab_number ?? $visit->visit_number ?? 'N/A' }}</span></td>
-            </tr>
-            <tr>
+                </tr>
+                <tr>
                 <td><span class="label">Referred By:</span><span class="value arabic-text">{{ $visit->patient->doctor_id ?? $visit->referred_doctor ?? 'N/A' }}</span></td>
                 <td style="padding-left: 20px;"><span class="label">Attendance Date:</span><span class="value">{{ $attendance_date ?? 'N/A' }}</span></td>
                 <td style="padding-left: 20px;"><span class="label">Barcode:</span>
                     <div class="barcode-container" style="display: inline-block; margin-left: 2px;">
-                        @php
-                            $barcodeValue = $visit->labRequest->full_lab_no ?? $visit->lab_number ?? $visit->visit_number ?? 'N/A';
-                            $barcodeValue = str_replace(['-', ' ', '/'], '', $barcodeValue);
-                            
-                            // Generate barcode using picqer/php-barcode-generator
-                            $generator = new \Picqer\Barcode\BarcodeGeneratorPNG();
-                            $barcodeImage = $generator->getBarcode($barcodeValue, $generator::TYPE_CODE_128);
-                            $barcodeBase64 = base64_encode($barcodeImage);
-                        @endphp
-                        <img src="data:image/png;base64,{{ $barcodeBase64 }}" alt="Barcode" class="barcode-image" />
-                        <div class="barcode-text">{{ $barcodeValue }}</div>
-                    </div>
-                </td>
-            </tr>
-        </table>
+                            @php
+                                $barcodeValue = $visit->labRequest->full_lab_no ?? $visit->lab_number ?? $visit->visit_number ?? 'N/A';
+                                $barcodeValue = str_replace(['-', ' ', '/'], '', $barcodeValue);
+                                
+                                // Generate barcode using picqer/php-barcode-generator
+                                $generator = new \Picqer\Barcode\BarcodeGeneratorPNG();
+                                $barcodeImage = $generator->getBarcode($barcodeValue, $generator::TYPE_CODE_128);
+                                $barcodeBase64 = base64_encode($barcodeImage);
+                            @endphp
+                            <img src="data:image/png;base64,{{ $barcodeBase64 }}" alt="Barcode" class="barcode-image" />
+                            <div class="barcode-text">{{ $barcodeValue }}</div>
+                        </div>
+                    </td>
+                </tr>
+            </table>
 
-        @php
+            @php
             // Reuse report content if already loaded, otherwise load it
             if (!isset($reportContent)) {
                 $reportContent = null;
@@ -310,33 +310,33 @@
                 }
             }
             $imagePlacement = $reportContent['image_placement'] ?? 'end_of_report';
-        @endphp
-
-        <!-- Clinical Data -->
-        @php
-            $showImageInClinicalData = ($imagePlacement === 'clinical_data' && isset($reportContent['image_placement']));
-        @endphp
-        <span class="section-title">CLINICAL DATA:</span>
-        @if($showImageInClinicalData && $report && $report->image_path)
-            @php
-                $imagePath = storage_path('app/public/' . $report->image_path);
-                $imageBase64 = null;
-                $imageMimeType = 'image/jpeg';
-                if (file_exists($imagePath)) {
-                    $imageData = file_get_contents($imagePath);
-                    $imageBase64 = base64_encode($imageData);
-                    $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
-                }
             @endphp
-            @if($imageBase64)
-            <div class="section-content" style="text-align: center; margin: 20px 0;">
-                <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
-                     alt="Clinical Data Image" 
-                     style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
-            </div>
+
+            <!-- Clinical Data -->
+            @php
+                $showImageInClinicalData = ($imagePlacement === 'clinical_data' && isset($reportContent['image_placement']));
+            @endphp
+        <span class="section-title">CLINICAL DATA:</span>
+            @if($showImageInClinicalData && $report && $report->image_path)
+                @php
+                    $imagePath = storage_path('app/public/' . $report->image_path);
+                    $imageBase64 = null;
+                    $imageMimeType = 'image/jpeg';
+                    if (file_exists($imagePath)) {
+                        $imageData = file_get_contents($imagePath);
+                        $imageBase64 = base64_encode($imageData);
+                        $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+                    }
+                @endphp
+                @if($imageBase64)
+                <div class="section-content" style="text-align: center; margin: 20px 0;">
+                    <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
+                         alt="Clinical Data Image" 
+                         style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
+                </div>
             @else
             <div class="section-content">{{ $reportContent['clinical_data'] ?? '---' }}</div>
-            @endif
+                @endif
         @else
         @php
             $clinicalData = $reportContent['clinical_data'] ?? '';
@@ -372,11 +372,11 @@
                 {{ $clinicalData ?: '---' }}
             @endif
         </div>
-        @endif
+            @endif
 
-        <!-- Nature of Specimen -->
-        @php
-            $showImageInNatureOfSpecimen = ($imagePlacement === 'nature_of_specimen' && isset($reportContent['image_placement']));
+            <!-- Nature of Specimen -->
+            @php
+                $showImageInNatureOfSpecimen = ($imagePlacement === 'nature_of_specimen' && isset($reportContent['image_placement']));
             // Helper function to parse structured data
             $parseStructuredData = function($data) {
                 if (empty($data)) return [];
@@ -396,25 +396,25 @@
                 }
                 return $parsedLines;
             };
-        @endphp
-        <span class="section-title">NATURE OF SPECIMENS:</span>
-        @if($showImageInNatureOfSpecimen && $report && $report->image_path)
-            @php
-                $imagePath = storage_path('app/public/' . $report->image_path);
-                $imageBase64 = null;
-                $imageMimeType = 'image/jpeg';
-                if (file_exists($imagePath)) {
-                    $imageData = file_get_contents($imagePath);
-                    $imageBase64 = base64_encode($imageData);
-                    $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
-                }
             @endphp
-            @if($imageBase64)
-            <div class="section-content" style="text-align: center; margin: 20px 0;">
-                <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
-                     alt="Nature of Specimen Image" 
-                     style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
-            </div>
+        <span class="section-title">NATURE OF SPECIMENS:</span>
+            @if($showImageInNatureOfSpecimen && $report && $report->image_path)
+                @php
+                    $imagePath = storage_path('app/public/' . $report->image_path);
+                    $imageBase64 = null;
+                    $imageMimeType = 'image/jpeg';
+                    if (file_exists($imagePath)) {
+                        $imageData = file_get_contents($imagePath);
+                        $imageBase64 = base64_encode($imageData);
+                        $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+                    }
+                @endphp
+                @if($imageBase64)
+                <div class="section-content" style="text-align: center; margin: 20px 0;">
+                    <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
+                         alt="Nature of Specimen Image" 
+                         style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
+                </div>
             @else
             @php
                 $natureData = $reportContent['nature_of_specimen'] ?? '';
@@ -451,31 +451,31 @@
             @else
                 {{ $natureData ?: '---' }}
             @endif
-        </div>
-        @endif
-
-        <!-- Gross Pathology -->
-        @php
-            $showImageInGrossPathology = ($imagePlacement === 'gross_pathology' && isset($reportContent['image_placement']));
-        @endphp
-        <span class="section-title">GROSS EXAMINATION:</span>
-        @if($showImageInGrossPathology && $report && $report->image_path)
-            @php
-                $imagePath = storage_path('app/public/' . $report->image_path);
-                $imageBase64 = null;
-                $imageMimeType = 'image/jpeg';
-                if (file_exists($imagePath)) {
-                    $imageData = file_get_contents($imagePath);
-                    $imageBase64 = base64_encode($imageData);
-                    $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
-                }
-            @endphp
-            @if($imageBase64)
-            <div class="section-content" style="text-align: center; margin: 20px 0;">
-                <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
-                     alt="Gross Pathology Image" 
-                     style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
             </div>
+            @endif
+
+            <!-- Gross Pathology -->
+            @php
+                $showImageInGrossPathology = ($imagePlacement === 'gross_pathology' && isset($reportContent['image_placement']));
+            @endphp
+        <span class="section-title">GROSS EXAMINATION:</span>
+            @if($showImageInGrossPathology && $report && $report->image_path)
+                @php
+                    $imagePath = storage_path('app/public/' . $report->image_path);
+                    $imageBase64 = null;
+                    $imageMimeType = 'image/jpeg';
+                    if (file_exists($imagePath)) {
+                        $imageData = file_get_contents($imagePath);
+                        $imageBase64 = base64_encode($imageData);
+                        $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+                    }
+                @endphp
+                @if($imageBase64)
+                <div class="section-content" style="text-align: center; margin: 20px 0;">
+                    <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
+                         alt="Gross Pathology Image" 
+                         style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
+                </div>
             @else
             @php
                 $grossData = $reportContent['gross_pathology'] ?? '';
@@ -505,30 +505,30 @@
                 {{ $grossData ?: '---' }}
             @endif
         </div>
-        @endif
+            @endif
 
-        <!-- Microscopic Examination -->
-        @php
-            $showImageInMicroscopic = ($imagePlacement === 'microscopic_examination' && isset($reportContent['image_placement']));
-        @endphp
-        <span class="section-title">MICROSCOPIC EXAMINATION:</span>
-        @if($showImageInMicroscopic && $report && $report->image_path)
+            <!-- Microscopic Examination -->
             @php
-                $imagePath = storage_path('app/public/' . $report->image_path);
-                $imageBase64 = null;
-                $imageMimeType = 'image/jpeg';
-                if (file_exists($imagePath)) {
-                    $imageData = file_get_contents($imagePath);
-                    $imageBase64 = base64_encode($imageData);
-                    $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
-                }
+                $showImageInMicroscopic = ($imagePlacement === 'microscopic_examination' && isset($reportContent['image_placement']));
             @endphp
-            @if($imageBase64)
-            <div class="section-content" style="text-align: center; margin: 20px 0;">
-                <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
-                     alt="Microscopic Examination Image" 
-                     style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
-            </div>
+        <span class="section-title">MICROSCOPIC EXAMINATION:</span>
+            @if($showImageInMicroscopic && $report && $report->image_path)
+                @php
+                    $imagePath = storage_path('app/public/' . $report->image_path);
+                    $imageBase64 = null;
+                    $imageMimeType = 'image/jpeg';
+                    if (file_exists($imagePath)) {
+                        $imageData = file_get_contents($imagePath);
+                        $imageBase64 = base64_encode($imageData);
+                        $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+                    }
+                @endphp
+                @if($imageBase64)
+                <div class="section-content" style="text-align: center; margin: 20px 0;">
+                    <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
+                         alt="Microscopic Examination Image" 
+                         style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
+                </div>
             @else
             @php
                 $microscopicData = $reportContent['microscopic_examination'] ?? '';
@@ -558,30 +558,30 @@
                 {{ $microscopicData ?: '---' }}
             @endif
         </div>
-        @endif
+            @endif
 
-        <!-- Diagnosis -->
-        @php
-            $showImageInConclusion = ($imagePlacement === 'conclusion' && isset($reportContent['image_placement']));
-        @endphp
-        <span class="section-title">DIAGNOSIS:</span>
-        @if($showImageInConclusion && $report && $report->image_path)
+            <!-- Diagnosis -->
             @php
-                $imagePath = storage_path('app/public/' . $report->image_path);
-                $imageBase64 = null;
-                $imageMimeType = 'image/jpeg';
-                if (file_exists($imagePath)) {
-                    $imageData = file_get_contents($imagePath);
-                    $imageBase64 = base64_encode($imageData);
-                    $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
-                }
+                $showImageInConclusion = ($imagePlacement === 'conclusion' && isset($reportContent['image_placement']));
             @endphp
-            @if($imageBase64)
-            <div class="section-content" style="text-align: center; margin: 20px 0;">
-                <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
-                     alt="Conclusion Image" 
-                     style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
-            </div>
+        <span class="section-title">DIAGNOSIS:</span>
+            @if($showImageInConclusion && $report && $report->image_path)
+                @php
+                    $imagePath = storage_path('app/public/' . $report->image_path);
+                    $imageBase64 = null;
+                    $imageMimeType = 'image/jpeg';
+                    if (file_exists($imagePath)) {
+                        $imageData = file_get_contents($imagePath);
+                        $imageBase64 = base64_encode($imageData);
+                        $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+                    }
+                @endphp
+                @if($imageBase64)
+                <div class="section-content" style="text-align: center; margin: 20px 0;">
+                    <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
+                         alt="Conclusion Image" 
+                         style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
+                </div>
             @else
             @php
                 $conclusionData = $reportContent['conclusion'] ?? '';
@@ -611,9 +611,9 @@
                 {{ $conclusionData ?: '---' }}
             @endif
         </div>
-        @endif
+            @endif
 
-        <!-- Recommendations & Notes -->
+            <!-- Recommendations & Notes -->
         @php
             $recommendationsData = $reportContent['recommendations'] ?? '';
             $recommendationsLines = $parseStructuredData($recommendationsData);
@@ -629,43 +629,43 @@
             @endif
         </div>
 
-        <!-- Pathology Image (only if placement is end_of_report) -->
-        @php
-            $showImageAtEnd = ($imagePlacement === 'end_of_report' || !isset($reportContent['image_placement']));
-            $imagePath = null;
-            $imageBase64 = null;
-            $imageMimeType = 'image/jpeg';
-            if ($showImageAtEnd && $visit->labRequest && $visit->labRequest->reports && $visit->labRequest->reports->count() > 0) {
-                if (!isset($report)) {
-                    $report = $visit->labRequest->reports->where('status', 'completed')->sortByDesc('id')->first() 
-                             ?? $visit->labRequest->reports->sortByDesc('id')->first();
-                }
-                if ($report && $report->image_path) {
-                    $imagePath = storage_path('app/public/' . $report->image_path);
-                    if (file_exists($imagePath)) {
-                        $imageData = file_get_contents($imagePath);
-                        $imageBase64 = base64_encode($imageData);
-                        $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+            <!-- Pathology Image (only if placement is end_of_report) -->
+            @php
+                $showImageAtEnd = ($imagePlacement === 'end_of_report' || !isset($reportContent['image_placement']));
+                $imagePath = null;
+                $imageBase64 = null;
+                $imageMimeType = 'image/jpeg';
+                if ($showImageAtEnd && $visit->labRequest && $visit->labRequest->reports && $visit->labRequest->reports->count() > 0) {
+                    if (!isset($report)) {
+                        $report = $visit->labRequest->reports->where('status', 'completed')->sortByDesc('id')->first() 
+                                 ?? $visit->labRequest->reports->sortByDesc('id')->first();
+                    }
+                    if ($report && $report->image_path) {
+                        $imagePath = storage_path('app/public/' . $report->image_path);
+                        if (file_exists($imagePath)) {
+                            $imageData = file_get_contents($imagePath);
+                            $imageBase64 = base64_encode($imageData);
+                            $imageMimeType = $report->image_mime_type ?? 'image/jpeg';
+                        }
                     }
                 }
-            }
-        @endphp
-        
-        @if($showImageAtEnd && $imageBase64)
-        <div class="section-title" style="margin-top: 30px;">PATHOLOGY IMAGE:</div>
-        <div class="section-content" style="text-align: center; margin: 20px 0;">
-            <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
-                 alt="Pathology Image" 
-                 style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
-        </div>
-        @endif
+            @endphp
+            
+            @if($showImageAtEnd && $imageBase64)
+            <div class="section-title" style="margin-top: 30px;">PATHOLOGY IMAGE:</div>
+            <div class="section-content" style="text-align: center; margin: 20px 0;">
+                <img src="data:{{ $imageMimeType }};base64,{{ $imageBase64 }}" 
+                     alt="Pathology Image" 
+                     style="max-width: 100%; height: auto; max-height: 600px; border: 1px solid #ddd; border-radius: 4px;" />
+            </div>
+            @endif
 
-        <!-- Signature Section -->
-        <div class="signature-section">
-            <div class="signature-name">Dr. Yasser M. El Dowik</div>
-            <div class="signature-title">Ass. Professor of Histopathology</div>
-            <div class="signature-date">Date: {{ \Carbon\Carbon::now()->format('Y-m-d') }}</div>
-        </div>
+            <!-- Signature Section -->
+            <div class="signature-section">
+                <div class="signature-name">Dr. Yasser M. El Dowik</div>
+                <div class="signature-title">Ass. Professor of Histopathology</div>
+                <div class="signature-date">Date: {{ \Carbon\Carbon::now()->format('Y-m-d') }}</div>
+            </div>
         </div>
     </div>
 </body>

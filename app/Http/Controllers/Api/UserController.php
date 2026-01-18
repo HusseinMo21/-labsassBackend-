@@ -26,11 +26,16 @@ class UserController extends Controller
             $query->where('role', $request->role);
         }
 
+        if ($request->has('exclude_role')) {
+            $query->where('role', '!=', $request->exclude_role);
+        }
+
         if ($request->has('status')) {
             $query->where('is_active', $request->status === 'active');
         }
 
-        $users = $query->latest()->paginate(15);
+        $perPage = $request->has('per_page') ? (int)$request->per_page : 15;
+        $users = $query->latest()->paginate($perPage);
 
         // Transform the data to show real patient names for patient users
         $users->getCollection()->transform(function ($user) {
@@ -122,11 +127,18 @@ class UserController extends Controller
             ], 422);
         }
 
+        // Prevent role changes for patients - they must always remain patients
+        if ($user->role === 'patient' && $request->role !== 'patient') {
+            return response()->json([
+                'message' => 'Cannot change patient role. Patients must always remain as patients.',
+            ], 422);
+        }
+
         $data = [
             'name' => $request->name,
             'email' => $request->email,
             'phone' => $request->phone,
-            'role' => $request->role,
+            'role' => $user->role === 'patient' ? 'patient' : $request->role, // Force patient role if user is patient
             'is_active' => $request->is_active ?? $user->is_active,
         ];
 
