@@ -482,14 +482,17 @@ class ShiftController extends Controller
                 ], 403);
             }
 
-            // Get ALL closed shifts for this user (no limit to ensure all historical data is accessible)
+            // Get pagination parameters
+            $perPage = $request->get('per_page', 10); // Default 10 per page
+            
+            // Get paginated closed shifts for this user
             $shifts = Shift::where('staff_id', $user->id)
                 ->where('status', 'closed')
                 ->whereNotNull('closed_at')
                 ->orderBy('closed_at', 'desc')
-                ->get(); // Get all shifts, no pagination limit
+                ->paginate($perPage);
 
-            $shiftHistory = $shifts->map(function ($shift) {
+            $shiftHistory = $shifts->getCollection()->map(function ($shift) {
                 $paymentBreakdown = $shift->calculatePaymentBreakdown();
                 $expensesBreakdown = $shift->calculateExpensesBreakdown();
                 
@@ -522,15 +525,22 @@ class ShiftController extends Controller
 
             Log::info('Shift history retrieved', [
                 'user_id' => $user->id,
-                'total_shifts' => $shiftHistory->count(),
-                'oldest_shift' => $shifts->last() ? $shifts->last()->closed_at : null,
-                'newest_shift' => $shifts->first() ? $shifts->first()->closed_at : null,
+                'total_shifts' => $shifts->total(),
+                'current_page' => $shifts->currentPage(),
+                'per_page' => $perPage,
             ]);
 
             return response()->json([
                 'success' => true,
-                'data' => $shiftHistory,
-                'total' => $shiftHistory->count()
+                'data' => $shiftHistory->values(),
+                'pagination' => [
+                    'current_page' => $shifts->currentPage(),
+                    'last_page' => $shifts->lastPage(),
+                    'per_page' => $shifts->perPage(),
+                    'total' => $shifts->total(),
+                    'from' => $shifts->firstItem(),
+                    'to' => $shifts->lastItem(),
+                ]
             ]);
         } catch (\Exception $e) {
             Log::error('Error in getShiftHistory: ' . $e->getMessage(), [
