@@ -409,6 +409,93 @@ class LabRequestController extends Controller
     /**
      * Get comprehensive patient information by lab number.
      */
+    /**
+     * Safely parse age and calculate birth_date
+     * Handles formats like "25", "25M", "5D", "25M,5D", etc.
+     */
+    private function parseAgeAndCalculateBirthDate($ageInput)
+    {
+        if (empty($ageInput)) {
+            return null;
+        }
+
+        // If it's already a numeric value, use it directly
+        if (is_numeric($ageInput)) {
+            try {
+                return now()->subYears((int)$ageInput)->format('Y-m-d');
+            } catch (\Exception $e) {
+                return null;
+            }
+        }
+
+        // If it's a string format like "25M", "5D", "25M,5D", try to parse it
+        $ageInput = preg_replace('/\s+/', '', trim(strtoupper((string)$ageInput)));
+        
+        try {
+            $now = now();
+            $birthDate = $now->copy();
+            
+            // Check if input contains comma (combined format)
+            if (strpos($ageInput, ',') !== false) {
+                $components = explode(',', $ageInput);
+                $years = 0;
+                $months = 0;
+                $days = 0;
+                
+                foreach ($components as $component) {
+                    $component = trim($component);
+                    if (preg_match('/^(\d+)([MDY]?)$/', $component, $matches)) {
+                        $number = (int) $matches[1];
+                        $unit = $matches[2] ?? '';
+                        
+                        if ($unit === 'D') {
+                            $days += $number;
+                        } elseif ($unit === 'M') {
+                            $months += $number;
+                        } elseif ($unit === 'Y' || $unit === '') {
+                            $years += $number;
+                        }
+                    }
+                }
+                
+                if ($years > 0) {
+                    $birthDate->subYears($years);
+                }
+                if ($months > 0) {
+                    $birthDate->subMonths($months);
+                }
+                if ($days > 0) {
+                    $birthDate->subDays($days);
+                }
+                
+                return $birthDate->format('Y-m-d');
+            }
+            
+            // Single component format
+            if (preg_match('/^(\d+)([MDY]?)$/', $ageInput, $matches)) {
+                $number = (int) $matches[1];
+                $unit = $matches[2] ?? '';
+                
+                if ($unit === 'D') {
+                    $birthDate = $now->copy()->subDays($number);
+                } elseif ($unit === 'M') {
+                    $birthDate = $now->copy()->subMonths($number);
+                } else {
+                    $birthDate = $now->copy()->subYears($number);
+                }
+                
+                return $birthDate->format('Y-m-d');
+            }
+        } catch (\Exception $e) {
+            Log::warning('Error parsing age format', [
+                'age_input' => $ageInput,
+                'error' => $e->getMessage()
+            ]);
+        }
+        
+        return null;
+    }
+
     public function getPatientDetailsByLabNo(Request $request): JsonResponse
     {
         try {
@@ -683,12 +770,13 @@ class LabRequestController extends Controller
 
             // Create samples data from patient registration
             $samples = collect();
+            $fullLabNo = $labRequest->full_lab_no ?? $labRequest->lab_no ?? 'N/A';
             for ($i = 1; $i <= $numberOfSamples; $i++) {
                 $samples->push([
                     'id' => $i,
-                    'sample_type' => $sampleType,
-                    'sample_id' => $labRequest->full_lab_no . '-S' . $i,
-                    'sample_size' => $sampleSize,
+                    'sample_type' => $sampleType ?? 'Pathology',
+                    'sample_id' => $fullLabNo . '-S' . $i,
+                    'sample_size' => $sampleSize ?? 'صغيرة جدا',
                 ]);
             }
 
@@ -923,36 +1011,36 @@ class LabRequestController extends Controller
 
             $comprehensiveData = [
                 'lab_request' => [
-                    'id' => $labRequest->id,
-                    'lab_no' => $labRequest->lab_no,
-                    'full_lab_no' => $labRequest->full_lab_no,
-                    'status' => $labRequest->status,
-                    'suffix' => $labRequest->suffix,
-                    'created_at' => $labRequest->created_at,
-                    'updated_at' => $labRequest->updated_at,
-                    'barcode_url' => $labRequest->barcode_url,
-                    'qr_code_url' => $labRequest->qr_code_url,
+                    'id' => $labRequest->id ?? null,
+                    'lab_no' => $labRequest->lab_no ?? null,
+                    'full_lab_no' => $labRequest->full_lab_no ?? $labRequest->lab_no ?? null,
+                    'status' => $labRequest->status ?? null,
+                    'suffix' => $labRequest->suffix ?? null,
+                    'created_at' => $labRequest->created_at ? (is_string($labRequest->created_at) ? $labRequest->created_at : $labRequest->created_at->toDateTimeString()) : null,
+                    'updated_at' => $labRequest->updated_at ? (is_string($labRequest->updated_at) ? $labRequest->updated_at : $labRequest->updated_at->toDateTimeString()) : null,
+                    'barcode_url' => $labRequest->barcode_url ?? null,
+                    'qr_code_url' => $labRequest->qr_code_url ?? null,
                 ],
                 'patient' => [
-                    'id' => $patient->id,
-                    'name' => $patient->name,
-                    'gender' => $patient->gender,
-                    'birth_date' => $patient->age ? now()->subYears($patient->age)->format('Y-m-d') : null,
-                    'age' => $patient->age,
-                    'phone' => $patient->phone,
-                    'whatsapp_number' => $patient->whatsapp_number,
-                    'address' => $patient->address,
-                    'emergency_contact' => $patient->emergency_contact,
-                    'emergency_phone' => $patient->emergency_phone,
-                    'medical_history' => $patient->medical_history,
-                    'allergies' => $patient->allergies,
-                    'national_id' => $patient->national_id,
-                    'insurance_provider' => $patient->insurance_provider,
-                    'insurance_number' => $patient->insurance_number,
-                    'has_insurance' => $patient->has_insurance,
-                    'insurance_coverage' => $patient->insurance_coverage,
-                    'billing_address' => $patient->billing_address,
-                    'emergency_relationship' => $patient->emergency_relationship,
+                    'id' => $patient->id ?? null,
+                    'name' => $patient->name ?? null,
+                    'gender' => $patient->gender ?? null,
+                    'birth_date' => $this->parseAgeAndCalculateBirthDate($patient->age ?? null) ?? ($patient->birth_date ? (is_string($patient->birth_date) ? $patient->birth_date : $patient->birth_date->format('Y-m-d')) : null),
+                    'age' => $patient->age ?? null,
+                    'phone' => $patient->phone ?? null,
+                    'whatsapp_number' => $patient->whatsapp_number ?? null,
+                    'address' => $patient->address ?? null,
+                    'emergency_contact' => $patient->emergency_contact ?? null,
+                    'emergency_phone' => $patient->emergency_phone ?? null,
+                    'medical_history' => $patient->medical_history ?? null,
+                    'allergies' => $patient->allergies ?? null,
+                    'national_id' => $patient->national_id ?? null,
+                    'insurance_provider' => $patient->insurance_provider ?? null,
+                    'insurance_number' => $patient->insurance_number ?? null,
+                    'has_insurance' => $patient->has_insurance ?? false,
+                    'insurance_coverage' => $patient->insurance_coverage ?? null,
+                    'billing_address' => $patient->billing_address ?? null,
+                    'emergency_relationship' => $patient->emergency_relationship ?? null,
                 ],
                 'doctor' => ($patient->doctor ?? null) ? [
                     'id' => is_object($patient->doctor) ? ($patient->doctor->id ?? null) : null,
@@ -964,25 +1052,25 @@ class LabRequestController extends Controller
                     'id' => is_object($patient->organization) ? ($patient->organization->id ?? null) : null,
                     'name' => is_object($patient->organization) ? ($patient->organization->name ?? null) : $patient->organization,
                 ] : null),
-                'samples' => $samples,
-                'all_tests' => $allTests,
+                'samples' => $samples->toArray(),
+                'all_tests' => $allTests->toArray(),
                 'payment_history' => $paymentHistory,
                 'reports' => $reports->map(function($report) {
                     return [
-                        'id' => $report->id,
-                        'title' => $report->title,
-                        'content' => $report->content,
-                        'status' => $report->status,
-                        'generated_at' => $report->generated_at,
+                        'id' => $report->id ?? null,
+                        'title' => $report->title ?? null,
+                        'content' => $report->content ?? null,
+                        'status' => $report->status ?? null,
+                        'generated_at' => $report->generated_at ?? null,
                     ];
-                }),
+                })->toArray(),
                 'visits_summary' => [
-                    'total_visits' => $visits->count(),
-                    'total_tests' => $allTests->count(),
-                    'total_amount' => $totalAmount,
-                    'total_paid' => $paidAmount,
-                    'total_balance' => $remainingAmount,
-                    'last_visit' => $visits->first() ? $visits->first()->visit_date : null,
+                    'total_visits' => $visits->count() ?? 0,
+                    'total_tests' => $allTests->count() ?? 0,
+                    'total_amount' => $totalAmount ?? 0,
+                    'total_paid' => $paidAmount ?? 0,
+                    'total_balance' => $remainingAmount ?? 0,
+                    'last_visit' => ($visits->first() && isset($visits->first()->visit_date)) ? $visits->first()->visit_date : null,
                 ]
             ];
 
