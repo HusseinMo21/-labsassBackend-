@@ -701,7 +701,7 @@ class LabRequestController extends Controller
             }
 
             // Get payment history from visit metadata
-            $paymentHistory = collect();
+            $paymentHistory = [];
             
             // Get financial data from visit metadata (from patient registration)
             // Variables already initialized above
@@ -954,15 +954,15 @@ class LabRequestController extends Controller
                     'billing_address' => $patient->billing_address,
                     'emergency_relationship' => $patient->emergency_relationship,
                 ],
-                'doctor' => $patient->doctor ? [
-                    'id' => is_object($patient->doctor) ? $patient->doctor->id : null,
-                    'name' => is_object($patient->doctor) ? $patient->doctor->name : $patient->doctor,
+                'doctor' => ($patient->doctor ?? null) ? [
+                    'id' => is_object($patient->doctor) ? ($patient->doctor->id ?? null) : null,
+                    'name' => is_object($patient->doctor) ? ($patient->doctor->name ?? null) : $patient->doctor,
                 ] : null,
                 'organization' => $organization ? [
                     'name' => $organization,
-                ] : ($patient->organization ? [
-                    'id' => is_object($patient->organization) ? $patient->organization->id : null,
-                    'name' => is_object($patient->organization) ? $patient->organization->name : $patient->organization,
+                ] : (($patient->organization ?? null) ? [
+                    'id' => is_object($patient->organization) ? ($patient->organization->id ?? null) : null,
+                    'name' => is_object($patient->organization) ? ($patient->organization->name ?? null) : $patient->organization,
                 ] : null),
                 'samples' => $samples,
                 'all_tests' => $allTests,
@@ -988,8 +988,17 @@ class LabRequestController extends Controller
 
             return response()->json($comprehensiveData);
         } catch (\Exception $e) {
-            Log::error('Failed to get patient details by lab number: ' . $e->getMessage());
-            return response()->json(['error' => 'Failed to get patient details'], 500);
+            Log::error('Failed to get patient details by lab number', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'lab_no' => $request->query('lab_no')
+            ]);
+            return response()->json([
+                'error' => 'Failed to get patient details',
+                'message' => $e->getMessage()
+            ], 500);
         }
     }
 }
