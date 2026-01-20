@@ -347,6 +347,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
     
     // Report data saving
     Route::post('/visits/{visitId}/report', [ReportController::class, 'saveReport']);
+    
+    // Report settings (margins/padding)
+    Route::get('/visits/{visitId}/report-settings', [ReportController::class, 'getReportSettings']);
+    Route::post('/visits/{visitId}/report-settings', [ReportController::class, 'saveReportSettings']);
+    Route::post('/visits/{visitId}/report-settings/defaults', [ReportController::class, 'applyDefaultMargins']);
+    Route::post('/visits/{visitId}/report-settings/fit-to-one-page', [ReportController::class, 'fitToOnePage']);
 
 
 

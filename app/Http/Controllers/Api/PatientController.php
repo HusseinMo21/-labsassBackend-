@@ -1750,12 +1750,23 @@ class PatientController extends Controller
                 }
             }
             
+            // Get report settings or use defaults
+            $reportSettings = \App\Models\ReportSetting::where('visit_id', $visit->id)->first();
+            $settings = $reportSettings ? [
+                'top_margin' => $reportSettings->top_margin,
+                'bottom_margin' => $reportSettings->bottom_margin,
+                'left_margin' => $reportSettings->left_margin,
+                'right_margin' => $reportSettings->right_margin,
+                'content_padding' => $reportSettings->content_padding,
+            ] : \App\Models\ReportSetting::getDefaults();
+            
             // Use the same template as generateReportWithHeader
             $html = view('reports.pathology_report_with_header', [
                 'visit' => $visit,
                 'backgroundImage' => $backgroundImage,
                 'attendance_date' => $attendanceDate,
                 'delivery_date' => $deliveryDate,
+                'settings' => $settings,
             ])->render();
             
             // Set background image on all pages using MPDF's page background feature

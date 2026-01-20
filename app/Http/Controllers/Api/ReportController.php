@@ -10,6 +10,7 @@ use App\Models\Invoice;
 use App\Models\InventoryItem;
 use App\Models\Expense;
 use App\Models\Report;
+use App\Models\ReportSetting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -705,11 +706,22 @@ class ReportController extends Controller
                 }
             }
             
+            // Get report settings or use defaults
+            $reportSettings = ReportSetting::where('visit_id', $visitId)->first();
+            $settings = $reportSettings ? [
+                'top_margin' => $reportSettings->top_margin,
+                'bottom_margin' => $reportSettings->bottom_margin,
+                'left_margin' => $reportSettings->left_margin,
+                'right_margin' => $reportSettings->right_margin,
+                'content_padding' => $reportSettings->content_padding,
+            ] : ReportSetting::getDefaults();
+            
             $html = view('reports.pathology_report_with_header', [
                 'visit' => $visit,
                 'backgroundImage' => $backgroundImage,
                 'attendance_date' => $attendanceDate,
                 'delivery_date' => $deliveryDate,
+                'settings' => $settings,
             ])->render();
             
             // Set background image on all pages using MPDF's page background feature
@@ -1130,5 +1142,141 @@ class ReportController extends Controller
             ]);
             // Don't throw exception - image deletion failure shouldn't break PDF generation
         }
+    }
+
+    /**
+     * Get report settings for a visit
+     */
+    public function getReportSettings($visitId)
+    {
+        $visit = Visit::findOrFail($visitId);
+        
+        $settings = ReportSetting::where('visit_id', $visitId)->first();
+        
+        if (!$settings) {
+            // Return defaults if no settings exist
+            return response()->json([
+                'settings' => ReportSetting::getDefaults(),
+                'is_default' => true,
+            ]);
+        }
+        
+        return response()->json([
+            'settings' => [
+                'top_margin' => $settings->top_margin,
+                'bottom_margin' => $settings->bottom_margin,
+                'left_margin' => $settings->left_margin,
+                'right_margin' => $settings->right_margin,
+                'content_padding' => $settings->content_padding,
+            ],
+            'is_default' => false,
+        ]);
+    }
+
+    /**
+     * Save report settings for a visit
+     */
+    public function saveReportSettings(Request $request, $visitId)
+    {
+        $visit = Visit::findOrFail($visitId);
+        
+        $request->validate([
+            'top_margin' => 'nullable|integer|min:5|max:40',
+            'bottom_margin' => 'nullable|integer|min:5|max:40',
+            'left_margin' => 'nullable|integer|min:5|max:40',
+            'right_margin' => 'nullable|integer|min:5|max:40',
+            'content_padding' => 'nullable|integer|min:5|max:40',
+        ]);
+        
+        // Clamp values to ensure they're within bounds
+        $topMargin = $request->has('top_margin') 
+            ? ReportSetting::clamp($request->top_margin) 
+            : ReportSetting::DEFAULT_TOP_MARGIN;
+        $bottomMargin = $request->has('bottom_margin') 
+            ? ReportSetting::clamp($request->bottom_margin) 
+            : ReportSetting::DEFAULT_BOTTOM_MARGIN;
+        $leftMargin = $request->has('left_margin') 
+            ? ReportSetting::clamp($request->left_margin) 
+            : ReportSetting::DEFAULT_LEFT_MARGIN;
+        $rightMargin = $request->has('right_margin') 
+            ? ReportSetting::clamp($request->right_margin) 
+            : ReportSetting::DEFAULT_RIGHT_MARGIN;
+        $contentPadding = $request->has('content_padding') 
+            ? ReportSetting::clamp($request->content_padding) 
+            : ReportSetting::DEFAULT_CONTENT_PADDING;
+        
+        $settings = ReportSetting::updateOrCreate(
+            ['visit_id' => $visitId],
+            [
+                'top_margin' => $topMargin,
+                'bottom_margin' => $bottomMargin,
+                'left_margin' => $leftMargin,
+                'right_margin' => $rightMargin,
+                'content_padding' => $contentPadding,
+            ]
+        );
+        
+        return response()->json([
+            'message' => 'Report settings saved successfully',
+            'settings' => $settings,
+        ]);
+    }
+
+    /**
+     * Apply default margins
+     */
+    public function applyDefaultMargins($visitId)
+    {
+        $visit = Visit::findOrFail($visitId);
+        
+        $defaults = ReportSetting::getDefaults();
+        
+        $settings = ReportSetting::updateOrCreate(
+            ['visit_id' => $visitId],
+            $defaults
+        );
+        
+        return response()->json([
+            'message' => 'Default margins applied successfully',
+            'settings' => $settings,
+        ]);
+    }
+
+    /**
+     * Fit content to one page (iteratively reduce margins)
+     */
+    public function fitToOnePage(Request $request, $visitId)
+    {
+        $visit = Visit::findOrFail($visitId);
+        
+        $settings = ReportSetting::where('visit_id', $visitId)->first();
+        
+        if (!$settings) {
+            $settings = ReportSetting::create([
+                'visit_id' => $visitId,
+                ...ReportSetting::getDefaults(),
+            ]);
+        }
+        
+        // Start with current settings or defaults
+        $topMargin = $settings->top_margin;
+        $bottomMargin = $settings->bottom_margin;
+        $contentPadding = $settings->content_padding;
+        
+        // Reduce margins/padding step by step
+        // Try reducing bottom margin first (most effective for fitting on one page)
+        $newBottomMargin = max(ReportSetting::MIN_MARGIN, $bottomMargin - 10);
+        $newContentPadding = max(ReportSetting::MIN_MARGIN, $contentPadding - 5);
+        
+        $settings->update([
+            'bottom_margin' => $newBottomMargin,
+            'content_padding' => $newContentPadding,
+        ]);
+        
+        return response()->json([
+            'message' => 'Margins adjusted to fit on one page',
+            'settings' => $settings,
+            'suggestion' => 'If content still spans multiple pages, try reducing further or adjust manually.',
+        ]);
     }
 } 

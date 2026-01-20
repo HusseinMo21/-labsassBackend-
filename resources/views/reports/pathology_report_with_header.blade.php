@@ -9,8 +9,8 @@
     <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400..800;1,400..800&display=swap" rel="stylesheet">
     <style>
         @page {
-            margin-top: 180px;
-            margin-bottom: 120px;
+            margin-top: {{ ($settings['top_margin'] ?? 60) + 120 }}px;
+            margin-bottom: {{ $settings['bottom_margin'] ?? 120 }}px;
             margin-left: 0;
             margin-right: 0;
             @if(!empty($backgroundImage))
@@ -49,8 +49,8 @@
         .content-container {
             position: relative;
             margin: 0;
-            padding: 0 40px;
-            padding-top: 60px;
+            padding: 0 {{ $settings['right_margin'] ?? 40 }}px 0 {{ $settings['left_margin'] ?? 40 }}px;
+            padding-top: {{ $settings['top_margin'] ?? 60 }}px;
             background: transparent;
             border: none;
             border-radius: 5px;
@@ -138,7 +138,7 @@
         .section-title {
             font-weight: bold;
             font-size: 18px;
-            margin: 8px 0 4px 0;
+            margin: {{ $settings['content_padding'] ?? 10 }}px 0 4px 0;
             color: #333;
             text-decoration: none;
             padding: 8px 12px;
@@ -153,7 +153,7 @@
         }
         
         .section-content {
-            margin-bottom: 8px;
+            margin-bottom: {{ $settings['content_padding'] ?? 10 }}px;
             padding: 8px 12px;
             border: 1px solid #ddd;
             background-color: rgba(255, 255, 255, 0.95);
@@ -200,7 +200,7 @@
         
         /* Signature Section */
         .signature-section {
-            margin-top: 8px;
+            margin-top: {{ $settings['content_padding'] ?? 10 }}px;
             text-align: right;
             padding: 6px;
             background-color: rgba(255, 255, 255, 0.9);
