@@ -189,10 +189,10 @@ class VisitController extends Controller
         $query = Visit::select([
             'id', 'visit_number', 'visit_date', 'status', 'created_at', 'updated_at',
             'patient_id', 'lab_request_id', 'total_amount', 'final_amount', 'upfront_payment', 'metadata',
-            'checked_by_doctors', 'last_checked_at', 'expected_delivery_date'
+            'checked_by_doctors', 'last_checked_at', 'expected_delivery_date', 'referred_doctor'
         ])
         ->with([
-            'patient:id,name,phone,gender,birth_date,age,amount_paid,lab,delivery_date',
+            'patient:id,name,phone,gender,birth_date,age,amount_paid,lab,delivery_date,doctor_id,organization_id,organization',
             'visitTests:id,visit_id,lab_test_id,status,result_value,result_status,result_notes,price',
             'visitTests.labTest:id,name,code,reference_range',
             'labRequest:id,lab_no,suffix',
@@ -438,6 +438,7 @@ class VisitController extends Controller
                 'last_checked_at' => $visit->last_checked_at,
                 'expected_delivery_date' => $visit->expected_delivery_date,
                 'delivery_date' => $deliveryDate,
+                'referred_doctor' => $visit->referred_doctor,
                 'metadata' => $visit->metadata,
             ];
         });
