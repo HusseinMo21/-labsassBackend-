@@ -694,7 +694,9 @@ class EnhancedReportApiController extends Controller
             'exclude_visit_id' => 'nullable|integer|exists:visits,id',
         ]);
 
-        $searchTerm = $request->search_term;
+        // Trim and normalize search term for case-insensitive search
+        $searchTerm = trim($request->search_term);
+        $searchTermLower = strtolower($searchTerm);
         $fields = explode(',', $request->fields);
         $perPage = $request->per_page ?? 15;
         $excludeVisitId = $request->exclude_visit_id;
@@ -730,13 +732,15 @@ class EnhancedReportApiController extends Controller
         }
         // Admins can see all reports
 
-        // Build search conditions for selected fields
-        $query->where(function ($q) use ($fields, $fieldMapping, $searchTerm) {
+        // Build search conditions for selected fields (case-insensitive)
+        $query->where(function ($q) use ($fields, $fieldMapping, $searchTermLower) {
             foreach ($fields as $field) {
                 $field = trim($field);
                 if (isset($fieldMapping[$field])) {
                     $dbField = $fieldMapping[$field];
-                    $q->orWhere($dbField, 'like', '%' . $searchTerm . '%');
+                    // Use LOWER() for case-insensitive search
+                    // Column name is safe as it's validated through fieldMapping
+                    $q->orWhereRaw('LOWER(`' . $dbField . '`) LIKE ?', ['%' . $searchTermLower . '%']);
                 }
             }
         });
@@ -747,7 +751,7 @@ class EnhancedReportApiController extends Controller
             ->paginate($perPage);
 
         // Transform results to include matched fields
-        $transformedData = $reports->getCollection()->map(function ($report) use ($fields, $fieldMapping, $searchTerm) {
+        $transformedData = $reports->getCollection()->map(function ($report) use ($fields, $fieldMapping, $searchTermLower) {
             $matchedFields = [];
             $result = [
                 'id' => $report->id,
@@ -758,14 +762,14 @@ class EnhancedReportApiController extends Controller
                 'visit_id' => $report->labRequest?->visit?->id ?? null,
             ];
 
-            // Check which fields matched
+            // Check which fields matched (case-insensitive)
             foreach ($fields as $field) {
                 $field = trim($field);
                 if (isset($fieldMapping[$field])) {
                     $dbField = $fieldMapping[$field];
                     $fieldValue = $report->$dbField;
                     
-                    if ($fieldValue && stripos($fieldValue, $searchTerm) !== false) {
+                    if ($fieldValue && stripos($fieldValue, $searchTermLower) !== false) {
                         $matchedFields[] = $field;
                         // Include the field data in result
                         $result[$field] = $fieldValue;
