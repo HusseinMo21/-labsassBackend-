@@ -691,11 +691,13 @@ class EnhancedReportApiController extends Controller
             'fields' => 'required|string',
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:100',
+            'exclude_visit_id' => 'nullable|integer|exists:visits,id',
         ]);
 
         $searchTerm = $request->search_term;
         $fields = explode(',', $request->fields);
         $perPage = $request->per_page ?? 15;
+        $excludeVisitId = $request->exclude_visit_id;
 
         // Field mapping: frontend field names to database column names
         $fieldMapping = [
@@ -709,6 +711,15 @@ class EnhancedReportApiController extends Controller
 
         // Build query
         $query = EnhancedReport::with(['patient', 'labRequest.visit']);
+
+        // Exclude current visit if specified
+        if ($excludeVisitId) {
+            $query->where(function ($q) use ($excludeVisitId) {
+                $q->whereDoesntHave('labRequest.visit', function ($subQ) use ($excludeVisitId) {
+                    $subQ->where('id', $excludeVisitId);
+                })->orWhereNull('lab_request_id'); // Include reports without lab_request_id
+            });
+        }
 
         // Apply role-based filtering
         $user = Auth::user();
