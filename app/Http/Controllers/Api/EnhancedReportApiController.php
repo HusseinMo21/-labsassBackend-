@@ -696,7 +696,20 @@ class EnhancedReportApiController extends Controller
 
         // Trim and normalize search term for case-insensitive search
         $searchTerm = trim($request->search_term);
+        // Normalize whitespace: replace multiple spaces/newlines/tabs with single space
+        $searchTerm = preg_replace('/\s+/', ' ', $searchTerm);
         $searchTermLower = strtolower($searchTerm);
+        
+        // Split into words, escape each word for LIKE, then join with % wildcard
+        // This allows "anek ab3bs" to match "anek  ab3bs" or "anek\nab3bs" etc.
+        $words = explode(' ', $searchTermLower);
+        $escapedWords = array_map(function($word) {
+            // Escape special LIKE characters (% and _) in each word
+            return str_replace(['%', '_'], ['\%', '\_'], $word);
+        }, $words);
+        // Join words with % to allow flexible spacing between them
+        $searchTermPattern = implode('%', $escapedWords);
+        
         $fields = explode(',', $request->fields);
         $perPage = $request->per_page ?? 15;
         $excludeVisitId = $request->exclude_visit_id;
@@ -723,35 +736,90 @@ class EnhancedReportApiController extends Controller
             });
         }
 
-        // Apply role-based filtering
-        $user = Auth::user();
-        if ($user->role === 'staff') {
-            $query->whereIn('status', ['approved', 'printed', 'delivered', 'completed']);
-        } elseif ($user->role === 'doctor') {
-            $query->whereIn('status', ['draft', 'under_review', 'approved', 'printed', 'delivered']);
-        }
-        // Admins can see all reports
+        // Note: No role-based filtering for search - search ALL reports regardless of status
+        // This allows users to find any report that matches their search term
 
         // Build search conditions for selected fields (case-insensitive)
-        $query->where(function ($q) use ($fields, $fieldMapping, $searchTermLower) {
+        // For multi-word searches, search for the full pattern (words with flexible spacing)
+        $query->where(function ($q) use ($fields, $fieldMapping, $searchTermPattern) {
             foreach ($fields as $field) {
                 $field = trim($field);
                 if (isset($fieldMapping[$field])) {
                     $dbField = $fieldMapping[$field];
-                    // Use LOWER() for case-insensitive search
-                    // Column name is safe as it's validated through fieldMapping
-                    $q->orWhereRaw('LOWER(`' . $dbField . '`) LIKE ?', ['%' . $searchTermLower . '%']);
+                    // Use LOWER() and normalize whitespace for case-insensitive search
+                    // Replace newlines, carriage returns, tabs with spaces
+                    // Search pattern has % between words to allow flexible spacing
+                    $q->orWhereRaw(
+                        'LOWER(REPLACE(REPLACE(REPLACE(`' . $dbField . '`, CHAR(10), \' \'), CHAR(13), \' \'), CHAR(9), \' \')) LIKE ?',
+                        ['%' . $searchTermPattern . '%']
+                    );
                 }
             }
         });
+        
+        // Add logging for debugging
+        \Log::info('Report search', [
+            'search_term_original' => $request->search_term,
+            'search_term_normalized' => $searchTermLower,
+            'search_pattern' => $searchTermPattern,
+            'fields' => $fields,
+            'exclude_visit_id' => $excludeVisitId,
+        ]);
 
-        // Execute query with pagination
-        $reports = $query->orderBy('report_date', 'desc')
+        // Execute EnhancedReports query with pagination
+        $enhancedReports = $query->orderBy('report_date', 'desc')
             ->orderBy('created_at', 'desc')
-            ->paginate($perPage);
+            ->get();
+        
+        // Also search in regular Reports table (JSON content)
+        $reportQuery = \App\Models\Report::with(['labRequest.visit', 'labRequest.patient'])
+            ->whereNotNull('content')
+            ->where('content', 'like', '{%'); // Only JSON content
+        
+        // Exclude current visit if specified
+        if ($excludeVisitId) {
+            $reportQuery->whereDoesntHave('labRequest.visit', function ($subQ) use ($excludeVisitId) {
+                $subQ->where('id', $excludeVisitId);
+            })->orWhereNull('lab_request_id');
+        }
+        
+        // Search in JSON content fields
+        $reportFieldMapping = [
+            'clinical_data' => 'clinical_data',
+            'nature_of_specimen' => 'nature_of_specimen',
+            'gross_pathology' => 'gross_pathology',
+            'microscopic_examination' => 'microscopic_examination',
+            'conclusion' => 'conclusion',
+            'recommendations' => 'recommendations',
+        ];
+        
+        $reportQuery->where(function ($q) use ($fields, $reportFieldMapping, $searchTermPattern) {
+            foreach ($fields as $field) {
+                $field = trim($field);
+                if (isset($reportFieldMapping[$field])) {
+                    $jsonKey = $reportFieldMapping[$field];
+                    // Search in JSON content using JSON_EXTRACT and LIKE
+                    $q->orWhereRaw(
+                        'LOWER(REPLACE(REPLACE(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(`content`, ?)), CHAR(10), \' \'), CHAR(13), \' \'), CHAR(9), \' \')) LIKE ?',
+                        ['$."' . $jsonKey . '"', '%' . $searchTermPattern . '%']
+                    );
+                }
+            }
+        });
+        
+        $regularReports = $reportQuery->orderBy('generated_at', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->get();
+        
+        // Log results count for debugging
+        \Log::info('Report search results', [
+            'enhanced_reports_count' => $enhancedReports->count(),
+            'regular_reports_count' => $regularReports->count(),
+            'total_results' => $enhancedReports->count() + $regularReports->count(),
+        ]);
 
-        // Transform results to include matched fields
-        $transformedData = $reports->getCollection()->map(function ($report) use ($fields, $fieldMapping, $searchTermLower) {
+        // Transform EnhancedReport results
+        $enhancedReportData = $enhancedReports->map(function ($report) use ($fields, $fieldMapping, $searchTermLower) {
             $matchedFields = [];
             $result = [
                 'id' => $report->id,
@@ -762,17 +830,23 @@ class EnhancedReportApiController extends Controller
                 'visit_id' => $report->labRequest?->visit?->id ?? null,
             ];
 
-            // Check which fields matched (case-insensitive)
+            // Check which fields matched (case-insensitive, with normalized whitespace)
             foreach ($fields as $field) {
                 $field = trim($field);
                 if (isset($fieldMapping[$field])) {
                     $dbField = $fieldMapping[$field];
                     $fieldValue = $report->$dbField;
                     
-                    if ($fieldValue && stripos($fieldValue, $searchTermLower) !== false) {
-                        $matchedFields[] = $field;
-                        // Include the field data in result
-                        $result[$field] = $fieldValue;
+                    if ($fieldValue) {
+                        // Normalize whitespace in field value for matching
+                        $normalizedValue = preg_replace('/\s+/', ' ', strtolower($fieldValue));
+                        $normalizedSearch = preg_replace('/\s+/', ' ', $searchTermLower);
+                        
+                        if (strpos($normalizedValue, $normalizedSearch) !== false) {
+                            $matchedFields[] = $field;
+                            // Include the field data in result
+                            $result[$field] = $fieldValue;
+                        }
                     }
                 }
             }
@@ -780,13 +854,70 @@ class EnhancedReportApiController extends Controller
             $result['matched_fields'] = $matchedFields;
             return $result;
         });
+        
+        // Transform regular Report results
+        $regularReportData = $regularReports->map(function ($report) use ($fields, $reportFieldMapping, $searchTermLower) {
+            $matchedFields = [];
+            
+            // Parse JSON content
+            $content = [];
+            if (!empty($report->content)) {
+                $decoded = json_decode($report->content, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                    $content = $decoded;
+                }
+            }
+            
+            $result = [
+                'id' => $report->id,
+                'patient_id' => $report->labRequest?->patient_id ?? null,
+                'patient_name' => $report->labRequest?->patient?->name ?? 'N/A',
+                'lab_no' => $report->labRequest?->full_lab_no ?? 'N/A',
+                'report_date' => $report->generated_at?->format('Y-m-d') ?? null,
+                'visit_id' => $report->labRequest?->visit?->id ?? null,
+            ];
+            
+            // Check which fields matched
+            foreach ($fields as $field) {
+                $field = trim($field);
+                if (isset($reportFieldMapping[$field])) {
+                    $jsonKey = $reportFieldMapping[$field];
+                    $fieldValue = $content[$jsonKey] ?? null;
+                    
+                    if ($fieldValue) {
+                        $normalizedValue = preg_replace('/\s+/', ' ', strtolower($fieldValue));
+                        $normalizedSearch = preg_replace('/\s+/', ' ', $searchTermLower);
+                        
+                        if (strpos($normalizedValue, $normalizedSearch) !== false) {
+                            $matchedFields[] = $field;
+                            $result[$field] = $fieldValue;
+                        }
+                    }
+                }
+            }
+            
+            $result['matched_fields'] = $matchedFields;
+            return $result;
+        });
+        
+        // Combine results - convert both to arrays first
+        $enhancedArray = $enhancedReportData->toArray();
+        $regularArray = $regularReportData->toArray();
+        $allResults = array_merge($enhancedArray, $regularArray);
+        
+        // Manual pagination
+        $totalResults = count($allResults);
+        $currentPage = (int)($request->page ?? 1);
+        $offset = ($currentPage - 1) * $perPage;
+        $paginatedResults = array_slice($allResults, $offset, $perPage);
+        $totalPages = $totalResults > 0 ? (int)ceil($totalResults / $perPage) : 1;
 
         return response()->json([
-            'data' => $transformedData,
-            'current_page' => $reports->currentPage(),
-            'last_page' => $reports->lastPage(),
-            'per_page' => $reports->perPage(),
-            'total' => $reports->total(),
+            'data' => $paginatedResults,
+            'current_page' => $currentPage,
+            'last_page' => $totalPages,
+            'per_page' => $perPage,
+            'total' => $totalResults,
         ]);
     }
 }
