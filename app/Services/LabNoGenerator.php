@@ -9,20 +9,22 @@ use Illuminate\Support\Facades\Log;
 class LabNoGenerator
 {
     /**
-     * Generate a new lab number for the given year.
+     * Generate a new lab number for the given year and lab.
      *
      * @param int|null $year The year for the lab number (defaults to current year)
      * @param string|null $suffix Optional suffix to append
+     * @param int|null $labId The lab ID (defaults to current lab from auth/container)
      * @return array Array containing 'base' and 'full' lab numbers
      */
-    public function generate(?int $year = null, ?string $suffix = null): array
+    public function generate(?int $year = null, ?string $suffix = null, ?int $labId = null): array
     {
         $year = $year ?? now()->year;
-        
+        $labId = $labId ?? auth()->user()?->lab_id ?? (app()->bound('current_lab_id') ? app('current_lab_id') : 1);
+
         try {
-            return DB::transaction(function () use ($year, $suffix) {
+            return DB::transaction(function () use ($year, $suffix, $labId) {
                 // Get next sequence number with row-level locking
-                $sequence = LabSequence::getNextSequence($year);
+                $sequence = LabSequence::getNextSequence($year, $labId);
                 
                 // Format the base lab number (sequence-year format to match existing data)
                 $baseLabNo = sprintf('%d-%d', $sequence, $year);
@@ -64,13 +66,13 @@ class LabNoGenerator
      * @param int|null $year The year for the lab number
      * @return array Array containing 'base' and 'full' lab numbers
      */
-    public function generateWithSuffix(string $suffix, ?int $year = null): array
+    public function generateWithSuffix(string $suffix, ?int $year = null, ?int $labId = null): array
     {
         if (!in_array($suffix, ['m', 'h'])) {
             throw new \InvalidArgumentException('Suffix must be either "m" or "h"');
         }
-        
-        return $this->generate($year, $suffix);
+
+        return $this->generate($year, $suffix, $labId);
     }
 
     /**
@@ -124,8 +126,8 @@ class LabNoGenerator
      * @param int $year The year to check
      * @return int The next sequence number
      */
-    public function getNextSequenceForYear(int $year): int
+    public function getNextSequenceForYear(int $year, ?int $labId = null): int
     {
-        return LabSequence::getNextSequence($year);
+        return LabSequence::getNextSequence($year, $labId);
     }
 }

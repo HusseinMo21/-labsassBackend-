@@ -130,7 +130,9 @@ class LabRequestController extends Controller
                 $labNoData = $this->labNoGenerator->generate();
                 
                 // Create lab request
+                $labId = $this->currentLabId() ?? 1;
                 $labRequest = LabRequest::create([
+                    'lab_id' => $labId,
                     'patient_id' => $request->patient_id,
                     'lab_no' => $labNoData['base'],
                     'status' => 'pending',
@@ -143,7 +145,7 @@ class LabRequestController extends Controller
                 }
 
                 // Generate barcode and QR code
-                $this->barcodeGenerator->generateForLabRequest($labRequest->full_lab_no);
+                $this->barcodeGenerator->generateForLabRequest($labRequest->full_lab_no, $labRequest->lab_id);
 
                 // Load relationships
                 $labRequest->load(['patient', 'samples', 'report', 'invoice']);
@@ -294,11 +296,11 @@ class LabRequestController extends Controller
 
             // If suffix changed, regenerate barcode and QR code
             if ($oldFullLabNo !== $newFullLabNo) {
+                $labId = $labRequest->lab_id;
                 // Delete old files
-                $this->barcodeGenerator->deleteForLabRequest($oldFullLabNo);
-                
+                $this->barcodeGenerator->deleteForLabRequest($oldFullLabNo, $labId);
                 // Generate new files
-                $this->barcodeGenerator->generateForLabRequest($newFullLabNo);
+                $this->barcodeGenerator->generateForLabRequest($newFullLabNo, $labId);
             }
 
             $labRequest->load(['patient', 'samples', 'report', 'invoice']);

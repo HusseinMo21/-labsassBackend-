@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToLab;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -10,9 +11,10 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class LabRequest extends Model
 {
-    use HasFactory;
+    use BelongsToLab, HasFactory;
 
     protected $fillable = [
+        'lab_id',
         'patient_id',
         'lab_no',
         'suffix',
@@ -29,6 +31,11 @@ class LabRequest extends Model
         'barcode_url',
         'qr_code_url',
     ];
+
+    public function lab(): BelongsTo
+    {
+        return $this->belongsTo(Lab::class);
+    }
 
     /**
      * Get the patient that owns the lab request.
@@ -99,7 +106,9 @@ class LabRequest extends Model
      */
     public function getBarcodeUrlAttribute(): string
     {
-        return asset('storage/barcodes/' . $this->full_lab_no . '_barcode.svg');
+        $labId = $this->lab_id ?? auth()->user()?->lab_id ?? (app()->bound('current_lab_id') ? app('current_lab_id') : 1);
+        $basePath = $labId ? "labs/{$labId}/barcodes" : 'barcodes';
+        return asset('storage/' . $basePath . '/' . $this->full_lab_no . '_barcode.svg');
     }
 
     /**
@@ -107,7 +116,9 @@ class LabRequest extends Model
      */
     public function getQrCodeUrlAttribute(): string
     {
-        return asset('storage/qrcodes/' . $this->full_lab_no . '_qr.svg');
+        $labId = $this->lab_id ?? auth()->user()?->lab_id ?? (app()->bound('current_lab_id') ? app('current_lab_id') : 1);
+        $basePath = $labId ? "labs/{$labId}/qrcodes" : 'qrcodes';
+        return asset('storage/' . $basePath . '/' . $this->full_lab_no . '_qr.svg');
     }
 
     /**

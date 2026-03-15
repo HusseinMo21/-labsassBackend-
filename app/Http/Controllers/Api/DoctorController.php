@@ -39,7 +39,8 @@ class DoctorController extends Controller
             ], 422);
         }
 
-        $doctor = Doctor::create($validator->validated());
+        $labId = $this->currentLabId() ?? 1;
+        $doctor = Doctor::create([...$validator->validated(), 'lab_id' => $labId]);
 
         return response()->json([
             'message' => 'Doctor created successfully',

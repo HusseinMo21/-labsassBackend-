@@ -22,8 +22,9 @@ return new class extends Migration
 
         foreach ($visits as $visit) {
             try {
-                // Generate a new image barcode for the visit
-                $barcodePath = $barcodeGenerator->generateBarcode($visit->visit_number, 'CODE128');
+                // Generate a new image barcode for the visit (lab_id from visit or 1 for legacy)
+                $labId = $visit->lab_id ?? 1;
+                $barcodePath = $barcodeGenerator->generateBarcode($visit->visit_number, 'CODE128', $labId);
                 
                 // Update the visit with the new barcode path
                 $visit->update(['barcode' => $barcodePath]);

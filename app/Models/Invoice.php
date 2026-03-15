@@ -2,16 +2,18 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToLab;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Invoice extends Model
 {
-    use HasFactory;
+    use BelongsToLab, HasFactory;
     
     public $timestamps = false;
 
     protected $fillable = [
+        'lab_id',
         'lab',
         'total',
         'paid',
@@ -33,6 +35,11 @@ class Invoice extends Model
     // {
     //     return $this->belongsTo(Visit::class);
     // }
+
+    public function lab()
+    {
+        return $this->belongsTo(Lab::class);
+    }
 
     public function labRequest()
     {

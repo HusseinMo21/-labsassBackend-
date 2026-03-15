@@ -26,7 +26,9 @@ class InvoiceController extends Controller
             if ($visit->invoice) {
                 return response()->json(['message' => 'Invoice already exists for this visit'], 400);
             }
+            $labId = $visit->lab_id ?? $this->currentLabId() ?? 1;
             $invoice = Invoice::create([
+                'lab_id' => $labId,
                 'visit_id' => $request->visit_id,
                 'invoice_number' => 'INV-' . date('Y') . '-' . str_pad(Invoice::count() + 1, 6, 0, STR_PAD_LEFT),
                 'invoice_date' => now(),

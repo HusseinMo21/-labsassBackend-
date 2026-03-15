@@ -2,17 +2,20 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToLab;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Patient extends Model
 {
-    use HasFactory;
+    use BelongsToLab, HasFactory;
 
     protected $table = 'patient';
     public $timestamps = true;
 
     protected $fillable = [
+        // Multi-tenant
+        'lab_id',
         // Modern fields
         'name',
         'gender',
@@ -107,6 +110,11 @@ class Patient extends Model
     public function user()
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function lab()
+    {
+        return $this->belongsTo(Lab::class);
     }
 
         // Custom relationships that work with string-based storage
@@ -212,9 +220,9 @@ class Patient extends Model
         return $this->visits()->sum('final_amount');
     }
 
-    public static function generateUsername($name)
+    public static function generateUsername($name, ?int $labId = null)
     {
-        return PatientCredential::generateUsername($name);
+        return PatientCredential::generateUsername($name, $labId);
     }
 
     public static function generatePassword()

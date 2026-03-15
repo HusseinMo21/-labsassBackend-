@@ -636,7 +636,9 @@ class VisitController extends Controller
                 ->whereDate('opened_at', today())
                 ->first();
 
+            $labId = $this->currentLabId() ?? 1;
             $visit = Visit::create([
+                'lab_id' => $labId,
                 // Required from frontend:
                 'patient_id' => $request->patient_id,
                 // Generated automatically:
@@ -656,6 +658,7 @@ class VisitController extends Controller
                 $labTest = LabTest::find($testData['lab_test_id']);
                 $visitTest = VisitTest::create([
                     'visit_id' => $visit->id,
+                    'lab_id' => $visit->lab_id,
                     'lab_test_id' => $testData['lab_test_id'],
                     'status' => 'pending',
                     'barcode_uid' => 'LAB-' . strtoupper(Str::random(8)),
@@ -834,7 +837,7 @@ class VisitController extends Controller
             // Handle image upload
             if ($request->hasFile('image')) {
                 $image = $request->file('image');
-                $imagePath = $image->store('visit-images', 'public');
+                $imagePath = $image->store($this->labStoragePath('visit-images'), 'public');
                 
                 $validated['image_path'] = $imagePath;
                 $validated['image_filename'] = $image->getClientOriginalName();
@@ -1277,7 +1280,7 @@ class VisitController extends Controller
             }
 
             $image = $request->file('image');
-            $imagePath = $image->store('visit-images', 'public');
+            $imagePath = $image->store($this->labStoragePath('visit-images'), 'public');
 
             $visit->update([
                 'image_path' => $imagePath,

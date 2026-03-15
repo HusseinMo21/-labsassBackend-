@@ -32,10 +32,10 @@ class PatientController extends Controller
         if (empty($doctorName)) {
             return null;
         }
-        
-        return Doctor::firstOrCreate(
-            ['name' => trim($doctorName)],
-            ['name' => trim($doctorName)]
+        $labId = $this->currentLabId() ?? 1;
+        return Doctor::withoutGlobalScope('lab')->firstOrCreate(
+            ['lab_id' => $labId, 'name' => trim($doctorName)],
+            ['lab_id' => $labId, 'name' => trim($doctorName)]
         );
     }
 
@@ -44,10 +44,10 @@ class PatientController extends Controller
         if (empty($organizationName)) {
             return null;
         }
-        
-        return Organization::firstOrCreate(
-            ['name' => trim($organizationName)],
-            ['name' => trim($organizationName)]
+        $labId = $this->currentLabId() ?? 1;
+        return Organization::withoutGlobalScope('lab')->firstOrCreate(
+            ['lab_id' => $labId, 'name' => trim($organizationName)],
+            ['lab_id' => $labId, 'name' => trim($organizationName)]
         );
     }
 
@@ -475,6 +475,8 @@ class PatientController extends Controller
             ], 422);
         }
 
+        $labId = $this->currentLabId() ?? 1;
+
         // Auto-create user for patient
         $username = $request->lab_number ?? 'pt-' . strtolower(Str::random(8));
         $password = $request->phone ?? Str::random(10);
@@ -484,10 +486,12 @@ class PatientController extends Controller
             'role' => 'patient',
             'password' => Hash::make($password),
             'is_active' => true,
+            'lab_id' => $labId,
         ]);
 
         $patientData = $validator->validated();
         $patientData['user_id'] = $user->id;
+        $patientData['lab_id'] = $labId;
         
         // Debug: Log the patient data before processing
         \Log::info('Patient data before processing:', $patientData);
@@ -611,6 +615,7 @@ class PatientController extends Controller
             ]);
             
             $visitData = [
+                'lab_id' => $labId,
                 'patient_id' => $patient->id,
                 'visit_number' => \App\Models\Visit::generateVisitNumber(),
                 'visit_date' => $request->attendance_date ?? now()->toDateString(),
@@ -678,6 +683,7 @@ class PatientController extends Controller
         }
         
         $labRequest = LabRequest::create([
+            'lab_id' => $labId,
             'patient_id' => $patient->id,
             'lab_no' => $labNoData['full'],
             'suffix' => null,

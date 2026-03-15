@@ -7,12 +7,19 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
     public function index(Request $request)
     {
         $query = User::query();
+
+        // Multi-tenant: filter by lab (platform admin sees all)
+        $labId = $this->currentLabId();
+        if ($labId !== null) {
+            $query->where('lab_id', $labId);
+        }
 
         if ($request->has('search')) {
             $search = $request->search;
@@ -71,11 +78,29 @@ class UserController extends Controller
         return response()->json($users);
     }
 
+    /**
+     * Ensure the user belongs to the current lab (or current user is platform admin).
+     */
+    protected function ensureUserBelongsToLab(User $user): void
+    {
+        $currentUser = auth()->user();
+        if ($currentUser->lab_id === null) {
+            return; // Platform admin can access any user
+        }
+        if ($user->lab_id !== $currentUser->lab_id) {
+            abort(403, 'You do not have access to this user.');
+        }
+    }
+
     public function store(Request $request)
     {
+        $labId = $this->currentLabId();
+        $emailRule = $labId
+            ? Rule::unique('users')->where('lab_id', $labId)
+            : Rule::unique('users')->whereNull('lab_id');
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
+            'email' => ['required', 'string', 'email', 'max:255', $emailRule],
             'phone' => 'nullable|string|max:20',
             'role' => 'required|in:admin,staff,doctor,patient',
             'password' => 'required|string|min:8|confirmed',
@@ -89,6 +114,11 @@ class UserController extends Controller
             ], 422);
         }
 
+        // Platform admin (lab_id null) may pass lab_id to create lab users; lab admin uses current lab
+        $finalLabId = auth()->user()?->lab_id === null
+            ? ($request->lab_id ?? $labId)
+            : $labId;
+
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
@@ -96,6 +126,7 @@ class UserController extends Controller
             'role' => $request->role,
             'password' => Hash::make($request->password),
             'is_active' => $request->is_active ?? true,
+            'lab_id' => $finalLabId,
         ]);
 
         return response()->json([
@@ -106,14 +137,21 @@ class UserController extends Controller
 
     public function show(User $user)
     {
+        $this->ensureUserBelongsToLab($user);
         return response()->json($user);
     }
 
     public function update(Request $request, User $user)
     {
+        $this->ensureUserBelongsToLab($user);
+
+        $labId = $user->lab_id;
+        $emailRule = $labId
+            ? Rule::unique('users')->where('lab_id', $labId)->ignore($user->id)
+            : Rule::unique('users')->whereNull('lab_id')->ignore($user->id);
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users,email,' . $user->id,
+            'email' => ['required', 'string', 'email', 'max:255', $emailRule],
             'phone' => 'nullable|string|max:20',
             'role' => 'required|in:admin,staff,doctor,patient',
             'password' => 'nullable|string|min:8|confirmed',
@@ -157,6 +195,8 @@ class UserController extends Controller
 
     public function destroy(User $user)
     {
+        $this->ensureUserBelongsToLab($user);
+
         // Prevent deletion of the current user
         if ($user->id === auth()->id()) {
             return response()->json([

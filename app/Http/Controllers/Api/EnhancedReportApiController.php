@@ -180,7 +180,7 @@ class EnhancedReportApiController extends Controller
         // Handle image upload
         if ($request->hasFile('image')) {
             $image = $request->file('image');
-            $imagePath = $image->store('report-images', 'public');
+            $imagePath = $image->store($this->labStoragePath('report-images'), 'public');
             
             $validated['image_path'] = $imagePath;
             $validated['image_filename'] = $image->getClientOriginalName();
@@ -267,7 +267,7 @@ class EnhancedReportApiController extends Controller
             
             // Upload new image
             $image = $request->file('image');
-            $imagePath = $image->store('report-images', 'public');
+            $imagePath = $image->store($this->labStoragePath('report-images'), 'public');
             
             $validated['image_path'] = $imagePath;
             $validated['image_filename'] = $image->getClientOriginalName();
@@ -567,7 +567,7 @@ class EnhancedReportApiController extends Controller
             
             // Upload new image
             $image = $request->file('image');
-            $imagePath = $image->store('report-images', 'public');
+            $imagePath = $image->store($this->labStoragePath('report-images'), 'public');
             
             $report->update([
                 'image_path' => $imagePath,

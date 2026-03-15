@@ -11,6 +11,7 @@ class PatientCredential extends Model
 
     protected $fillable = [
         'patient_id',
+        'lab_id',
         'username',
         'original_password',
         'hashed_password',
@@ -28,18 +29,28 @@ class PatientCredential extends Model
         return $this->belongsTo(Patient::class);
     }
 
-    public static function generateUsername($name)
+    public function lab()
     {
+        return $this->belongsTo(Lab::class);
+    }
+
+    /**
+     * Generate unique username per lab.
+     * @param string $name
+     * @param int|null $labId
+     */
+    public static function generateUsername($name, ?int $labId = null): string
+    {
+        $labId = $labId ?? auth()->user()?->lab_id ?? (app()->bound('current_lab_id') ? app('current_lab_id') : 1);
         $base = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $name));
         $username = $base . rand(100, 999);
-        
-        // Ensure uniqueness
+
         $counter = 1;
-        while (self::where('username', $username)->exists()) {
+        while (self::where('lab_id', $labId)->where('username', $username)->exists()) {
             $username = $base . rand(100, 999) . $counter;
             $counter++;
         }
-        
+
         return $username;
     }
 

@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\OrganizationController;
 use App\Http\Controllers\Api\LabRequestController;
 use App\Http\Controllers\Api\TestCategoryController;
 use App\Http\Controllers\Api\PatientRegistrationController;
+use App\Http\Controllers\Api\LabController;
 
 /*
 |--------------------------------------------------------------------------
@@ -111,7 +112,7 @@ Route::group(['prefix' => 'invoices', 'middleware' => []], function () {
 });
 
 // Protected routes (authentication required)
-Route::middleware(['auth:sanctum'])->group(function () {
+Route::middleware(['auth:sanctum', 'ensure.lab'])->group(function () {
     // Auth routes
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/user', [AuthController::class, 'user']);
@@ -314,6 +315,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/users/stats', [UserController::class, 'getStats']);
         Route::patch('/users/{user}/toggle-status', [UserController::class, 'toggleStatus']);
         Route::patch('/users/{user}/change-password', [UserController::class, 'changePassword']);
+    });
+
+    // Lab management (platform admin only - lab_id null)
+    Route::middleware(['role:admin', 'platform.admin'])->group(function () {
+        Route::apiResource('labs', LabController::class);
     });
 
     // Inventory routes (admin and staff only)

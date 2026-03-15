@@ -968,7 +968,7 @@ class ReportController extends Controller
         if ($request->hasFile('image')) {
             $image = $request->file('image');
             $imageName = time() . '_' . $image->getClientOriginalName();
-            $imagePath = $image->storeAs('pathology_images', $imageName, 'public');
+            $imagePath = $image->storeAs($this->labStoragePath('pathology_images'), $imageName, 'public');
             
             $imageData = [
                 'image_path' => $imagePath,

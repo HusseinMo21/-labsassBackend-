@@ -9,6 +9,7 @@ use App\Models\VisitTest;
 use App\Models\LabTest;
 use App\Models\TestCategory;
 use App\Models\User;
+use App\Services\LabNoGenerator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -17,6 +18,10 @@ use Illuminate\Support\Str;
 
 class PatientRegistrationController extends Controller
 {
+    public function __construct(
+        protected LabNoGenerator $labNoGenerator
+    ) {}
+
     /**
      * Parse age format and calculate birth_date
      * Supports formats: 
@@ -195,41 +200,16 @@ class PatientRegistrationController extends Controller
     }
 
     /**
-     * Get the next lab number
+     * Get the next lab number (uses LabNoGenerator for multi-tenant consistency).
      */
     public function getNextLabNumber()
     {
-        $lastLabNumber = Patient::whereNotNull('lab')
-            ->where('lab', '!=', '')
-            ->orderBy('id', 'desc')
-            ->value('lab');
-
-        $year = date('Y');
-        
-        if ($lastLabNumber && preg_match('/^(\d{4})-(\d{4})$/', $lastLabNumber, $matches)) {
-            $lastYear = $matches[1];
-            $lastNumber = (int) $matches[2];
-            
-            if ($lastYear == $year) {
-                $nextNumber = $lastNumber + 1;
-            } else {
-                $nextNumber = 1;
-            }
-        } else {
-            $nextNumber = 1;
-        }
-
-        $nextLabNumber = $year . '-' . str_pad($nextNumber, 4, '0', STR_PAD_LEFT);
-        
-        // Ensure the lab number is unique
-        while (Patient::where('lab', $nextLabNumber)->exists()) {
-            $nextNumber++;
-            $nextLabNumber = $year . '-' . str_pad($nextNumber, 4, '0', STR_PAD_LEFT);
-        }
+        $labId = $this->currentLabId() ?? 1;
+        $result = $this->labNoGenerator->generate(null, null, $labId);
 
         return response()->json([
             'success' => true,
-            'lab_number' => $nextLabNumber,
+            'lab_number' => $result['full'],
         ]);
     }
 
@@ -309,21 +289,22 @@ class PatientRegistrationController extends Controller
                 $data['lab_number'] = $nextLabResponse->getData()->lab_number;
             }
             
-            // Handle organization - create if doesn't exist
+            $labId = $this->currentLabId() ?? 1;
+            // Handle organization - create if doesn't exist (per lab)
             if (isset($data['organization']) && !empty($data['organization'])) {
-                $organization = \App\Models\Organization::firstOrCreate(
-                    ['name' => $data['organization']],
-                    ['name' => $data['organization']]
+                $organization = \App\Models\Organization::withoutGlobalScope('lab')->firstOrCreate(
+                    ['lab_id' => $labId, 'name' => $data['organization']],
+                    ['lab_id' => $labId, 'name' => $data['organization']]
                 );
                 $data['organization_id'] = $data['organization']; // Store name as string for compatibility
                 unset($data['organization']);
             }
             
-            // Handle doctor - create if doesn't exist
+            // Handle doctor - create if doesn't exist (per lab)
             if (isset($data['doctor']) && !empty($data['doctor'])) {
-                $doctor = \App\Models\Doctor::firstOrCreate(
-                    ['name' => $data['doctor']],
-                    ['name' => $data['doctor']]
+                $doctor = \App\Models\Doctor::withoutGlobalScope('lab')->firstOrCreate(
+                    ['lab_id' => $labId, 'name' => $data['doctor']],
+                    ['lab_id' => $labId, 'name' => $data['doctor']]
                 );
                 $data['doctor_id'] = $data['doctor']; // Store name as string for compatibility
                 unset($data['doctor']);
@@ -348,15 +329,18 @@ class PatientRegistrationController extends Controller
                 // Create new user for patient
                 $username = 'pt-' . strtolower(Str::random(8));
                 $password = Str::random(10);
+                $labId = $this->currentLabId() ?? 1;
                 $user = User::create([
                     'name' => $username,
                     'email' => $username . '@patients.local',
                     'role' => 'patient',
                     'password' => Hash::make($password),
                     'is_active' => true,
+                    'lab_id' => $labId,
                 ]);
                 
                 $data['user_id'] = $user->id;
+                $data['lab_id'] = $labId;
                 $data['lab'] = $data['lab_number'];
                 
                 // Parse age format and calculate birth_date
@@ -457,7 +441,9 @@ class PatientRegistrationController extends Controller
                     'additional_payment_method' => $data['additional_payment_method'] ?? null,
                 ];
                 
+                $labId = $this->currentLabId() ?? 1;
                 $labRequest = \App\Models\LabRequest::create([
+                    'lab_id' => $labId,
                     'patient_id' => $patient->id,
                     'lab_no' => $patient->lab, // Use the patient's lab number
                     'status' => $labRequestStatus,
@@ -477,6 +463,7 @@ class PatientRegistrationController extends Controller
                     
                     try {
                         $labRequest = \App\Models\LabRequest::create([
+                            'lab_id' => $labId,
                             'patient_id' => $patient->id,
                             'lab_no' => $patient->lab,
                             'status' => $status,
@@ -505,6 +492,7 @@ class PatientRegistrationController extends Controller
                 // If we still don't have a lab request, try without status
                 if (!isset($labRequest)) {
                     $labRequest = \App\Models\LabRequest::create([
+                        'lab_id' => $labId,
                         'patient_id' => $patient->id,
                         'lab_no' => $patient->lab,
                         'metadata' => [
@@ -552,6 +540,7 @@ class PatientRegistrationController extends Controller
 
                 // Create visit with detailed information
                 $visitData = [
+                    'lab_id' => $labId,
                     'patient_id' => $patient->id,
                     'lab_request_id' => $labRequest->id, // Link visit to lab request
                     'visit_number' => 'VIS-' . date('Ymd') . '-' . str_pad($patient->id, 6, '0', STR_PAD_LEFT),
@@ -660,6 +649,7 @@ class PatientRegistrationController extends Controller
                         if ($labTest) {
                             $visitTest = VisitTest::create([
                                 'visit_id' => $visit->id,
+                                'lab_id' => $visit->lab_id,
                                 'lab_test_id' => $labTest->id,
                                 'status' => 'pending',
                                 'price' => $totalAmount,
@@ -822,6 +812,9 @@ class PatientRegistrationController extends Controller
                     if (in_array('lab_request_id', $fillable)) {
                         $invoiceData['lab_request_id'] = $labRequest->id;
                     }
+                    if (in_array('lab_id', $fillable)) {
+                        $invoiceData['lab_id'] = $labId;
+                    }
                     if (in_array('shift_id', $fillable)) {
                         $invoiceData['shift_id'] = $currentShift?->id;
                     }
@@ -970,6 +963,7 @@ class PatientRegistrationController extends Controller
             } else {
                 // Create a basic visit even without billing information
                 $visitData = [
+                    'lab_id' => $labId,
                     'patient_id' => $patient->id,
                     'lab_request_id' => $labRequest->id ?? null, // Link visit to lab request if available
                     'visit_number' => 'VIS-' . date('Ymd') . '-' . str_pad($patient->id, 6, '0', STR_PAD_LEFT),

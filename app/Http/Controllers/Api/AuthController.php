@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Lab;
 use App\Models\User;
 use App\Models\RefreshToken;
 use Illuminate\Http\Request;
@@ -28,6 +29,12 @@ class AuthController extends Controller
             $credentials['name'] = $request->login;
         }
         $credentials['password'] = $request->password;
+
+        // Multi-tenant: scope login to current lab (platform admin has lab_id=null)
+        $labId = app('current_lab_id');
+        if ($labId) {
+            $credentials['lab_id'] = $labId;
+        }
 
         if (!Auth::attempt($credentials)) {
             throw ValidationException::withMessages([
@@ -57,6 +64,9 @@ class AuthController extends Controller
         // Create access token (using Sanctum)
         $accessToken = $user->createToken('access-token', ['*'], now()->addHours(1))->plainTextToken;
 
+        // Include lab in response for frontend context
+        $lab = $user->lab_id ? Lab::find($user->lab_id) : null;
+
         return response()->json([
             'user' => [
                 'id' => $user->id,
@@ -64,7 +74,14 @@ class AuthController extends Controller
                 'email' => $user->email,
                 'role' => $this->mapRole($user->role),
                 'phone' => $user->phone,
+                'lab_id' => $user->lab_id,
             ],
+            'lab' => $lab ? [
+                'id' => $lab->id,
+                'name' => $lab->name,
+                'slug' => $lab->slug,
+                'subdomain' => $lab->subdomain,
+            ] : null,
             'access_token' => $accessToken,
             'refresh_token' => $refreshToken->token,
             'token_type' => 'Bearer',
@@ -166,6 +183,8 @@ class AuthController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
         
+        $lab = $user->lab_id ? Lab::find($user->lab_id) : null;
+
         return response()->json([
             'user' => [
                 'id' => $user->id,
@@ -173,7 +192,14 @@ class AuthController extends Controller
                 'email' => $user->email,
                 'role' => $this->mapRole($user->role),
                 'phone' => $user->phone,
+                'lab_id' => $user->lab_id,
             ],
+            'lab' => $lab ? [
+                'id' => $lab->id,
+                'name' => $lab->name,
+                'slug' => $lab->slug,
+                'subdomain' => $lab->subdomain,
+            ] : null,
         ]);
     }
 

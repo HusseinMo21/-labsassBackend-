@@ -39,7 +39,8 @@ class OrganizationController extends Controller
             ], 422);
         }
 
-        $organization = Organization::create($validator->validated());
+        $labId = $this->currentLabId() ?? 1;
+        $organization = Organization::create([...$validator->validated(), 'lab_id' => $labId]);
 
         return response()->json([
             'message' => 'Organization created successfully',

@@ -125,7 +125,9 @@ class MigratePatientDetails extends Command
             }
         }
         
+        $labId = $labRequest->lab_id ?? $labRequest->patient->lab_id ?? 1;
         $visit = $labRequest->patient->visits()->create([
+            'lab_id' => $labId,
             'visit_number' => 'V' . $originalPatient->id,
             'visit_date' => $visitDate,
             'visit_time' => $visitTime,
@@ -157,6 +159,7 @@ class MigratePatientDetails extends Command
             }
             
             $visit->visitTests()->create([
+                'lab_id' => $visit->lab_id,
                 'lab_test_id' => 2, // Default test ID (General Pathology)
                 'price' => $originalPatient->total ?: 0,
                 'status' => 'completed',

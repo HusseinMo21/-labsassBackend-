@@ -12,6 +12,12 @@ class AuditLogController extends Controller
     {
         $query = AuditLog::with('user');
 
+        // Multi-tenant: filter by lab (platform admin sees all)
+        $labId = $this->currentLabId();
+        if ($labId !== null) {
+            $query->where('lab_id', $labId);
+        }
+
         if ($request->has('action')) {
             $query->where('action', $request->action);
         }
@@ -50,14 +56,23 @@ class AuditLogController extends Controller
 
     public function show($id)
     {
-        $log = AuditLog::with('user')->findOrFail($id);
+        $query = AuditLog::with('user')->where('id', $id);
+        $labId = $this->currentLabId();
+        if ($labId !== null) {
+            $query->where('lab_id', $labId);
+        }
+        $log = $query->firstOrFail();
         return response()->json($log);
     }
 
     public function getActivityByUser($userId)
     {
-        $logs = AuditLog::with('user')
-                       ->where('user_id', $userId)
+        $query = AuditLog::with('user')->where('user_id', $userId);
+        $labId = $this->currentLabId();
+        if ($labId !== null) {
+            $query->where('lab_id', $labId);
+        }
+        $logs = $query
                        ->latest()
                        ->paginate(20);
 
@@ -66,9 +81,14 @@ class AuditLogController extends Controller
 
     public function getActivityByModel($modelType, $modelId)
     {
-        $logs = AuditLog::with('user')
+        $query = AuditLog::with('user')
                        ->where('model_type', $modelType)
-                       ->where('model_id', $modelId)
+                       ->where('model_id', $modelId);
+        $labId = $this->currentLabId();
+        if ($labId !== null) {
+            $query->where('lab_id', $labId);
+        }
+        $logs = $query
                        ->latest()
                        ->get();
 
@@ -78,6 +98,10 @@ class AuditLogController extends Controller
     public function getStats(Request $request)
     {
         $query = AuditLog::query();
+        $labId = $this->currentLabId();
+        if ($labId !== null) {
+            $query->where('lab_id', $labId);
+        }
 
         if ($request->has('date_from')) {
             $query->whereDate('created_at', '>=', $request->date_from);
@@ -109,6 +133,10 @@ class AuditLogController extends Controller
     public function export(Request $request)
     {
         $query = AuditLog::with('user');
+        $labId = $this->currentLabId();
+        if ($labId !== null) {
+            $query->where('lab_id', $labId);
+        }
 
         if ($request->has('date_from')) {
             $query->whereDate('created_at', '>=', $request->date_from);

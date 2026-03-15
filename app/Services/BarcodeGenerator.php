@@ -14,13 +14,15 @@ class BarcodeGenerator
      * Generate barcode and QR code for a lab request.
      *
      * @param string $fullLabNo The full lab number
+     * @param int|null $labId The lab ID for storage path (storage/labs/{lab_id}/barcodes/)
      * @return array Array containing the generated file paths
      */
-    public function generateForLabRequest(string $fullLabNo): array
+    public function generateForLabRequest(string $fullLabNo, ?int $labId = null): array
     {
         try {
-            $barcodePath = $this->generateBarcode($fullLabNo);
-            $qrCodePath = $this->generateQrCode($fullLabNo);
+            $labId = $labId ?? auth()->user()?->lab_id ?? (app()->bound('current_lab_id') ? app('current_lab_id') : 1);
+            $barcodePath = $this->generateBarcode($fullLabNo, 'C128', $labId);
+            $qrCodePath = $this->generateQrCode($fullLabNo, 200, $labId);
             
             Log::info('Generated barcode and QR code for lab request', [
                 'full_lab_no' => $fullLabNo,
@@ -47,10 +49,13 @@ class BarcodeGenerator
      *
      * @param string $text The text to encode
      * @param string $format The barcode format (default: CODE128)
+     * @param int|null $labId The lab ID for storage path
      * @return string The file path of the generated barcode
      */
-    public function generateBarcode(string $text, string $format = 'C128'): string
+    public function generateBarcode(string $text, string $format = 'C128', ?int $labId = null): string
     {
+        $labId = $labId ?? auth()->user()?->lab_id ?? (app()->bound('current_lab_id') ? app('current_lab_id') : 1);
+
         try {
             $barcode = new DNS1D();
             
@@ -97,10 +102,11 @@ class BarcodeGenerator
                 throw new \Exception('Failed to generate valid barcode with any format');
             }
             
-            // Create filename with SVG extension
+            // Create filename with SVG extension - use lab-prefixed path for multi-tenant
             $filename = $text . '_barcode.svg';
-            $path = 'barcodes/' . $filename;
-            
+            $basePath = $labId ? "labs/{$labId}/barcodes" : 'barcodes';
+            $path = $basePath . '/' . $filename;
+
             // Store the barcode
             Storage::disk('public')->put($path, $barcodeData);
             
@@ -121,14 +127,14 @@ class BarcodeGenerator
             ]);
             
             // Fallback to simple SVG barcode
-            return $this->generateSimpleSvgBarcode($text);
+            return $this->generateSimpleSvgBarcode($text, $labId);
         }
     }
 
     /**
      * Generate a simple SVG barcode as fallback.
      */
-    private function generateSimpleSvgBarcode(string $text): string
+    private function generateSimpleSvgBarcode(string $text, ?int $labId = null): string
     {
         // Create a simple SVG barcode representation
         $bars = '';
@@ -155,9 +161,10 @@ class BarcodeGenerator
     </g>
 </svg>';
         
-        // Save as SVG file
+        // Save as SVG file - use lab-prefixed path for multi-tenant
         $filename = $text . '_barcode.svg';
-        $path = 'barcodes/' . $filename;
+        $basePath = $labId ? "labs/{$labId}/barcodes" : 'barcodes';
+        $path = $basePath . '/' . $filename;
         Storage::disk('public')->put($path, $svgContent);
         
         Log::info('Simple SVG barcode generated as fallback', [
@@ -206,23 +213,27 @@ class BarcodeGenerator
      *
      * @param string $text The text to encode
      * @param int $size The size of the QR code (default: 200)
+     * @param int|null $labId The lab ID for storage path
      * @return string The file path of the generated QR code
      */
-    public function generateQrCode(string $text, int $size = 200): string
+    public function generateQrCode(string $text, int $size = 200, ?int $labId = null): string
     {
+        $labId = $labId ?? auth()->user()?->lab_id ?? (app()->bound('current_lab_id') ? app('current_lab_id') : 1);
+
         try {
             $qrCode = new DNS2D();
             
             // Generate QR code as SVG
             $qrCodeData = $qrCode->getBarcodeSVG($text, 'QRCODE', $size/10, $size/10);
             
-            // Create filename with SVG extension
+            // Create filename with SVG extension - use lab-prefixed path for multi-tenant
             $filename = $text . '_qr.svg';
-            $path = 'qrcodes/' . $filename;
-            
+            $basePath = $labId ? "labs/{$labId}/qrcodes" : 'qrcodes';
+            $path = $basePath . '/' . $filename;
+
             // Store the QR code
             Storage::disk('public')->put($path, $qrCodeData);
-            
+
             return $path;
         } catch (\Exception $e) {
             Log::error('QR code generation failed', [
@@ -236,9 +247,10 @@ class BarcodeGenerator
                     ->size($size)
                     ->margin(1)
                     ->generate($text);
-                
+
                 $filename = $text . '_qr.svg';
-                $path = 'qrcodes/' . $filename;
+                $basePath = $labId ? "labs/{$labId}/qrcodes" : 'qrcodes';
+                $path = $basePath . '/' . $filename;
                 Storage::disk('public')->put($path, $qrCodeData);
                 
                 return $path;
@@ -248,7 +260,8 @@ class BarcodeGenerator
                     'error' => $e2->getMessage()
                 ]);
                 
-                return 'qrcodes/' . $text . '_qr.svg';
+                $basePath = $labId ? "labs/{$labId}/qrcodes" : 'qrcodes';
+                return $basePath . '/' . $text . '_qr.svg';
             }
         }
     }
@@ -283,11 +296,14 @@ class BarcodeGenerator
      * @param string $fullLabNo The full lab number
      * @return bool True if files were deleted successfully
      */
-    public function deleteForLabRequest(string $fullLabNo): bool
+    public function deleteForLabRequest(string $fullLabNo, ?int $labId = null): bool
     {
         try {
-            $barcodePath = 'barcodes/' . $fullLabNo . '_barcode.svg';
-            $qrCodePath = 'qrcodes/' . $fullLabNo . '_qr.svg';
+            $labId = $labId ?? auth()->user()?->lab_id ?? (app()->bound('current_lab_id') ? app('current_lab_id') : 1);
+            $baseBarcode = $labId ? "labs/{$labId}/barcodes" : 'barcodes';
+            $baseQr = $labId ? "labs/{$labId}/qrcodes" : 'qrcodes';
+            $barcodePath = $baseBarcode . '/' . $fullLabNo . '_barcode.svg';
+            $qrCodePath = $baseQr . '/' . $fullLabNo . '_qr.svg';
             
             $deleted = true;
             
@@ -323,9 +339,11 @@ class BarcodeGenerator
      * @param string $fullLabNo The full lab number
      * @return string|null The URL or null if file doesn't exist
      */
-    public function getBarcodeUrl(string $fullLabNo): ?string
+    public function getBarcodeUrl(string $fullLabNo, ?int $labId = null): ?string
     {
-        $path = 'barcodes/' . $fullLabNo . '_barcode.svg';
+        $labId = $labId ?? auth()->user()?->lab_id ?? (app()->bound('current_lab_id') ? app('current_lab_id') : 1);
+        $basePath = $labId ? "labs/{$labId}/barcodes" : 'barcodes';
+        $path = $basePath . '/' . $fullLabNo . '_barcode.svg';
         
         if (Storage::disk('public')->exists($path)) {
             return Storage::disk('public')->url($path);
@@ -340,9 +358,11 @@ class BarcodeGenerator
      * @param string $fullLabNo The full lab number
      * @return string|null The URL or null if file doesn't exist
      */
-    public function getQrCodeUrl(string $fullLabNo): ?string
+    public function getQrCodeUrl(string $fullLabNo, ?int $labId = null): ?string
     {
-        $path = 'qrcodes/' . $fullLabNo . '_qr.svg';
+        $labId = $labId ?? auth()->user()?->lab_id ?? (app()->bound('current_lab_id') ? app('current_lab_id') : 1);
+        $basePath = $labId ? "labs/{$labId}/qrcodes" : 'qrcodes';
+        $path = $basePath . '/' . $fullLabNo . '_qr.svg';
         
         if (Storage::disk('public')->exists($path)) {
             return Storage::disk('public')->url($path);

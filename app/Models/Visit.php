@@ -2,14 +2,16 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToLab;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Visit extends Model
 {
-    use HasFactory;
+    use BelongsToLab, HasFactory;
 
     protected $fillable = [
+        'lab_id',
         'patient_id',
         'lab_request_id',
         'visit_number',
@@ -76,6 +78,11 @@ class Visit extends Model
     public function patient()
     {
         return $this->belongsTo(Patient::class);
+    }
+
+    public function lab()
+    {
+        return $this->belongsTo(Lab::class);
     }
 
     public function visitTests()

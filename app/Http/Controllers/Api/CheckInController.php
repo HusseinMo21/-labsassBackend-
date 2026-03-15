@@ -120,13 +120,14 @@ class CheckInController extends Controller
 
         DB::beginTransaction();
         try {
-            // Generate credentials
-            $username = Patient::generateUsername($request->name);
+            $labId = $this->currentLabId() ?? 1;
+            $username = Patient::generateUsername($request->name, $labId);
             $password = Patient::generatePassword();
 
             // Create patient
             $patient = Patient::create([
                 ...$validator->validated(),
+                'lab_id' => $labId,
                 'username' => $username,
                 'password' => Hash::make($password),
             ]);
@@ -134,6 +135,7 @@ class CheckInController extends Controller
             // Also create credentials in patient_credentials table for consistency
             PatientCredential::create([
                 'patient_id' => $patient->id,
+                'lab_id' => $labId,
                 'username' => $username,
                 'original_password' => $password,
                 'hashed_password' => Hash::make($password),
@@ -260,7 +262,9 @@ class CheckInController extends Controller
                 ->whereDate('opened_at', today())
                 ->first();
 
+            $labId = $this->currentLabId() ?? 1;
             $visit = Visit::create([
+                'lab_id' => $labId,
                 'patient_id' => $patient->id,
                 'visit_number' => $visitNumber,
                 'visit_date' => now()->toDateString(),
@@ -293,6 +297,7 @@ class CheckInController extends Controller
                 ]);
                 
                 $visitTest = $visit->visitTests()->create([
+                    'lab_id' => $visit->lab_id,
                     'lab_test_id' => $dummyLabTest->id,
                     'price' => $testData['custom_price'],
                     'status' => 'pending',
@@ -319,6 +324,7 @@ class CheckInController extends Controller
                     $labNo = $labNoData['base'];
                     
                     $labRequest = LabRequest::create([
+                        'lab_id' => $labId,
                         'patient_id' => $patient->id,
                         'lab_no' => $labNo,
                         'status' => 'pending',
@@ -331,7 +337,7 @@ class CheckInController extends Controller
                     ]);
                     
                     // Generate barcode and QR code for the new lab request
-                    $this->barcodeGenerator->generateForLabRequest($labRequest);
+                    $this->barcodeGenerator->generateForLabRequest($labRequest->full_lab_no, $labRequest->lab_id);
                     
                     \Log::info('New lab request created for patient: ' . $patient->id . ', Lab No: ' . $labNo);
                 }
@@ -342,6 +348,7 @@ class CheckInController extends Controller
 
                 // Create invoice for this visit
                 $invoice = Invoice::create([
+                    'lab_id' => $labId,
                     'lab' => $labRequest->full_lab_no,
                     'total' => $finalAmount,
                     'paid' => $request->upfront_payment,

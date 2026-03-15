@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\Lab;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Request;
@@ -16,6 +17,7 @@ class AuditLog extends Model
 
     protected $fillable = [
         'user_id',
+        'lab_id',
         'action',
         'model_type',
         'model_id',
@@ -37,12 +39,19 @@ class AuditLog extends Model
         return $this->belongsTo(User::class);
     }
 
+    public function lab()
+    {
+        return $this->belongsTo(Lab::class);
+    }
+
     public static function log($action, $model = null, $description = null, $oldValues = null, $newValues = null)
     {
         $user = Auth::user();
+        $labId = $user?->lab_id ?? (app()->bound('current_lab_id') ? app('current_lab_id') : null);
         
         return self::create([
             'user_id' => $user ? $user->id : null,
+            'lab_id' => $labId,
             'action' => $action,
             'model_type' => $model ? get_class($model) : null,
             'model_id' => $model ? $model->id : null,

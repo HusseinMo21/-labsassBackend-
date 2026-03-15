@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\Lab;
 use App\Models\User;
 use App\Models\Notification;
 
@@ -13,6 +14,7 @@ class VisitTest extends Model
 
     protected $fillable = [
         'visit_id',
+        'lab_id',
         'lab_test_id',
         'test_category_id',
         'custom_test_name',
@@ -42,6 +44,11 @@ class VisitTest extends Model
     public function visit()
     {
         return $this->belongsTo(Visit::class);
+    }
+
+    public function lab()
+    {
+        return $this->belongsTo(Lab::class);
     }
 
     public function labTest()

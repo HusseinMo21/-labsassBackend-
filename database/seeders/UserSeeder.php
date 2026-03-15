@@ -18,6 +18,7 @@ class UserSeeder extends Seeder
                 'role' => 'admin',
                 'password' => Hash::make('password'),
                 'is_active' => true,
+                'lab_id' => 1,
             ],
             [
                 'name' => 'Staff User',
@@ -26,6 +27,7 @@ class UserSeeder extends Seeder
                 'role' => 'staff',
                 'password' => Hash::make('password'),
                 'is_active' => true,
+                'lab_id' => 1,
             ],
             [
                 'name' => 'Doctor User',
@@ -34,6 +36,7 @@ class UserSeeder extends Seeder
                 'role' => 'doctor',
                 'password' => Hash::make('password'),
                 'is_active' => true,
+                'lab_id' => 1,
             ],
             [
                 'name' => 'Patient User',
@@ -42,6 +45,7 @@ class UserSeeder extends Seeder
                 'role' => 'patient',
                 'password' => Hash::make('password'),
                 'is_active' => true,
+                'lab_id' => 1,
             ],
         ];
 
