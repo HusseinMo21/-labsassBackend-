@@ -317,9 +317,15 @@ Route::middleware(['auth:sanctum', 'ensure.lab'])->group(function () {
         Route::patch('/users/{user}/change-password', [UserController::class, 'changePassword']);
     });
 
-    // Lab management (platform admin only - lab_id null)
+    // Platform admin: Labs, Plans, Subscriptions, Dashboard stats
     Route::middleware(['role:admin', 'platform.admin'])->group(function () {
+        Route::get('platform/dashboard/stats', [\App\Http\Controllers\Api\PlatformDashboardController::class, 'stats']);
         Route::apiResource('labs', LabController::class);
+        Route::apiResource('plans', \App\Http\Controllers\Api\PlanController::class);
+        Route::get('subscriptions/stats', [\App\Http\Controllers\Api\SubscriptionController::class, 'stats']);
+        Route::post('subscriptions/{subscription}/cancel', [\App\Http\Controllers\Api\SubscriptionController::class, 'cancel']);
+        Route::post('subscriptions/{subscription}/payments', [\App\Http\Controllers\Api\SubscriptionController::class, 'addPayment']);
+        Route::apiResource('subscriptions', \App\Http\Controllers\Api\SubscriptionController::class);
     });
 
     // Inventory routes (admin and staff only)

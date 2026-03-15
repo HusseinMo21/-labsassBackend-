@@ -24,13 +24,13 @@ class DemoCredentialsSeeder extends Seeder
             $domain = str_replace('-', '', $lab->slug);
             $baseEmail = "@{$domain}.com";
 
-            // Admin
+            // Admin (User model has 'password' => 'hashed' cast - pass plain password)
             User::updateOrCreate(
                 ['lab_id' => $lab->id, 'email' => "admin{$baseEmail}"],
                 [
                     'name' => "Admin - {$lab->name}",
                     'email' => "admin{$baseEmail}",
-                    'password' => Hash::make($password),
+                    'password' => $password,
                     'role' => 'admin',
                     'is_active' => true,
                     'lab_id' => $lab->id,
@@ -44,7 +44,7 @@ class DemoCredentialsSeeder extends Seeder
                 [
                     'name' => "Staff - {$lab->name}",
                     'email' => "staff{$baseEmail}",
-                    'password' => Hash::make($password),
+                    'password' => $password,
                     'role' => 'staff',
                     'is_active' => true,
                     'lab_id' => $lab->id,
@@ -58,7 +58,7 @@ class DemoCredentialsSeeder extends Seeder
                 [
                     'name' => "Doctor - {$lab->name}",
                     'email' => "doctor{$baseEmail}",
-                    'password' => Hash::make($password),
+                    'password' => $password,
                     'role' => 'doctor',
                     'is_active' => true,
                     'lab_id' => $lab->id,
@@ -67,8 +67,25 @@ class DemoCredentialsSeeder extends Seeder
             $credentials[] = "Doctor ({$lab->name}): doctor{$baseEmail} / {$password}";
         }
 
-        // Legacy Dr. Yasser Lab credentials (lab 1) - keep for backward compatibility
+        // Default lab credentials (admin@default.com etc.) - for localhost / first lab
         $lab1 = $labs->first();
+        if ($lab1) {
+            foreach (['admin', 'staff', 'doctor'] as $role) {
+                User::updateOrCreate(
+                    ['lab_id' => $lab1->id, 'email' => "{$role}@default.com"],
+                    [
+                        'name' => ucfirst($role) . ' - Default Lab',
+                        'email' => "{$role}@default.com",
+                        'password' => $password,
+                        'role' => $role,
+                        'is_active' => true,
+                        'lab_id' => $lab1->id,
+                    ]
+                );
+            }
+        }
+
+        // Legacy Dr. Yasser Lab credentials (lab 1) - keep for backward compatibility
         if ($lab1 && $lab1->slug === 'dryasserlab') {
             User::updateOrCreate(
                 ['lab_id' => $lab1->id, 'email' => 'admin@dryasserlab.com'],

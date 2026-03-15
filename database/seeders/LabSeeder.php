@@ -49,16 +49,18 @@ class LabSeeder extends Seeder
             );
         }
 
-        // Platform admin (lab_id = null) - can manage labs via /api/labs
-        User::firstOrCreate(
+        // Platform admin (lab_id = null) - can manage labs via /api/labs (User model hashes password)
+        $platformAdmin = User::firstOrCreate(
             ['email' => 'platform@saaslab.com', 'lab_id' => null],
             [
                 'name' => 'Platform Admin',
                 'role' => 'admin',
-                'password' => Hash::make('password'),
+                'password' => 'password',
                 'is_active' => true,
                 'lab_id' => null,
             ]
         );
+        $platformAdmin->password = 'password';
+        $platformAdmin->save();
     }
 }

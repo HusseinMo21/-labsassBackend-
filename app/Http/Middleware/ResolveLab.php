@@ -22,9 +22,17 @@ class ResolveLab
     {
         $host = $request->getHost();
 
-        // Local development: localhost, 127.0.0.1
-        if (in_array($host, ['localhost', '127.0.0.1'])) {
-            app()->instance('current_lab_id', 1);
+        // Local development: localhost, 127.0.0.1 (with or without port)
+        $hostBase = explode(':', $host)[0] ?? $host;
+        if (in_array($hostBase, ['localhost', '127.0.0.1'])) {
+            // Allow X-Lab-ID header so users from any lab can use their context
+            $headerLabId = $request->header('X-Lab-ID');
+            $labId = $headerLabId && ctype_digit($headerLabId) ? (int) $headerLabId : 1;
+            if ($labId > 0 && Lab::where('id', $labId)->exists()) {
+                app()->instance('current_lab_id', $labId);
+            } else {
+                app()->instance('current_lab_id', 1);
+            }
             return $next($request);
         }
 

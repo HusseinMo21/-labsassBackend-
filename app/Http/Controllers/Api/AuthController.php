@@ -31,17 +31,49 @@ class AuthController extends Controller
         $credentials['password'] = $request->password;
 
         // Multi-tenant: scope login to current lab (platform admin has lab_id=null)
-        $labId = app('current_lab_id');
+        $labId = app()->bound('current_lab_id') ? app('current_lab_id') : null;
         if ($labId) {
             $credentials['lab_id'] = $labId;
         }
 
         if (!Auth::attempt($credentials)) {
-            throw ValidationException::withMessages([
-                'login' => ['The provided credentials are incorrect.'],
-            ]);
+            // Fallback: try without lab_id (for localhost: any lab user; or platform admin)
+            if ($labId && filter_var($request->login, FILTER_VALIDATE_EMAIL)) {
+                $fallbackCredentials = ['email' => $request->login, 'password' => $request->password];
+                if (Auth::attempt($fallbackCredentials)) {
+                    $user = Auth::user();
+                    // Allow: user belongs to current lab, OR we're on localhost (any lab works)
+                    $isLocalhost = in_array(explode(':', $request->getHost())[0] ?? '', ['localhost', '127.0.0.1']);
+                    if ($user->lab_id == $labId || $isLocalhost) {
+                        goto login_success;
+                    }
+                    Auth::logout();
+                }
+            }
+            // Platform admin (lab_id=null) can login from any context - try without lab_id
+            if ($labId) {
+                unset($credentials['lab_id']);
+                if (Auth::attempt($credentials)) {
+                    $user = Auth::user();
+                    if ($user->lab_id !== null) {
+                        Auth::logout();
+                        throw ValidationException::withMessages([
+                            'login' => ['The provided credentials are incorrect.'],
+                        ]);
+                    }
+                } else {
+                    throw ValidationException::withMessages([
+                        'login' => ['The provided credentials are incorrect.'],
+                    ]);
+                }
+            } else {
+                throw ValidationException::withMessages([
+                    'login' => ['The provided credentials are incorrect.'],
+                ]);
+            }
         }
 
+        login_success:
         $user = Auth::user();
 
         if (!$user->is_active) {

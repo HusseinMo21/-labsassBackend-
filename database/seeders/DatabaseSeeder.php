@@ -10,6 +10,7 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             LabSeeder::class,
+            PlanSeeder::class,
             DemoCredentialsSeeder::class,
             TestCategorySeeder::class,
             LabTestSeeder::class,
