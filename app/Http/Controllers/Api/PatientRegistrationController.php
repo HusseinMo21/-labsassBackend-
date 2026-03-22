@@ -5,11 +5,11 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Patient;
 use App\Models\Visit;
-use App\Models\VisitTest;
-use App\Models\LabTest;
 use App\Models\TestCategory;
 use App\Models\User;
 use App\Services\LabNoGenerator;
+use App\Services\CatalogVisitTestWriter;
+use App\Services\LabCatalogCategoryService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -260,6 +260,15 @@ class PatientRegistrationController extends Controller
             
             // Patient ID (for updates)
             'patient_id' => 'nullable|exists:patient,id',
+
+            // Same catalog contract as POST /api/patients (single system)
+            'catalog_tests' => 'nullable|array',
+            'catalog_tests.*.lab_test_id' => 'required|integer|exists:lab_tests,id',
+            'catalog_tests.*.offering_id' => 'nullable|integer|exists:lab_test_offerings,id',
+            'catalog_tests.*.price' => 'nullable|numeric|min:0',
+            'catalog_packages' => 'nullable|array',
+            'catalog_packages.*.package_id' => 'required|integer|exists:lab_packages,id',
+            'catalog_packages.*.price' => 'nullable|numeric|min:0',
         ]);
 
         if ($validator->fails()) {
@@ -627,6 +636,13 @@ class PatientRegistrationController extends Controller
                 
                 // Create the visit
                 $visit = Visit::create($visitData);
+
+                app(CatalogVisitTestWriter::class)->write(
+                    $visit,
+                    $labId,
+                    $request->input('catalog_tests', []),
+                    $request->input('catalog_packages', [])
+                );
                 
                 // Debug: Log visit creation (with billing)
                 \Log::info('Visit created for patient registration (with billing)', [
@@ -636,34 +652,6 @@ class PatientRegistrationController extends Controller
                     'visit_metadata' => $visit->metadata,
                     'number_of_samples' => $data['number_of_samples'] ?? 'not_set',
                 ]);
-                
-            // Create visit test based on case type
-            $visitTest = null;
-            if (isset($data['case_type']) && !empty($data['case_type']) && $data['case_type'] !== null) {
-                try {
-                    $testCategory = TestCategory::where('name', $data['case_type'])->first();
-                    
-                    if ($testCategory) {
-                        $labTest = LabTest::where('category_id', $testCategory->id)->first();
-                        
-                        if ($labTest) {
-                            $visitTest = VisitTest::create([
-                                'visit_id' => $visit->id,
-                                'lab_id' => $visit->lab_id,
-                                'lab_test_id' => $labTest->id,
-                                'status' => 'pending',
-                                'price' => $totalAmount,
-                                'barcode_uid' => 'LAB-' . strtoupper(Str::random(8)),
-                            ]);
-                        }
-                    }
-                } catch (\Exception $e) {
-                    \Log::warning('Failed to create visit test', [
-                        'error' => $e->getMessage(),
-                        'case_type' => $data['case_type'] ?? 'null'
-                    ]);
-                }
-            }
                 
                 // Update lab request with visit information and financial data
                 try {
@@ -771,11 +759,12 @@ class PatientRegistrationController extends Controller
                     }
                 }
                 
-                // Create initial report automatically
-                if ($visitTest) {
+                // Create initial report automatically when visit has tests (catalog)
+                $firstVisitTest = $visit->visitTests()->with('labTest')->first();
+                if ($firstVisitTest) {
                     \App\Models\Report::create([
                         'lab_request_id' => $labRequest->id,
-                        'title' => 'Lab Report - ' . $visitTest->labTest->name ?? 'Test Report',
+                        'title' => 'Lab Report - ' . ($firstVisitTest->labTest->name ?? 'Test Report'),
                         'content' => 'Report generated automatically for patient ' . $patient->name,
                         'status' => 'pending',
                         'generated_by' => auth()->id() ?? 1,
@@ -1008,6 +997,13 @@ class PatientRegistrationController extends Controller
                 
                 // Create the visit
                 $visit = Visit::create($visitData);
+
+                app(CatalogVisitTestWriter::class)->write(
+                    $visit,
+                    $labId,
+                    $request->input('catalog_tests', []),
+                    $request->input('catalog_packages', [])
+                );
                 
                 // Debug: Log visit creation
                 \Log::info('Visit created for patient registration', [
@@ -1121,8 +1117,15 @@ class PatientRegistrationController extends Controller
      */
     public function getTestCategories()
     {
-        $categories = TestCategory::active()->orderBy('name')->get(['id', 'name', 'description']);
-        
+        $labId = $this->currentLabId() ?? 1;
+        $list = app(LabCatalogCategoryService::class)->listVisibleForLab($labId);
+        $categories = $list->map(fn (TestCategory $c) => [
+            'id' => $c->id,
+            'name' => $c->getAttribute('display_name') ?? $c->name,
+            'description' => $c->description,
+            'lab_id' => $c->lab_id,
+        ]);
+
         return response()->json([
             'success' => true,
             'data' => $categories,

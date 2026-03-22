@@ -117,6 +117,13 @@ Route::middleware(['auth:sanctum', 'ensure.lab'])->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/user', [AuthController::class, 'user']);
 
+    // Lab catalog (single endpoint: categories + tests + packages)
+    Route::get('labs/{lab}/catalog', [\App\Http\Controllers\Api\LabCatalogController::class, 'show']);
+    Route::patch('labs/{lab}/catalog/category-settings/{testCategory}', [\App\Http\Controllers\Api\LabCategorySettingController::class, 'upsert']);
+    Route::get('labs/{lab}/offerings', [\App\Http\Controllers\Api\LabOfferingController::class, 'index']);
+    Route::post('labs/{lab}/offerings', [\App\Http\Controllers\Api\LabOfferingController::class, 'store']);
+    Route::patch('labs/{lab}/offerings/{offering}', [\App\Http\Controllers\Api\LabOfferingController::class, 'update']);
+
     // Patient routes
     Route::get('/patients/search', [PatientController::class, 'search']);
     Route::get('/patients/{id}/visits', [PatientController::class, 'visits']);
@@ -396,7 +403,7 @@ Route::middleware(['auth:sanctum', 'ensure.lab'])->group(function () {
     });
     
 
-    // Patient Registration routes (admin and staff only)
+    // Patient Registration (legacy paths; same catalog + visit_tests logic as POST /api/patients — prefer /api/patients for new clients)
     Route::middleware(['role:admin,staff'])->group(function () {
         Route::get('/patient-registration/search', [PatientRegistrationController::class, 'search']);
         Route::get('/patient-registration/next-lab-number', [PatientRegistrationController::class, 'getNextLabNumber']);

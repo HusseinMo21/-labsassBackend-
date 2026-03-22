@@ -131,6 +131,7 @@ class MultiTenantWorkflowSeeder extends Seeder
                         'lab_test_id' => $labTestId,
                         'test_category_id' => $testCategoryId,
                         'price' => $price,
+                        'price_at_time' => $price,
                         'final_price' => $price,
                         'status' => ['pending', 'under_review', 'completed'][rand(0, 2)],
                         'barcode_uid' => Str::uuid()->toString(),

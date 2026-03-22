@@ -51,4 +51,14 @@ class Lab extends Model
     {
         return $this->hasMany(Subscription::class);
     }
+
+    public function testOfferings()
+    {
+        return $this->hasMany(LabTestOffering::class);
+    }
+
+    public function labPackages()
+    {
+        return $this->hasMany(LabPackage::class);
+    }
 }

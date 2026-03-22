@@ -14,6 +14,7 @@ class DatabaseSeeder extends Seeder
             DemoCredentialsSeeder::class,
             TestCategorySeeder::class,
             LabTestSeeder::class,
+            SyncLabCatalogFromMasterTestsSeeder::class,
             MultiTenantWorkflowSeeder::class,
         ]);
     }

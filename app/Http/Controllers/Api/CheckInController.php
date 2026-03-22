@@ -299,7 +299,13 @@ class CheckInController extends Controller
                 $visitTest = $visit->visitTests()->create([
                     'lab_id' => $visit->lab_id,
                     'lab_test_id' => $dummyLabTest->id,
-                    'price' => $testData['custom_price'],
+                    'test_category_id' => $testData['test_category_id'],
+                    'custom_test_name' => $testData['custom_test_name'],
+                    'custom_price' => $customPrice,
+                    'discount_percentage' => $discountPercentage,
+                    'final_price' => $finalPrice,
+                    'price' => $customPrice,
+                    'price_at_time' => $finalPrice,
                     'status' => 'pending',
                     'barcode_uid' => 'VT' . now()->format('YmdHis') . rand(1000, 9999),
                 ]);
@@ -437,7 +443,7 @@ class CheckInController extends Controller
                         return [
                             'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
                             'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
-                            'price' => $visitTest->final_price ?: $visitTest->price,
+                            'price' => $visitTest->unitPriceForBilling(),
                         ];
                     }),
                     'total_amount' => $totalAmount,
@@ -797,7 +803,7 @@ class CheckInController extends Controller
                 return [
                     'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
                     'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
-                    'price' => $visitTest->final_price ?: $visitTest->price,
+                    'price' => $visitTest->unitPriceForBilling(),
                 ];
             });
         }
@@ -1074,7 +1080,7 @@ class CheckInController extends Controller
                     return [
                         'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
                         'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
-                        'price' => $visitTest->final_price ?: $visitTest->price,
+                        'price' => $visitTest->unitPriceForBilling(),
                     ];
                 }),
                 'total_amount' => $visit->total_amount,

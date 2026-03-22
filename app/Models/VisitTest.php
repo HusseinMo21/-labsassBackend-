@@ -19,6 +19,7 @@ class VisitTest extends Model
         'test_category_id',
         'custom_test_name',
         'price',
+        'price_at_time',
         'custom_price',
         'discount_amount',
         'discount_percentage',
@@ -34,6 +35,7 @@ class VisitTest extends Model
 
     protected $casts = [
         'price' => 'decimal:2',
+        'price_at_time' => 'decimal:2',
         'custom_price' => 'decimal:2',
         'discount_amount' => 'decimal:2',
         'discount_percentage' => 'decimal:2',
@@ -121,6 +123,24 @@ class VisitTest extends Model
         }
         
         return $this->price;
+    }
+
+    /**
+     * Price frozen at order time (for invoices/reports after catalog changes).
+     */
+    public function unitPriceForBilling(): float
+    {
+        if ($this->final_price !== null) {
+            return (float) $this->final_price;
+        }
+        if ($this->price_at_time !== null) {
+            return (float) $this->price_at_time;
+        }
+        if ($this->custom_price !== null) {
+            return (float) $this->custom_price;
+        }
+
+        return (float) $this->price;
     }
 
     /**

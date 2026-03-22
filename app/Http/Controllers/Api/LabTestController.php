@@ -65,17 +65,20 @@ class LabTestController extends Controller
         ], 201);
     }
 
-    public function show(LabTest $labTest)
+    /**
+     * Route: api/tests/{test} — parameter name must be $test for implicit binding.
+     */
+    public function show(LabTest $test)
     {
-        $labTest->load('category');
-        return response()->json($labTest);
+        $test->load('category');
+        return response()->json($test);
     }
 
-    public function update(Request $request, LabTest $labTest)
+    public function update(Request $request, LabTest $test)
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'code' => 'required|string|max:50|unique:lab_tests,code,' . $labTest->id,
+            'code' => 'required|string|max:50|unique:lab_tests,code,' . $test->id,
             'description' => 'nullable|string',
             'price' => 'required|numeric|min:0',
             'unit' => 'nullable|string|max:50',
@@ -93,23 +96,23 @@ class LabTestController extends Controller
             ], 422);
         }
 
-        $labTest->update($validator->validated());
+        $test->update($validator->validated());
 
         return response()->json([
             'message' => 'Lab test updated successfully',
-            'test' => $labTest->fresh()->load('category'),
+            'test' => $test->fresh()->load('category'),
         ]);
     }
 
-    public function destroy(LabTest $labTest)
+    public function destroy(LabTest $test)
     {
-        if ($labTest->visitTests()->count() > 0) {
+        if ($test->visitTests()->count() > 0) {
             return response()->json([
                 'message' => 'Cannot delete test with existing orders',
             ], 422);
         }
 
-        $labTest->delete();
+        $test->delete();
 
         return response()->json([
             'message' => 'Lab test deleted successfully',

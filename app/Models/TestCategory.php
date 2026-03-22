@@ -10,6 +10,7 @@ class TestCategory extends Model
     use HasFactory;
 
     protected $fillable = [
+        'lab_id',
         'name',
         'code',
         'description',
@@ -27,7 +28,24 @@ class TestCategory extends Model
 
     public function labTests()
     {
-        return $this->hasMany(LabTest::class);
+        return $this->hasMany(LabTest::class, 'category_id');
+    }
+
+    public function lab()
+    {
+        return $this->belongsTo(Lab::class);
+    }
+
+    public function scopeGlobalTemplates($query)
+    {
+        return $query->whereNull('lab_id');
+    }
+
+    public function scopeForLab($query, int $labId)
+    {
+        return $query->where(function ($q) use ($labId) {
+            $q->whereNull('lab_id')->orWhere('lab_id', $labId);
+        });
     }
 
     public function scopeActive($query)

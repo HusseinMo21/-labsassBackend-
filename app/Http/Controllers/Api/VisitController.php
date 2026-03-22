@@ -656,15 +656,18 @@ class VisitController extends Controller
             $totalAmount = 0;
             foreach ($request->tests as $testData) {
                 $labTest = LabTest::find($testData['lab_test_id']);
+                $line = (float) $labTest->price;
                 $visitTest = VisitTest::create([
                     'visit_id' => $visit->id,
                     'lab_id' => $visit->lab_id,
                     'lab_test_id' => $testData['lab_test_id'],
+                    'test_category_id' => $labTest->category_id,
                     'status' => 'pending',
                     'barcode_uid' => 'LAB-' . strtoupper(Str::random(8)),
-                    'price' => $labTest->price,
+                    'price' => $line,
+                    'price_at_time' => $line,
                 ]);
-                $totalAmount += $labTest->price;
+                $totalAmount += $line;
             }
 
             // Update amounts
@@ -1438,7 +1441,7 @@ class VisitController extends Controller
                 return [
                     'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
                     'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
-                    'price' => $visitTest->final_price ?: $visitTest->price,
+                    'price' => $visitTest->unitPriceForBilling(),
                 ];
             });
         }

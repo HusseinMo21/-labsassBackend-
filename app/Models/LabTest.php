@@ -39,6 +39,11 @@ class LabTest extends Model
         return $this->hasMany(VisitTest::class);
     }
 
+    public function offerings()
+    {
+        return $this->hasMany(LabTestOffering::class);
+    }
+
     public function criticalValue()
     {
         return $this->hasOne(CriticalValue::class);

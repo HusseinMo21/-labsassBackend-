@@ -178,10 +178,12 @@ class ReviewReportsController extends Controller
                         $categoryCode = 'lab';
                     }
                     
-                    // Determine price
+                    // Determine price (avoid live lab_tests.price when snapshot exists)
                     $price = 0;
                     if ($test->final_price) {
                         $price = $test->final_price;
+                    } elseif ($test->price_at_time) {
+                        $price = $test->price_at_time;
                     } elseif ($test->custom_price) {
                         $price = $test->custom_price;
                     } elseif ($test->labTest && $test->labTest->price) {

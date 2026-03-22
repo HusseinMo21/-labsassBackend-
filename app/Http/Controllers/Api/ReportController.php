@@ -293,7 +293,9 @@ class ReportController extends Controller
             'total_tests_ordered' => (clone $summaryQuery)->count(), // Keep for backward compatibility
             'completed_tests' => (clone $summaryQuery)->where('visit_tests.status', 'completed')->count(),
             'pending_tests' => (clone $summaryQuery)->where('visit_tests.status', 'pending')->count(),
-            'total_test_revenue' => $revenueQuery->sum('visit_tests.price'),
+            'total_test_revenue' => (clone $revenueQuery)->selectRaw(
+                'SUM(COALESCE(visit_tests.price_at_time, visit_tests.final_price, visit_tests.price)) as revenue_sum'
+            )->value('revenue_sum') ?? 0,
         ];
 
         return response()->json([

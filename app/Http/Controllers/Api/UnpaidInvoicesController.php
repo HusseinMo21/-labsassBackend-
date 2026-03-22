@@ -534,7 +534,7 @@ class UnpaidInvoicesController extends Controller
                 return [
                     'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
                     'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
-                    'price' => $visitTest->final_price ?: $visitTest->price,
+                    'price' => $visitTest->unitPriceForBilling(),
                 ];
             });
         }

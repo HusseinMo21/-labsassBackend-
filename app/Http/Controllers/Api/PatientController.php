@@ -5,10 +5,12 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Patient;
 use App\Models\LabRequest;
+use App\Models\VisitTest;
 use App\Models\Doctor;
 use App\Models\Organization;
 use App\Services\LabNoGenerator;
 use App\Services\BarcodeGenerator;
+use App\Services\CatalogVisitTestWriter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use App\Models\User;
@@ -21,8 +23,11 @@ class PatientController extends Controller
     protected $labNoGenerator;
     protected $barcodeGenerator;
 
-    public function __construct(LabNoGenerator $labNoGenerator, BarcodeGenerator $barcodeGenerator)
-    {
+    public function __construct(
+        LabNoGenerator $labNoGenerator,
+        BarcodeGenerator $barcodeGenerator,
+        protected CatalogVisitTestWriter $catalogVisitTestWriter
+    ) {
         $this->labNoGenerator = $labNoGenerator;
         $this->barcodeGenerator = $barcodeGenerator;
     }
@@ -51,6 +56,15 @@ class PatientController extends Controller
         );
     }
 
+    private function createVisitTestsFromCatalogRequest(\App\Models\Visit $visit, int $labId, Request $request): void
+    {
+        $catalogTests = $request->input('catalog_tests', []);
+        $catalogPackages = $request->input('catalog_packages', []);
+        if (empty($catalogTests) && empty($catalogPackages)) {
+            return;
+        }
+        $this->catalogVisitTestWriter->write($visit, $labId, $catalogTests, $catalogPackages);
+    }
 
     public function index(Request $request)
     {
@@ -465,6 +479,13 @@ class PatientController extends Controller
             'attendance_date' => 'nullable|date',
             'delivery_date' => 'nullable|date',
             'previous_tests' => 'nullable|string|max:255',
+            'catalog_tests' => 'nullable|array',
+            'catalog_tests.*.lab_test_id' => 'required|integer|exists:lab_tests,id',
+            'catalog_tests.*.offering_id' => 'nullable|integer|exists:lab_test_offerings,id',
+            'catalog_tests.*.price' => 'nullable|numeric|min:0',
+            'catalog_packages' => 'nullable|array',
+            'catalog_packages.*.package_id' => 'required|integer|exists:lab_packages,id',
+            'catalog_packages.*.price' => 'nullable|numeric|min:0',
         ]);
 
         if ($validator->fails()) {
@@ -705,6 +726,10 @@ class PatientController extends Controller
                 'visit_id' => $visit->id,
                 'lab_request_id' => $labRequest->id
             ]);
+        }
+
+        if ($visit) {
+            $this->createVisitTestsFromCatalogRequest($visit, $labId, $request);
         }
 
         // Create initial report automatically for the patient
