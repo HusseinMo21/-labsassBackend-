@@ -407,6 +407,7 @@ Route::middleware(['auth:sanctum', 'ensure.lab'])->group(function () {
     Route::middleware(['role:admin,staff'])->group(function () {
         Route::get('/patient-registration/search', [PatientRegistrationController::class, 'search']);
         Route::get('/patient-registration/next-lab-number', [PatientRegistrationController::class, 'getNextLabNumber']);
+        Route::get('/patient-registration/preview-lab-number', [PatientRegistrationController::class, 'previewNextLabNumber']);
         Route::post('/patient-registration/submit', [PatientRegistrationController::class, 'submit']);
         Route::get('/patient-registration/test-categories', [PatientRegistrationController::class, 'getTestCategories']);
     });

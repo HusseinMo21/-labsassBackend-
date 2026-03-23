@@ -75,15 +75,38 @@ class ReportController extends Controller
             $endDate = Carbon::parse($endDate);
         }
 
+        $labId = $this->currentLabId();
+        if (! $labId) {
+            return response()->json([
+                'daily_revenue' => [],
+                'monthly_revenue' => [],
+                'payment_methods' => collect([]),
+                'summary' => [
+                    'total_revenue' => 0,
+                    'total_visits' => 0,
+                    'average_revenue_per_visit' => 0,
+                    'total_invoices' => 0,
+                    'paid_invoices' => 0,
+                    'pending_amount' => 0,
+                ],
+                'period' => [
+                    'start_date' => $startDate->toDateString(),
+                    'end_date' => $endDate->toDateString(),
+                ],
+            ]);
+        }
+
+        $visitScope = Visit::withoutGlobalScope('lab')->where('lab_id', $labId);
+
         // Daily revenue
-        $dailyRevenue = Visit::whereBetween('visit_date', [$startDate, $endDate])
+        $dailyRevenue = (clone $visitScope)->whereBetween('visit_date', [$startDate, $endDate])
             ->selectRaw('DATE(visit_date) as date, SUM(final_amount) as revenue, COUNT(*) as visits')
             ->groupBy('date')
             ->orderBy('date')
             ->get();
 
         // Monthly revenue
-        $monthlyRevenue = Visit::whereBetween('visit_date', [$startDate->startOfYear(), $endDate->endOfYear()])
+        $monthlyRevenue = (clone $visitScope)->whereBetween('visit_date', [$startDate->copy()->startOfYear(), $endDate->copy()->endOfYear()])
             ->selectRaw('YEAR(visit_date) as year, MONTH(visit_date) as month, SUM(final_amount) as revenue, COUNT(*) as visits')
             ->groupBy('year', 'month')
             ->orderBy('year')
@@ -98,10 +121,11 @@ class ReportController extends Controller
         ]);
 
         // Summary stats
+        $visitInRange = (clone $visitScope)->whereBetween('visit_date', [$startDate, $endDate]);
         $summary = [
-            'total_revenue' => Visit::whereBetween('visit_date', [$startDate, $endDate])->sum('final_amount'),
-            'total_visits' => Visit::whereBetween('visit_date', [$startDate, $endDate])->count(),
-            'average_revenue_per_visit' => Visit::whereBetween('visit_date', [$startDate, $endDate])->avg('final_amount'),
+            'total_revenue' => (clone $visitInRange)->sum('final_amount'),
+            'total_visits' => (clone $visitInRange)->count(),
+            'average_revenue_per_visit' => (clone $visitInRange)->avg('final_amount'),
             'total_invoices' => Invoice::whereBetween('created_at', [$startDate, $endDate])->count(),
             'paid_invoices' => Invoice::whereBetween('created_at', [$startDate, $endDate])->where('remaining', 0)->count(),
             'pending_amount' => Invoice::whereBetween('created_at', [$startDate, $endDate])->sum('remaining'),
@@ -137,8 +161,31 @@ class ReportController extends Controller
                 $endDate = null;
             }
 
+            $labId = $this->currentLabId();
+            if (! $labId) {
+                return response()->json([
+                    'new_patients' => [],
+                    'demographics' => [],
+                    'age_distribution' => [],
+                    'top_patients' => [],
+                    'summary' => [
+                        'total_patients' => 0,
+                        'new_patients' => 0,
+                        'active_patients' => 0,
+                        'average_visits_per_patient' => 0,
+                    ],
+                    'period' => $applyDateFilter ? [
+                        'start_date' => $startDate->toDateString(),
+                        'end_date' => $endDate->toDateString(),
+                    ] : null,
+                ]);
+            }
+
+            $labPatients = fn () => Patient::withoutGlobalScope('lab')->where('lab_id', $labId);
+            $visitsForLab = fn ($q) => $q->withoutGlobalScope('lab')->where('lab_id', $labId);
+
         // New patients per day
-        $newPatientsQuery = Patient::query();
+        $newPatientsQuery = $labPatients();
         if ($applyDateFilter) {
             $newPatientsQuery->whereBetween('created_at', [$startDate, $endDate]);
         }
@@ -148,33 +195,34 @@ class ReportController extends Controller
             ->get();
 
         // Patient demographics
-        $demographics = Patient::selectRaw('gender, COUNT(*) as count')
+        $demographics = $labPatients()->selectRaw('gender, COUNT(*) as count')
             ->groupBy('gender')
             ->get();
 
         // Age distribution (simplified)
-        $ageDistribution = Patient::selectRaw('gender, COUNT(*) as count')
+        $ageDistribution = $labPatients()->selectRaw('gender, COUNT(*) as count')
             ->groupBy('gender')
             ->get();
 
         // Top patients by visits (simplified query)
-        $topPatients = Patient::withCount('visits')
-            ->withSum('visits', 'final_amount')
+        $topPatients = $labPatients()
+            ->withCount(['visits' => $visitsForLab])
+            ->withSum(['visits' => $visitsForLab], 'final_amount')
             ->orderByDesc('visits_count')
             ->limit(10)
             ->get();
 
         // Summary stats (simplified)
-        $newPatientsCountQuery = Patient::query();
+        $newPatientsCountQuery = $labPatients();
         if ($applyDateFilter) {
             $newPatientsCountQuery->whereBetween('created_at', [$startDate, $endDate]);
         }
         
         $summary = [
-            'total_patients' => Patient::count(),
+            'total_patients' => $labPatients()->count(),
             'new_patients' => $newPatientsCountQuery->count(),
-            'active_patients' => Patient::whereHas('visits')->count(),
-            'average_visits_per_patient' => Patient::withCount('visits')->get()->avg('visits_count'),
+            'active_patients' => $labPatients()->whereHas('visits', $visitsForLab)->count(),
+            'average_visits_per_patient' => $labPatients()->withCount(['visits' => $visitsForLab])->get()->avg('visits_count'),
         ];
 
             return response()->json([
@@ -216,34 +264,64 @@ class ReportController extends Controller
             $endDate = null;
         }
 
+        $labId = $this->currentLabId();
+        if (! $labId) {
+            return response()->json([
+                'popular_tests' => [],
+                'tests_by_category' => [],
+                'test_status' => [],
+                'daily_tests' => [],
+                'summary' => [
+                    'total_tests' => 0,
+                    'total_tests_ordered' => 0,
+                    'completed_tests' => 0,
+                    'pending_tests' => 0,
+                    'total_test_revenue' => 0,
+                ],
+                'period' => $applyDateFilter ? [
+                    'start_date' => $startDate->toDateString(),
+                    'end_date' => $endDate->toDateString(),
+                ] : null,
+            ]);
+        }
+
+        // Match /api/visits?exclude_completed=true (Reports page hides completed visits)
+        $excludeCompleted = $request->boolean('exclude_completed');
+
+        $scopeVisitTestsForLab = function ($query) use ($startDate, $endDate, $applyDateFilter, $labId, $excludeCompleted) {
+            $query->where('visit_tests.lab_id', $labId);
+            if ($applyDateFilter || $excludeCompleted) {
+                $query->whereHas('visit', function ($q) use ($startDate, $endDate, $applyDateFilter, $labId, $excludeCompleted) {
+                    $q->withoutGlobalScope('lab')->where('lab_id', $labId);
+                    if ($applyDateFilter) {
+                        $q->whereBetween('visit_date', [$startDate, $endDate]);
+                    }
+                    if ($excludeCompleted) {
+                        $q->where('status', '!=', 'completed');
+                    }
+                });
+            }
+        };
+
+        $applyVisitJoinFilters = function ($q) use ($applyDateFilter, $startDate, $endDate, $excludeCompleted) {
+            if ($applyDateFilter) {
+                $q->whereBetween('visits.visit_date', [$startDate, $endDate]);
+            }
+            if ($excludeCompleted) {
+                $q->where('visits.status', '!=', 'completed');
+            }
+        };
+
         // Most requested tests
-        $popularTests = LabTest::withCount(['visitTests' => function ($query) use ($startDate, $endDate, $applyDateFilter) {
-            if ($applyDateFilter) {
-                $query->whereHas('visit', function ($q) use ($startDate, $endDate) {
-                    $q->whereBetween('visit_date', [$startDate, $endDate]);
-                });
-            }
-        }])
-        ->withSum(['visitTests' => function ($query) use ($startDate, $endDate, $applyDateFilter) {
-            if ($applyDateFilter) {
-                $query->whereHas('visit', function ($q) use ($startDate, $endDate) {
-                    $q->whereBetween('visit_date', [$startDate, $endDate]);
-                });
-            }
-        }], 'price')
+        $popularTests = LabTest::withCount(['visitTests' => $scopeVisitTestsForLab])
+        ->withSum(['visitTests' => $scopeVisitTestsForLab], 'price')
         ->orderByDesc('visit_tests_count')
         ->limit(10)
         ->get();
 
         // Tests by category
         $testsByCategory = LabTest::with('category')
-            ->withCount(['visitTests' => function ($query) use ($startDate, $endDate, $applyDateFilter) {
-                if ($applyDateFilter) {
-                    $query->whereHas('visit', function ($q) use ($startDate, $endDate) {
-                        $q->whereBetween('visit_date', [$startDate, $endDate]);
-                    });
-                }
-            }])
+            ->withCount(['visitTests' => $scopeVisitTestsForLab])
             ->get()
             ->groupBy('category.name')
             ->map(function ($tests) {
@@ -256,20 +334,20 @@ class ReportController extends Controller
 
         // Test completion status
         $testStatusQuery = DB::table('visit_tests')
-            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id');
-        if ($applyDateFilter) {
-            $testStatusQuery->whereBetween('visits.visit_date', [$startDate, $endDate]);
-        }
+            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
+            ->where('visit_tests.lab_id', $labId)
+            ->where('visits.lab_id', $labId);
+        $applyVisitJoinFilters($testStatusQuery);
         $testStatus = $testStatusQuery->selectRaw('visit_tests.status, COUNT(*) as count')
             ->groupBy('visit_tests.status')
             ->get();
 
         // Daily test volume
         $dailyTestsQuery = DB::table('visit_tests')
-            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id');
-        if ($applyDateFilter) {
-            $dailyTestsQuery->whereBetween('visits.visit_date', [$startDate, $endDate]);
-        }
+            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
+            ->where('visit_tests.lab_id', $labId)
+            ->where('visits.lab_id', $labId);
+        $applyVisitJoinFilters($dailyTestsQuery);
         $dailyTests = $dailyTestsQuery->selectRaw('DATE(visits.visit_date) as date, COUNT(*) as count')
             ->groupBy('date')
             ->orderBy('date')
@@ -277,16 +355,16 @@ class ReportController extends Controller
 
         // Summary stats
         $summaryQuery = DB::table('visit_tests')
-            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id');
-        if ($applyDateFilter) {
-            $summaryQuery->whereBetween('visits.visit_date', [$startDate, $endDate]);
-        }
+            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
+            ->where('visit_tests.lab_id', $labId)
+            ->where('visits.lab_id', $labId);
+        $applyVisitJoinFilters($summaryQuery);
         
         $revenueQuery = DB::table('visit_tests')
-            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id');
-        if ($applyDateFilter) {
-            $revenueQuery->whereBetween('visits.visit_date', [$startDate, $endDate]);
-        }
+            ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
+            ->where('visit_tests.lab_id', $labId)
+            ->where('visits.lab_id', $labId);
+        $applyVisitJoinFilters($revenueQuery);
         
         $summary = [
             'total_tests' => (clone $summaryQuery)->count(),
@@ -327,10 +405,38 @@ class ReportController extends Controller
             $endDate = null;
         }
 
+        $labId = $this->currentLabId();
+        if (! $labId) {
+            return response()->json([
+                'summary' => [
+                    'total_revenue' => 0,
+                    'total_expenses' => 0,
+                    'net_profit' => 0,
+                    'profit_margin' => 0,
+                    'total_visits' => 0,
+                    'total_expense_count' => 0,
+                    'average_revenue_per_visit' => 0,
+                    'average_expense_per_item' => 0,
+                ],
+                'daily_financial' => [],
+                'expenses_by_category' => collect([]),
+                'revenue_by_payment_method' => collect([]),
+                'period' => $applyDateFilter ? [
+                    'start_date' => $startDate->toDateString(),
+                    'end_date' => $endDate->toDateString(),
+                ] : null,
+            ]);
+        }
+
+        $excludeCompleted = $request->boolean('exclude_completed');
+
         // Revenue data
-        $revenueQuery = Visit::query();
+        $revenueQuery = Visit::withoutGlobalScope('lab')->where('lab_id', $labId);
         if ($applyDateFilter) {
             $revenueQuery->whereBetween('visit_date', [$startDate, $endDate]);
+        }
+        if ($excludeCompleted) {
+            $revenueQuery->where('status', '!=', 'completed');
         }
         $totalRevenue = $revenueQuery->sum('final_amount');
         $totalVisits = (clone $revenueQuery)->count();
@@ -343,9 +449,12 @@ class ReportController extends Controller
         $netProfit = $totalRevenue - $totalExpenses;
         
         // Daily financial data
-        $dailyFinancialQuery = DB::table('visits');
+        $dailyFinancialQuery = DB::table('visits')->where('lab_id', $labId);
         if ($applyDateFilter) {
             $dailyFinancialQuery->whereBetween('visit_date', [$startDate, $endDate]);
+        }
+        if ($excludeCompleted) {
+            $dailyFinancialQuery->where('status', '!=', 'completed');
         }
         $dailyFinancial = $dailyFinancialQuery->selectRaw('DATE(visit_date) as date, SUM(final_amount) as revenue, COUNT(*) as visits')
             ->groupBy('date')
@@ -393,15 +502,17 @@ class ReportController extends Controller
         $startDate = $request->get('start_date', now()->startOfMonth()->toDateString());
         $endDate = $request->get('end_date', now()->endOfMonth()->toDateString());
 
+        $labId = $this->currentLabId();
+
         switch ($type) {
             case 'revenue':
-                $data = $this->getRevenueData($startDate, $endDate);
+                $data = $this->getRevenueData($startDate, $endDate, $labId);
                 break;
             case 'patients':
-                $data = $this->getPatientsData($startDate, $endDate);
+                $data = $this->getPatientsData($startDate, $endDate, $labId);
                 break;
             case 'tests':
-                $data = $this->getTestsData($startDate, $endDate);
+                $data = $this->getTestsData($startDate, $endDate, $labId);
                 break;
             case 'inventory':
                 $data = $this->getInventoryData();
@@ -417,9 +528,15 @@ class ReportController extends Controller
         return response()->json($data);
     }
 
-    private function getRevenueData($startDate, $endDate)
+    private function getRevenueData($startDate, $endDate, ?int $labId)
     {
-        return Visit::whereBetween('visit_date', [$startDate, $endDate])
+        if (! $labId) {
+            return collect();
+        }
+
+        return Visit::withoutGlobalScope('lab')
+            ->where('lab_id', $labId)
+            ->whereBetween('visit_date', [$startDate, $endDate])
             ->with(['patient', 'createdBy'])
             ->get()
             ->map(function ($visit) {
@@ -436,15 +553,23 @@ class ReportController extends Controller
             });
     }
 
-    private function getPatientsData($startDate, $endDate)
+    private function getPatientsData($startDate, $endDate, ?int $labId)
     {
-        return Patient::whereBetween('created_at', [$startDate, $endDate])
-            ->withCount(['visits' => function ($query) use ($startDate, $endDate) {
-                $query->whereBetween('visit_date', [$startDate, $endDate]);
-            }])
-            ->withSum(['visits' => function ($query) use ($startDate, $endDate) {
-                $query->whereBetween('visit_date', [$startDate, $endDate]);
-            }], 'final_amount')
+        if (! $labId) {
+            return collect();
+        }
+
+        $visitsForLabInRange = function ($query) use ($startDate, $endDate, $labId) {
+            $query->withoutGlobalScope('lab')
+                ->where('lab_id', $labId)
+                ->whereBetween('visit_date', [$startDate, $endDate]);
+        };
+
+        return Patient::withoutGlobalScope('lab')
+            ->where('lab_id', $labId)
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->withCount(['visits' => $visitsForLabInRange])
+            ->withSum(['visits' => $visitsForLabInRange], 'final_amount')
             ->get()
             ->map(function ($patient) {
                 return [
@@ -459,17 +584,24 @@ class ReportController extends Controller
             });
     }
 
-    private function getTestsData($startDate, $endDate)
+    private function getTestsData($startDate, $endDate, ?int $labId)
     {
+        if (! $labId) {
+            return collect();
+        }
+
         return DB::table('visit_tests')
             ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
             ->join('lab_tests', 'visit_tests.lab_test_id', '=', 'lab_tests.id')
-            ->join('patients', 'visits.patient_id', '=', 'patients.id')
+            ->join('patient', 'visits.patient_id', '=', 'patient.id')
+            ->where('visit_tests.lab_id', $labId)
+            ->where('visits.lab_id', $labId)
+            ->where('patient.lab_id', $labId)
             ->whereBetween('visits.visit_date', [$startDate, $endDate])
             ->select([
                 'lab_tests.name as test_name',
                 'lab_tests.code as test_code',
-                'patients.name as patient_name',
+                'patient.name as patient_name',
                 'visits.visit_date',
                 'visit_tests.result_value',
                 'visit_tests.result_status',

@@ -7,9 +7,12 @@ use App\Models\Visit;
 use App\Models\VisitTest;
 use App\Models\Patient;
 use App\Models\LabTest;
+use App\Services\CatalogVisitTestWriter;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class VisitController extends Controller
 {
@@ -564,16 +567,44 @@ class VisitController extends Controller
 
     public function getDashboardStats()
     {
-        $totalPatients = \App\Models\Patient::count();
-        $totalVisits = Visit::count();
-        $pendingTests = VisitTest::where('status', 'pending')->count();
-        $underReviewTests = VisitTest::where('status', 'under_review')->count();
-        $completedTests = VisitTest::where('status', 'completed')->count();
-        $totalTests = VisitTest::count();
-        $totalRevenue = Visit::sum('total_amount');
-        // Add more stats as needed
+        $labId = $this->currentLabId();
+        if (! $labId) {
+            return response()->json([
+                'totalPatients' => 0,
+                'totalVisits' => 0,
+                'totalRevenue' => 0,
+                'pendingTests' => 0,
+                'underReviewTests' => 0,
+                'completedTests' => 0,
+                'totalTests' => 0,
+                'recentVisits' => [],
+            ]);
+        }
 
-        $recentVisits = Visit::with(['patient', 'visitTests.labTest', 'labRequest'])
+        // Explicit lab_id: VisitTest has no BelongsToLab global scope — counts were leaking across labs.
+        $patientQuery = Patient::withoutGlobalScope('lab')->where('lab_id', $labId);
+        $visitQuery = Visit::withoutGlobalScope('lab')->where('lab_id', $labId);
+        // Match Reports & Analytics: only tests on visits that are not completed (completed cases live elsewhere).
+        $visitTestQuery = VisitTest::query()
+            ->where('lab_id', $labId)
+            ->whereHas('visit', function ($q) use ($labId) {
+                $q->withoutGlobalScope('lab')
+                    ->where('lab_id', $labId)
+                    ->where('status', '!=', 'completed');
+            });
+
+        $totalPatients = (clone $patientQuery)->count();
+        $totalVisits = (clone $visitQuery)->count();
+        $totalRevenue = (clone $visitQuery)->sum('total_amount');
+        $pendingTests = (clone $visitTestQuery)->where('status', 'pending')->count();
+        $underReviewTests = (clone $visitTestQuery)->where('status', 'under_review')->count();
+        $completedTests = (clone $visitTestQuery)->where('status', 'completed')->count();
+        $totalTests = (clone $visitTestQuery)->count();
+
+        $recentVisits = Visit::withoutGlobalScope('lab')
+            ->where('lab_id', $labId)
+            ->where('status', '!=', 'completed')
+            ->with(['patient', 'visitTests.labTest', 'labRequest'])
             ->orderBy('created_at', 'desc')
             ->limit(5)
             ->get();
@@ -586,8 +617,7 @@ class VisitController extends Controller
             'underReviewTests' => $underReviewTests,
             'completedTests' => $completedTests,
             'totalTests' => $totalTests,
-            // Add more as needed
-            'recentVisits' => $recentVisits
+            'recentVisits' => $recentVisits,
         ]);
     }
 
@@ -617,31 +647,68 @@ class VisitController extends Controller
     public function createVisit(Request $request)
     {
         \Log::info('Create Visit Request', $request->all());
-        $request->validate([
+        $labId = $this->currentLabId() ?? 1;
+
+        $validator = Validator::make($request->all(), [
             'patient_id' => 'required|exists:patient,id',
-            'tests' => 'required|array|min:1',
-            'tests.*.lab_test_id' => 'required|exists:lab_tests,id',
+            'catalog_tests' => 'nullable|array',
+            'catalog_tests.*.offering_id' => [
+                'required',
+                'integer',
+                Rule::exists('lab_test_offerings', 'id')->where(fn ($q) => $q->where('lab_id', $labId)->where('is_active', true)),
+            ],
+            'catalog_tests.*.test_name' => 'nullable|string|max:255',
+            'catalog_packages' => 'nullable|array',
+            'catalog_packages.*.package_id' => [
+                'required',
+                'integer',
+                Rule::exists('lab_packages', 'id')->where(fn ($q) => $q->where('lab_id', $labId)->where('is_active', true)),
+            ],
+            'catalog_packages.*.price' => 'nullable|numeric|min:0',
             'notes' => 'nullable|string',
         ]);
 
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $ct = $request->input('catalog_tests', []);
+        $cp = $request->input('catalog_packages', []);
+        if (count($ct) + count($cp) < 1) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => ['catalog_tests' => ['Provide at least one catalog test (offering) or package.']],
+            ], 422);
+        }
+
+        $writer = app(CatalogVisitTestWriter::class);
+        try {
+            foreach ($cp as $pkgRow) {
+                $pid = (int) ($pkgRow['package_id'] ?? 0);
+                if ($pid > 0) {
+                    $writer->assertPackageResolvableForLab($labId, $pid);
+                }
+            }
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
         DB::beginTransaction();
         try {
-            // Generate a unique visit number
             $nextId = (Visit::max('id') ?? 0) + 1;
             $visitNumber = 'VIS-' . date('Ymd') . '-' . str_pad($nextId, 6, '0', STR_PAD_LEFT);
 
-            // Get current staff shift
             $currentShift = \App\Models\Shift::where('staff_id', auth()->id())
                 ->where('status', 'open')
                 ->whereDate('opened_at', today())
                 ->first();
 
-            $labId = $this->currentLabId() ?? 1;
             $visit = Visit::create([
                 'lab_id' => $labId,
-                // Required from frontend:
                 'patient_id' => $request->patient_id,
-                // Generated automatically:
                 'visit_number' => $visitNumber,
                 'visit_date' => now(),
                 'visit_time' => now()->format('H:i:s'),
@@ -649,49 +716,42 @@ class VisitController extends Controller
                 'notes' => $request->notes,
                 'total_amount' => 0,
                 'final_amount' => 0,
-                'shift_id' => $currentShift?->id, // Link to current shift
+                'shift_id' => $currentShift?->id,
                 'processed_by_staff' => auth()->id(),
             ]);
 
-            $totalAmount = 0;
-            foreach ($request->tests as $testData) {
-                $labTest = LabTest::find($testData['lab_test_id']);
-                $line = (float) $labTest->price;
-                $visitTest = VisitTest::create([
-                    'visit_id' => $visit->id,
-                    'lab_id' => $visit->lab_id,
-                    'lab_test_id' => $testData['lab_test_id'],
-                    'test_category_id' => $labTest->category_id,
-                    'status' => 'pending',
-                    'barcode_uid' => 'LAB-' . strtoupper(Str::random(8)),
-                    'price' => $line,
-                    'price_at_time' => $line,
-                ]);
-                $totalAmount += $line;
+            try {
+                $createdLines = $writer->write($visit, $labId, $ct, $cp);
+            } catch (\InvalidArgumentException $e) {
+                DB::rollBack();
+
+                return response()->json(['message' => $e->getMessage()], 422);
             }
 
-            // Update amounts
-            $visit->update([
-                'total_amount' => $totalAmount,
-                'final_amount' => $totalAmount, // If you have discounts, update this accordingly
-            ]);
+            if ($createdLines < 1) {
+                DB::rollBack();
 
-            // Create initial report automatically for each visit test
+                return response()->json([
+                    'message' => 'No visit test lines were created from the catalog selection.',
+                ], 422);
+            }
+
+            $writer->syncVisitTotalsFromVisitTests($visit->fresh());
+
+            $visit->refresh();
+
             foreach ($visit->visitTests as $visitTest) {
                 try {
                     \App\Models\Report::create([
-                        'title' => 'Lab Report - ' . $visitTest->labTest->name ?? 'Test Report',
+                        'title' => 'Lab Report - ' . ($visitTest->test_name ?? $visitTest->labTest->name ?? 'Test Report'),
                         'content' => 'Report generated automatically for visit ' . $visit->visit_number,
                         'status' => 'pending',
                         'generated_by' => auth()->id() ?? 1,
                         'generated_at' => now(),
                         'created_at' => now(),
                     ]);
-                    
-                    \Log::info('Report created automatically for visit test: ' . $visitTest->id);
                 } catch (\Exception $e) {
                     \Log::error('Failed to create report for visit test: ' . $e->getMessage());
-                    // Don't fail visit creation if report creation fails
                 }
             }
 
@@ -699,11 +759,12 @@ class VisitController extends Controller
 
             return response()->json([
                 'message' => 'Visit created successfully',
-                'visit' => $visit->load(['patient', 'visitTests.labTest'])
+                'visit' => $visit->load(['patient', 'visitTests.labTest']),
             ], 201);
 
         } catch (\Exception $e) {
             DB::rollback();
+
             return response()->json(['message' => 'Error creating visit', 'error' => $e->getMessage(), 'trace' => $e->getTraceAsString()], 500);
         }
     }

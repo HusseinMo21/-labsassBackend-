@@ -10,6 +10,21 @@ use Illuminate\Support\Facades\Validator;
 
 class LabTestController extends Controller
 {
+    /**
+     * Master catalog (lab_tests) is maintained by platform admins only.
+     */
+    protected function ensurePlatformMayEditMasterCatalog(Request $request): ?\Illuminate\Http\JsonResponse
+    {
+        $user = $request->user();
+        if ($user && $user->lab_id !== null) {
+            return response()->json([
+                'message' => 'Only platform administrators can create, update, or delete master catalog tests.',
+            ], 403);
+        }
+
+        return null;
+    }
+
     public function index(Request $request)
     {
         $query = LabTest::with('category');
@@ -37,6 +52,10 @@ class LabTestController extends Controller
 
     public function store(Request $request)
     {
+        if ($r = $this->ensurePlatformMayEditMasterCatalog($request)) {
+            return $r;
+        }
+
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'code' => 'required|string|max:50|unique:lab_tests,code',
@@ -76,6 +95,10 @@ class LabTestController extends Controller
 
     public function update(Request $request, LabTest $test)
     {
+        if ($r = $this->ensurePlatformMayEditMasterCatalog($request)) {
+            return $r;
+        }
+
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'code' => 'required|string|max:50|unique:lab_tests,code,' . $test->id,
@@ -104,8 +127,12 @@ class LabTestController extends Controller
         ]);
     }
 
-    public function destroy(LabTest $test)
+    public function destroy(Request $request, LabTest $test)
     {
+        if ($r = $this->ensurePlatformMayEditMasterCatalog($request)) {
+            return $r;
+        }
+
         if ($test->visitTests()->count() > 0) {
             return response()->json([
                 'message' => 'Cannot delete test with existing orders',

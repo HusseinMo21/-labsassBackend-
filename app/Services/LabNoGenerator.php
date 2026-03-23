@@ -26,8 +26,8 @@ class LabNoGenerator
                 // Get next sequence number with row-level locking
                 $sequence = LabSequence::getNextSequence($year, $labId);
                 
-                // Format the base lab number (sequence-year format to match existing data)
-                $baseLabNo = sprintf('%d-%d', $sequence, $year);
+                // Format: {year}-{n} per lab (e.g. 2026-1, 2026-2). Sequence is scoped by lab_id + year in lab_sequences.
+                $baseLabNo = sprintf('%d-%d', $year, $sequence);
                 
                 // Create full lab number with suffix
                 $fullLabNo = $baseLabNo . ($suffix ?: '');
@@ -90,17 +90,41 @@ class LabNoGenerator
             $suffix = $matches[2];
         }
         
-        // Parse sequence and year (sequence-year format)
+        $yearInRange = static function (int $y): bool {
+            return $y >= 2000 && $y <= 2100;
+        };
+
+        // New format: year-sequence (e.g. 2026-1), per lab
+        if (preg_match('/^(\d{4})-(\d+)$/', $labNo, $matches)) {
+            $y = (int) $matches[1];
+            if ($yearInRange($y)) {
+                return [
+                    'year' => $y,
+                    'sequence' => (int) $matches[2],
+                    'base' => $labNo,
+                    'suffix' => $suffix,
+                    'full' => $labNo . $suffix,
+                ];
+            }
+            // e.g. 7001-2025: first segment is not a calendar year — try legacy sequence-year below
+        }
+
+        // Legacy: sequence-year (e.g. 1-2026, 7001-2025)
         if (preg_match('/^(\d+)-(\d{4})$/', $labNo, $matches)) {
+            $y = (int) $matches[2];
+            if (!$yearInRange($y)) {
+                throw new \InvalidArgumentException('Invalid lab number format: ' . $labNo);
+            }
+
             return [
                 'sequence' => (int) $matches[1],
-                'year' => (int) $matches[2],
+                'year' => $y,
                 'base' => $labNo,
                 'suffix' => $suffix,
-                'full' => $labNo . $suffix
+                'full' => $labNo . $suffix,
             ];
         }
-        
+
         throw new \InvalidArgumentException('Invalid lab number format: ' . $labNo);
     }
 
@@ -129,5 +153,36 @@ class LabNoGenerator
     public function getNextSequenceForYear(int $year, ?int $labId = null): int
     {
         return LabSequence::getNextSequence($year, $labId);
+    }
+
+    /**
+     * Preview the next lab number without consuming a sequence (best-effort; concurrent registrations may take it first).
+     *
+     * @return array{base: string, full: string, sequence: int, year: int}
+     */
+    public function preview(?int $year = null, ?int $labId = null): array
+    {
+        $year = (int) ($year ?? now()->year);
+        $labId = $labId ?? auth()->user()?->lab_id ?? (app()->bound('current_lab_id') ? app('current_lab_id') : 1);
+
+        $row = LabSequence::query()
+            ->where('lab_id', $labId)
+            ->where('year', $year)
+            ->first();
+
+        if ($row) {
+            $nextSeq = (int) $row->last_sequence + 1;
+        } else {
+            $nextSeq = (int) config('lab.start_sequence', 1);
+        }
+
+        $baseLabNo = sprintf('%d-%d', $year, $nextSeq);
+
+        return [
+            'base' => $baseLabNo,
+            'full' => $baseLabNo,
+            'sequence' => $nextSeq,
+            'year' => $year,
+        ];
     }
 }

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Facades\DB;
 
 class LabSequence extends Model
 {
@@ -32,15 +33,23 @@ class LabSequence extends Model
     {
         $labId = $labId ?? auth()->user()?->lab_id ?? (app()->bound('current_lab_id') ? app('current_lab_id') : 1);
 
-        $sequence = static::lockForUpdate()
-            ->where('lab_id', $labId)
-            ->where('year', $year)
-            ->firstOrCreate(
-                ['lab_id' => $labId, 'year' => $year],
-                ['last_sequence' => config('lab.start_sequence', 0)]
-            );
+        // Must run in one transaction so SELECT ... FOR UPDATE and increment stay atomic (also safe when called outside LabNoGenerator).
+        return (int) DB::transaction(function () use ($labId, $year) {
+            $sequence = static::lockForUpdate()
+                ->where('lab_id', $labId)
+                ->where('year', $year)
+                ->firstOrCreate(
+                    ['lab_id' => $labId, 'year' => $year],
+                    [
+                        // First issued number after increment = start_sequence (e.g. 0 → first id 1, or 7000 → first 7001)
+                        'last_sequence' => max(0, (int) config('lab.start_sequence', 1) - 1),
+                    ]
+                );
 
-        $sequence->increment('last_sequence');
-        return $sequence->last_sequence;
+            $sequence->increment('last_sequence');
+            $sequence->refresh();
+
+            return $sequence->last_sequence;
+        });
     }
 }

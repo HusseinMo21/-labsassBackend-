@@ -17,6 +17,7 @@ use App\Models\User;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class PatientController extends Controller
 {
@@ -446,7 +447,9 @@ class PatientController extends Controller
     {
         // Debug: Log the incoming request data
         \Log::info('Incoming request data:', $request->all());
-        
+
+        $labId = $this->currentLabId() ?? 1;
+
         $validator = Validator::make($request->all(), [
             'name' => 'nullable|string|max:255',
             'gender' => 'nullable|in:male,female,other',
@@ -480,11 +483,18 @@ class PatientController extends Controller
             'delivery_date' => 'nullable|date',
             'previous_tests' => 'nullable|string|max:255',
             'catalog_tests' => 'nullable|array',
-            'catalog_tests.*.lab_test_id' => 'required|integer|exists:lab_tests,id',
-            'catalog_tests.*.offering_id' => 'nullable|integer|exists:lab_test_offerings,id',
-            'catalog_tests.*.price' => 'nullable|numeric|min:0',
+            'catalog_tests.*.offering_id' => [
+                'required',
+                'integer',
+                Rule::exists('lab_test_offerings', 'id')->where(fn ($q) => $q->where('lab_id', $labId)->where('is_active', true)),
+            ],
+            'catalog_tests.*.test_name' => 'nullable|string|max:255',
             'catalog_packages' => 'nullable|array',
-            'catalog_packages.*.package_id' => 'required|integer|exists:lab_packages,id',
+            'catalog_packages.*.package_id' => [
+                'required',
+                'integer',
+                Rule::exists('lab_packages', 'id')->where(fn ($q) => $q->where('lab_id', $labId)->where('is_active', true)),
+            ],
             'catalog_packages.*.price' => 'nullable|numeric|min:0',
         ]);
 
@@ -496,7 +506,16 @@ class PatientController extends Controller
             ], 422);
         }
 
-        $labId = $this->currentLabId() ?? 1;
+        try {
+            foreach ($request->input('catalog_packages', []) as $pkgRow) {
+                $pid = (int) ($pkgRow['package_id'] ?? 0);
+                if ($pid > 0) {
+                    $this->catalogVisitTestWriter->assertPackageResolvableForLab($labId, $pid);
+                }
+            }
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
 
         // Auto-create user for patient
         $username = $request->lab_number ?? 'pt-' . strtolower(Str::random(8));
@@ -596,7 +615,20 @@ class PatientController extends Controller
         unset($patientData['attendance_date']);
         unset($patientData['delivery_date']);
         unset($patientData['previous_tests']);
-        
+        unset($patientData['catalog_tests'], $patientData['catalog_packages']);
+
+        $catalogTestsPayload = $request->input('catalog_tests', []);
+        $catalogPackagesPayload = $request->input('catalog_packages', []);
+        $previewTotal = $totalAmount ?? floatval($request->total_amount ?? 0);
+        if ($previewTotal > 0 && count($catalogTestsPayload) + count($catalogPackagesPayload) < 1) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => [
+                    'catalog_tests' => ['Select at least one catalog test or package when total_amount is greater than zero.'],
+                ],
+            ], 422);
+        }
+
         // Debug: Log the final patient data before creation
         \Log::info('Final patient data before creation:', $patientData);
         
@@ -700,7 +732,7 @@ class PatientController extends Controller
             $labNoData = ['full' => $manualLabNumber];
         } else {
             // Generate automatic lab number
-            $labNoData = $this->labNoGenerator->generate();
+            $labNoData = $this->labNoGenerator->generate(null, null, $labId);
         }
         
         $labRequest = LabRequest::create([
@@ -730,6 +762,7 @@ class PatientController extends Controller
 
         if ($visit) {
             $this->createVisitTestsFromCatalogRequest($visit, $labId, $request);
+            $this->catalogVisitTestWriter->syncVisitTotalsFromVisitTests($visit->fresh());
         }
 
         // Create initial report automatically for the patient

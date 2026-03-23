@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class PatientRegistrationController extends Controller
 {
@@ -214,6 +215,22 @@ class PatientRegistrationController extends Controller
     }
 
     /**
+     * Next lab number for display only (does not reserve or increment the sequence).
+     */
+    public function previewNextLabNumber()
+    {
+        $labId = $this->currentLabId() ?? 1;
+        $result = $this->labNoGenerator->preview(null, $labId);
+
+        return response()->json([
+            'success' => true,
+            'lab_number' => $result['full'],
+            'year' => $result['year'],
+            'sequence' => $result['sequence'],
+        ]);
+    }
+
+    /**
      * Submit comprehensive patient registration form
      */
     public function submit(Request $request)
@@ -225,6 +242,8 @@ class PatientRegistrationController extends Controller
             'request_data' => $request->all(),
         ]);
         
+        $labId = $this->currentLabId() ?? 1;
+
         $validator = Validator::make($request->all(), [
             // Patient basic info
             'name' => 'required|string|max:255',
@@ -261,13 +280,20 @@ class PatientRegistrationController extends Controller
             // Patient ID (for updates)
             'patient_id' => 'nullable|exists:patient,id',
 
-            // Same catalog contract as POST /api/patients (single system)
+            // Catalog-driven tests (offerings + fixed packages).
             'catalog_tests' => 'nullable|array',
-            'catalog_tests.*.lab_test_id' => 'required|integer|exists:lab_tests,id',
-            'catalog_tests.*.offering_id' => 'nullable|integer|exists:lab_test_offerings,id',
-            'catalog_tests.*.price' => 'nullable|numeric|min:0',
+            'catalog_tests.*.offering_id' => [
+                'required',
+                'integer',
+                Rule::exists('lab_test_offerings', 'id')->where(fn ($q) => $q->where('lab_id', $labId)->where('is_active', true)),
+            ],
+            'catalog_tests.*.test_name' => 'nullable|string|max:255',
             'catalog_packages' => 'nullable|array',
-            'catalog_packages.*.package_id' => 'required|integer|exists:lab_packages,id',
+            'catalog_packages.*.package_id' => [
+                'required',
+                'integer',
+                Rule::exists('lab_packages', 'id')->where(fn ($q) => $q->where('lab_id', $labId)->where('is_active', true)),
+            ],
             'catalog_packages.*.price' => 'nullable|numeric|min:0',
         ]);
 
@@ -279,9 +305,44 @@ class PatientRegistrationController extends Controller
             ], 422);
         }
 
+        $data = $validator->validated();
+
+        $regTotal = isset($data['total_amount']) && $data['total_amount'] !== '' && $data['total_amount'] !== null
+            ? floatval($data['total_amount'])
+            : 0;
+        $catalogIn = $data['catalog_tests'] ?? [];
+        $packagesIn = $data['catalog_packages'] ?? [];
+        if ($regTotal > 0 && count($catalogIn) + count($packagesIn) < 1) {
+            return response()->json([
+                'success' => false,
+                'message' => 'At least one catalog test or package is required when total_amount is greater than zero.',
+                'errors' => [
+                    'catalog_tests' => ['Select at least one test or package from the lab catalog.'],
+                ],
+            ], 422);
+        }
+
+        try {
+            $writer = app(CatalogVisitTestWriter::class);
+            foreach ($packagesIn as $pkgRow) {
+                $pid = (int) ($pkgRow['package_id'] ?? 0);
+                if ($pid > 0) {
+                    $writer->assertPackageResolvableForLab($labId, $pid);
+                }
+            }
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+
+        unset($data['catalog_tests'], $data['catalog_packages']);
+
+        $isReturningPatientFlow = isset($data['patient_id']);
+
         DB::beginTransaction();
         try {
-            $data = $validator->validated();
             
             // Debug: Log the incoming data
             \Log::info('Patient registration data received', [
@@ -319,8 +380,11 @@ class PatientRegistrationController extends Controller
                 unset($data['doctor']);
             }
             
-            // Check if updating existing patient
+            // Check if updating existing patient (returning visit — same DB row, new lab request / visit)
             if (isset($data['patient_id'])) {
+                $existingPatientId = (int) $data['patient_id'];
+                unset($data['patient_id']);
+
                 // Parse age format and calculate birth_date for updates too
                 if (isset($data['age']) && !empty($data['age'])) {
                     $originalAgeFormat = trim($data['age']); // Store original format exactly as entered
@@ -331,14 +395,13 @@ class PatientRegistrationController extends Controller
                     // Store original age format (e.g., "25M,5D") exactly as entered
                     $data['age'] = $originalAgeFormat;
                 }
-                
-                $patient = Patient::findOrFail($data['patient_id']);
+
+                $patient = Patient::findOrFail($existingPatientId);
                 $patient->update($data);
             } else {
                 // Create new user for patient
                 $username = 'pt-' . strtolower(Str::random(8));
                 $password = Str::random(10);
-                $labId = $this->currentLabId() ?? 1;
                 $user = User::create([
                     'name' => $username,
                     'email' => $username . '@patients.local',
@@ -520,6 +583,10 @@ class PatientRegistrationController extends Controller
             
             // Create visit for all patient registrations (with or without billing)
             $visit = null;
+            $invoice = null;
+            $totalAmount = 0.0;
+            $amountPaid = 0.0;
+            $paymentStatus = 'unpaid';
             $hasBillingInfo = isset($data['total_amount']) && !empty($data['total_amount']) && floatval($data['total_amount']) > 0;
             
             \Log::info('Visit creation decision', [
@@ -637,12 +704,42 @@ class PatientRegistrationController extends Controller
                 // Create the visit
                 $visit = Visit::create($visitData);
 
-                app(CatalogVisitTestWriter::class)->write(
-                    $visit,
-                    $labId,
-                    $request->input('catalog_tests', []),
-                    $request->input('catalog_packages', [])
-                );
+                $catalogWriter = app(CatalogVisitTestWriter::class);
+                $catalogPayloadCount = count($request->input('catalog_tests', [])) + count($request->input('catalog_packages', []));
+                try {
+                    $createdLines = $catalogWriter->write(
+                        $visit,
+                        $labId,
+                        $request->input('catalog_tests', []),
+                        $request->input('catalog_packages', [])
+                    );
+                } catch (\InvalidArgumentException $e) {
+                    DB::rollBack();
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => $e->getMessage(),
+                    ], 422);
+                }
+                if ($catalogPayloadCount > 0 && $createdLines < 1) {
+                    DB::rollBack();
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'No visit test lines could be created from the catalog selection.',
+                    ], 422);
+                }
+                $catalogWriter->syncVisitTotalsFromVisitTests($visit->fresh());
+
+                $visit->refresh();
+                $totalAmount = (float) $visit->total_amount;
+                if ($amountPaid >= $totalAmount && $totalAmount > 0) {
+                    $paymentStatus = 'paid';
+                } elseif ($amountPaid > 0) {
+                    $paymentStatus = 'partial';
+                } else {
+                    $paymentStatus = 'unpaid';
+                }
                 
                 // Debug: Log visit creation (with billing)
                 \Log::info('Visit created for patient registration (with billing)', [
@@ -764,7 +861,7 @@ class PatientRegistrationController extends Controller
                 if ($firstVisitTest) {
                     \App\Models\Report::create([
                         'lab_request_id' => $labRequest->id,
-                        'title' => 'Lab Report - ' . ($firstVisitTest->labTest->name ?? 'Test Report'),
+                        'title' => 'Lab Report - ' . ($firstVisitTest->test_name ?? $firstVisitTest->labTest->name ?? 'Test Report'),
                         'content' => 'Report generated automatically for patient ' . $patient->name,
                         'status' => 'pending',
                         'generated_by' => auth()->id() ?? 1,
@@ -998,13 +1095,36 @@ class PatientRegistrationController extends Controller
                 // Create the visit
                 $visit = Visit::create($visitData);
 
-                app(CatalogVisitTestWriter::class)->write(
-                    $visit,
-                    $labId,
-                    $request->input('catalog_tests', []),
-                    $request->input('catalog_packages', [])
-                );
-                
+                $catalogWriter = app(CatalogVisitTestWriter::class);
+                $catalogPayloadCount = count($request->input('catalog_tests', [])) + count($request->input('catalog_packages', []));
+                try {
+                    $createdLines = $catalogWriter->write(
+                        $visit,
+                        $labId,
+                        $request->input('catalog_tests', []),
+                        $request->input('catalog_packages', [])
+                    );
+                } catch (\InvalidArgumentException $e) {
+                    DB::rollBack();
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => $e->getMessage(),
+                    ], 422);
+                }
+                if ($catalogPayloadCount > 0 && $createdLines < 1) {
+                    DB::rollBack();
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'No visit test lines could be created from the catalog selection.',
+                    ], 422);
+                }
+                $catalogWriter->syncVisitTotalsFromVisitTests($visit->fresh());
+
+                $visit->refresh();
+                $totalAmount = (float) $visit->total_amount;
+
                 // Debug: Log visit creation
                 \Log::info('Visit created for patient registration', [
                     'visit_id' => $visit->id,
@@ -1069,7 +1189,7 @@ class PatientRegistrationController extends Controller
             
             return response()->json([
                 'success' => true,
-                'message' => $responseData['message'] ?? (isset($data['patient_id']) ? 'Patient updated successfully' : 'Patient registered successfully'),
+                'message' => $responseData['message'] ?? ($isReturningPatientFlow ? 'Patient updated successfully' : 'Patient registered successfully'),
                 'lab_number' => $patient->lab, // Add lab number to top level for frontend
                 'user_credentials' => $credentials, // Add credentials to top level for frontend
                 'data' => $responseData,

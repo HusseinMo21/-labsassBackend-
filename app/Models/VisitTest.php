@@ -5,6 +5,8 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use App\Models\Lab;
+use App\Models\LabPackage;
+use App\Models\LabTestOffering;
 use App\Models\User;
 use App\Models\Notification;
 
@@ -16,10 +18,14 @@ class VisitTest extends Model
         'visit_id',
         'lab_id',
         'lab_test_id',
+        'lab_test_offering_id',
+        'lab_package_id',
         'test_category_id',
         'custom_test_name',
+        'test_name_snapshot',
         'price',
         'price_at_time',
+        'original_price',
         'custom_price',
         'discount_amount',
         'discount_percentage',
@@ -36,6 +42,7 @@ class VisitTest extends Model
     protected $casts = [
         'price' => 'decimal:2',
         'price_at_time' => 'decimal:2',
+        'original_price' => 'decimal:2',
         'custom_price' => 'decimal:2',
         'discount_amount' => 'decimal:2',
         'discount_percentage' => 'decimal:2',
@@ -56,6 +63,16 @@ class VisitTest extends Model
     public function labTest()
     {
         return $this->belongsTo(LabTest::class);
+    }
+
+    public function labTestOffering()
+    {
+        return $this->belongsTo(LabTestOffering::class);
+    }
+
+    public function labPackage()
+    {
+        return $this->belongsTo(LabPackage::class);
     }
 
     public function testCategory()
@@ -106,10 +123,13 @@ class VisitTest extends Model
      */
     public function getTestNameAttribute()
     {
+        if ($this->test_name_snapshot) {
+            return $this->test_name_snapshot;
+        }
         if ($this->custom_test_name) {
             return $this->custom_test_name;
         }
-        
+
         return $this->labTest ? $this->labTest->name : 'Unknown Test';
     }
 

@@ -14,7 +14,9 @@ use App\Models\LabRequest;
 use App\Services\LabNoGenerator;
 use App\Services\BarcodeGenerator;
 use App\Services\BarcodeService;
+use App\Services\CatalogVisitTestWriter;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 
@@ -24,8 +26,12 @@ class CheckInController extends Controller
     protected $barcodeGenerator;
     protected $barcodeService;
 
-    public function __construct(LabNoGenerator $labNoGenerator, BarcodeGenerator $barcodeGenerator, BarcodeService $barcodeService)
-    {
+    public function __construct(
+        LabNoGenerator $labNoGenerator,
+        BarcodeGenerator $barcodeGenerator,
+        BarcodeService $barcodeService,
+        protected CatalogVisitTestWriter $catalogVisitTestWriter
+    ) {
         $this->labNoGenerator = $labNoGenerator;
         $this->barcodeGenerator = $barcodeGenerator;
         $this->barcodeService = $barcodeService;
@@ -164,13 +170,24 @@ class CheckInController extends Controller
 
     public function createVisitWithBilling(Request $request)
     {
+        $labId = $this->currentLabId() ?? 1;
+
         $validator = Validator::make($request->all(), [
             'patient_id' => 'required|exists:patient,id',
-            'tests' => 'required|array|min:1',
-            'tests.*.test_category_id' => 'required|exists:test_categories,id',
-            'tests.*.custom_test_name' => 'required|string|max:255',
-            'tests.*.custom_price' => 'required|numeric|min:0',
-            'tests.*.discount_percentage' => 'nullable|numeric|min:0|max:100',
+            'catalog_tests' => 'nullable|array',
+            'catalog_tests.*.offering_id' => [
+                'required',
+                'integer',
+                Rule::exists('lab_test_offerings', 'id')->where(fn ($q) => $q->where('lab_id', $labId)->where('is_active', true)),
+            ],
+            'catalog_tests.*.test_name' => 'nullable|string|max:255',
+            'catalog_packages' => 'nullable|array',
+            'catalog_packages.*.package_id' => [
+                'required',
+                'integer',
+                Rule::exists('lab_packages', 'id')->where(fn ($q) => $q->where('lab_id', $labId)->where('is_active', true)),
+            ],
+            'catalog_packages.*.price' => 'nullable|numeric|min:0',
             'upfront_payment' => 'required|numeric|min:0',
             'payment_method' => 'required|in:cash,card,Fawry,InstaPay,VodafoneCash,Other',
             'notes' => 'nullable|string',
@@ -178,6 +195,7 @@ class CheckInController extends Controller
             'insurance_provider' => 'nullable|string|max:255',
             'insurance_policy_number' => 'nullable|string|max:255',
             'insurance_claim_number' => 'nullable|string|max:255',
+            'discount_amount' => 'nullable|numeric|min:0',
         ]);
 
         if ($validator->fails()) {
@@ -187,61 +205,114 @@ class CheckInController extends Controller
             ], 422);
         }
 
+        $catalogTests = $request->input('catalog_tests', []);
+        $catalogPackages = $request->input('catalog_packages', []);
+        if (count($catalogTests) + count($catalogPackages) < 1) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => ['catalog_tests' => ['Provide at least one catalog test (offering) or package.']],
+            ], 422);
+        }
+
+        try {
+            foreach ($catalogPackages as $pkgRow) {
+                $pid = (int) ($pkgRow['package_id'] ?? 0);
+                if ($pid > 0) {
+                    $this->catalogVisitTestWriter->assertPackageResolvableForLab($labId, $pid);
+                }
+            }
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $patient = Patient::findOrFail($request->patient_id);
+        $catalogSubtotalPreview = $this->catalogVisitTestWriter->previewSubtotal($labId, $catalogTests, $catalogPackages);
+        if ($catalogSubtotalPreview <= 0) {
+            return response()->json([
+                'message' => 'No billable catalog lines could be resolved for this lab.',
+            ], 422);
+        }
+
+        $requestDiscount = (float) ($request->discount_amount ?? 0);
+        $insuranceDiscount = $patient->getInsuranceDiscountAmount($catalogSubtotalPreview);
+        $totalDiscount = max($requestDiscount, $insuranceDiscount);
+        $finalAmountPreview = max(0, round($catalogSubtotalPreview - $totalDiscount, 2));
+
+        $minimumUpfront = ($finalAmountPreview * 50) / 100;
+        if ((float) $request->upfront_payment < $minimumUpfront) {
+            return response()->json([
+                'message' => 'Upfront payment must be at least 50% of total amount',
+                'minimum_required' => $minimumUpfront,
+                'total_amount' => $finalAmountPreview,
+            ], 422);
+        }
+
         DB::beginTransaction();
         try {
             \Log::info('Starting visit creation for patient: ' . $request->patient_id);
             \Log::info('Request data: ' . json_encode($request->all()));
-            $patient = Patient::findOrFail($request->patient_id);
-            
-            // Log existing credentials for debugging
             $existingCredentials = $patient->getPortalCredentials();
             \Log::info('Patient ' . $patient->id . ' existing credentials: ' . json_encode($existingCredentials));
-            
-            // Calculate total amount
-            $totalAmount = 0;
-            $selectedTests = [];
-            
-            foreach ($request->tests as $testData) {
-                \Log::info('Processing test data: ' . json_encode($testData));
-                $testCategory = \App\Models\TestCategory::find($testData['test_category_id']);
-                \Log::info('Found test category: ' . ($testCategory ? json_encode($testCategory->toArray()) : 'null'));
-                if (!$testCategory) {
-                    return response()->json([
-                        'message' => 'Invalid test category ID: ' . $testData['test_category_id'],
-                    ], 422);
-                }
-                
-                $customPrice = $testData['custom_price'];
-                $discountPercentage = $testData['discount_percentage'] ?? 0;
-                
-                // Calculate final price after discount
-                $finalPrice = $customPrice;
-                if ($discountPercentage > 0) {
-                    $discountAmount = ($customPrice * $discountPercentage) / 100;
-                    $finalPrice = $customPrice - $discountAmount;
-                }
-                
-                $totalAmount += $finalPrice;
-                $selectedTests[] = [
-                    'category' => $testCategory,
-                    'custom_test_name' => $testData['custom_test_name'],
-                    'custom_price' => $customPrice,
-                    'discount_percentage' => $discountPercentage,
-                    'final_price' => $finalPrice
-                ];
+
+            $visitNumber = Visit::generateVisitNumber();
+            \Log::info('Generated visit number: ' . $visitNumber);
+
+            $currentShift = \App\Models\Shift::where('staff_id', auth()->id())
+                ->where('status', 'open')
+                ->whereDate('opened_at', today())
+                ->first();
+
+            $upfront = (float) $request->upfront_payment;
+
+            $visit = Visit::create([
+                'lab_id' => $labId,
+                'patient_id' => $patient->id,
+                'visit_number' => $visitNumber,
+                'visit_date' => now()->toDateString(),
+                'visit_time' => now(),
+                'total_amount' => 0,
+                'discount_amount' => 0,
+                'final_amount' => 0,
+                'upfront_payment' => $upfront,
+                'payment_method' => $request->payment_method,
+                'status' => 'registered',
+                'remarks' => $this->buildRemarks($request),
+                'expected_delivery_date' => $request->expected_delivery_date,
+                'shift_id' => $currentShift?->id,
+                'processed_by_staff' => auth()->id(),
+            ]);
+
+            \Log::info('Visit created successfully with ID: ' . $visit->id);
+
+            try {
+                $created = $this->catalogVisitTestWriter->write($visit, $labId, $catalogTests, $catalogPackages);
+            } catch (\InvalidArgumentException $e) {
+                DB::rollBack();
+
+                return response()->json(['message' => $e->getMessage()], 422);
             }
 
-            // Apply discount (from frontend or insurance)
-            $discountAmount = $request->discount_amount ?? 0;
-            $insuranceDiscount = $patient->getInsuranceDiscountAmount($totalAmount);
-            
-            // Use the higher of frontend discount or insurance discount
-            $totalDiscount = max($discountAmount, $insuranceDiscount);
-            $finalAmount = $totalAmount - $totalDiscount;
+            if ($created < 1) {
+                DB::rollBack();
 
-            // Validate upfront payment
-            $minimumUpfront = ($finalAmount * 50) / 100; // 50% minimum
-            if ($request->upfront_payment < $minimumUpfront) {
+                return response()->json([
+                    'message' => 'No visit test lines were created from the catalog selection.',
+                ], 422);
+            }
+
+            $this->catalogVisitTestWriter->syncVisitTotalsFromVisitTests($visit->fresh());
+
+            $visit->refresh();
+            $catalogSubtotal = (float) $visit->total_amount;
+
+            $insuranceDiscount = $patient->getInsuranceDiscountAmount($catalogSubtotal);
+            $totalDiscount = max($requestDiscount, $insuranceDiscount);
+            $finalAmount = max(0, round($catalogSubtotal - $totalDiscount, 2));
+
+            $minimumUpfront = ($finalAmount * 50) / 100;
+            if ($upfront < $minimumUpfront) {
+                DB::rollBack();
+
                 return response()->json([
                     'message' => 'Upfront payment must be at least 50% of total amount',
                     'minimum_required' => $minimumUpfront,
@@ -249,70 +320,31 @@ class CheckInController extends Controller
                 ], 422);
             }
 
-            \Log::info('Calculated amounts - Total: ' . $totalAmount . ', Final: ' . $finalAmount);
-            
-            // Generate visit number
-            $visitNumber = Visit::generateVisitNumber();
-            \Log::info('Generated visit number: ' . $visitNumber);
-            
-            // Create visit
-            // Get current staff shift
-            $currentShift = \App\Models\Shift::where('staff_id', auth()->id())
-                ->where('status', 'open')
-                ->whereDate('opened_at', today())
-                ->first();
+            $billing = $upfront >= $finalAmount && $finalAmount > 0 ? 'paid' : ($upfront > 0 ? 'partial' : 'unpaid');
+            $remainingBalance = max(0, round($finalAmount - $upfront, 2));
 
-            $labId = $this->currentLabId() ?? 1;
-            $visit = Visit::create([
-                'lab_id' => $labId,
-                'patient_id' => $patient->id,
-                'visit_number' => $visitNumber,
-                'visit_date' => now()->toDateString(),
-                'visit_time' => now(),
-                'total_amount' => $totalAmount,
+            $md = $visit->metadata;
+            if (!is_array($md)) {
+                $md = [];
+            }
+            $fd = array_merge($md['financial_data'] ?? [], [
+                'catalog_subtotal' => $catalogSubtotal,
+                'visit_discount_amount' => $totalDiscount,
+                'total_amount' => $catalogSubtotal,
+                'final_amount' => $finalAmount,
+                'amount_paid' => $upfront,
+                'remaining_balance' => $remainingBalance,
+                'payment_status' => $billing,
+            ]);
+
+            $visit->update([
+                'total_amount' => $catalogSubtotal,
                 'discount_amount' => $totalDiscount,
                 'final_amount' => $finalAmount,
-                'status' => 'registered',
-                'remarks' => $this->buildRemarks($request),
-                'expected_delivery_date' => $request->expected_delivery_date,
-                'shift_id' => $currentShift?->id,
-                'processed_by_staff' => auth()->id(),
+                'remaining_balance' => $remainingBalance,
+                'billing_status' => $billing,
+                'metadata' => array_merge($md, ['financial_data' => $fd]),
             ]);
-            
-            \Log::info('Visit created successfully with ID: ' . $visit->id);
-
-            // Note: Invoice creation will be moved after LabRequest creation
-
-            // Create visit tests and sample tracking
-            foreach ($selectedTests as $testData) {
-                // Create a dummy lab test for custom tests
-                $dummyLabTest = \App\Models\LabTest::firstOrCreate([
-                    'name' => $testData['custom_test_name'],
-                    'code' => 'CUSTOM_' . now()->format('YmdHis'),
-                ], [
-                    'category_id' => $testData['category']->id,
-                    'price' => $testData['custom_price'],
-                    'description' => 'Custom test created during visit',
-                    'is_active' => true,
-                ]);
-                
-                $visitTest = $visit->visitTests()->create([
-                    'lab_id' => $visit->lab_id,
-                    'lab_test_id' => $dummyLabTest->id,
-                    'test_category_id' => $testData['test_category_id'],
-                    'custom_test_name' => $testData['custom_test_name'],
-                    'custom_price' => $customPrice,
-                    'discount_percentage' => $discountPercentage,
-                    'final_price' => $finalPrice,
-                    'price' => $customPrice,
-                    'price_at_time' => $finalPrice,
-                    'status' => 'pending',
-                    'barcode_uid' => 'VT' . now()->format('YmdHis') . rand(1000, 9999),
-                ]);
-
-                // Note: Sample tracking creation disabled - table doesn't exist
-                // $visitTest->sampleTracking()->create([...]);
-            }
 
             // Create or update lab request with samples automatically filled from selected tests
             $labRequest = null;
@@ -358,54 +390,52 @@ class CheckInController extends Controller
                     'lab' => $labRequest->full_lab_no,
                     'total' => $finalAmount,
                     'paid' => $request->upfront_payment,
-                    'remaining' => $finalAmount - $request->upfront_payment,
+                    'remaining' => $remainingBalance,
                     'lab_request_id' => $labRequest->id,
                     'shift_id' => $currentShift?->id,
                 ]);
                 
                 \Log::info('Invoice created successfully with ID: ' . $invoice->id);
 
-                // Add samples for each selected test to the lab request
-                foreach ($selectedTests as $testData) {
-                    $testName = $testData['custom_test_name'];
-                    $testCode = $testData['category']->code ?? 'unknown';
-                    $categoryName = $testData['category']->name ?? 'Unknown';
-                    
+                $visit->load(['visitTests.labTest.category']);
+
+                // Add samples for each catalog line on the visit
+                foreach ($visit->visitTests as $visitTestRow) {
+                    $testName = $visitTestRow->test_name;
+                    $testCode = $visitTestRow->labTest?->category?->code ?? 'unknown';
+                    $categoryName = $visitTestRow->labTest?->category?->name ?? 'Unknown';
+
                     \Log::info('Creating sample for test: ' . $testName . ', category: ' . $categoryName . ', code: ' . $testCode);
-                    
-                    // Check if this sample already exists for this test
+
                     $existingSample = $labRequest->samples()
                         ->where('sample_type', $testName)
                         ->where('sample_id', $testCode)
                         ->first();
-                    
+
                     if (!$existingSample) {
-                        // Generate sample ID and barcode
                         $sampleId = $this->barcodeService->generateNextSampleId($labRequest->lab_no);
                         $barcode = $this->barcodeService->generateBarcode($labRequest->lab_no, $sampleId);
-                        
-                        // Create sample with test information and barcode
+
                         $labRequest->samples()->create([
                             'sample_id' => $sampleId,
-                            'sample_type' => $testName, // Sample Type = Custom Test Name
+                            'sample_type' => $testName,
                             'status' => 'collected',
                             'collection_date' => now(),
                             'notes' => "Test: {$testName} ({$categoryName})",
                         ]);
-                        
+
                         \Log::info('Created sample with barcode: ' . $barcode . ' for test: ' . $testName);
                     }
                 }
-                
+
                 \Log::info('Samples added to lab request: ' . $labRequest->id);
-                
+
                 // Create initial report automatically for the lab request (one report for all tests)
                 $existingReport = \App\Models\Report::where('lab_request_id', $labRequest->id)->first();
-                
+
                 if (!$existingReport) {
-                    // Get all test names for the report title
-                    $testNames = $visit->visitTests->map(function($visitTest) {
-                        return $visitTest->labTest->name ?? 'Test';
+                    $testNames = $visit->visitTests->map(function ($visitTest) {
+                        return $visitTest->test_name;
                     })->unique()->implode(', ');
                     
                     $reportTitle = $testNames ? 'Lab Report - ' . $testNames : 'Lab Report - ' . $visit->visit_number;
@@ -441,16 +471,16 @@ class CheckInController extends Controller
                     'patient_phone' => $visit->patient->phone,
                     'tests' => $visit->visitTests->map(function ($visitTest) {
                         return [
-                            'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
-                            'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
+                            'name' => $visitTest->test_name,
+                            'category' => $visitTest->testCategory ? $visitTest->testCategory->name : ($visitTest->labTest?->category?->name ?? 'Unknown'),
                             'price' => $visitTest->unitPriceForBilling(),
                         ];
                     }),
-                    'total_amount' => $totalAmount,
+                    'total_amount' => $catalogSubtotal,
                     'discount_amount' => $totalDiscount,
                     'final_amount' => $finalAmount,
                     'upfront_payment' => $request->upfront_payment,
-                    'remaining_balance' => $finalAmount - $request->upfront_payment,
+                    'remaining_balance' => $remainingBalance,
                     'payment_method' => $request->payment_method,
                     'expected_delivery_date' => $visit->getExpectedDeliveryDate(),
                     'barcode' => $visit->barcode,
@@ -1537,10 +1567,24 @@ class CheckInController extends Controller
 
     public function calculateBilling(Request $request)
     {
+        $labId = $this->currentLabId() ?? 1;
+
         $validator = Validator::make($request->all(), [
             'patient_id' => 'required|exists:patient,id',
-            'tests' => 'required|array|min:1',
-            'tests.*.lab_test_id' => 'required|exists:lab_tests,id',
+            'catalog_tests' => 'nullable|array',
+            'catalog_tests.*.offering_id' => [
+                'required',
+                'integer',
+                Rule::exists('lab_test_offerings', 'id')->where(fn ($q) => $q->where('lab_id', $labId)->where('is_active', true)),
+            ],
+            'catalog_tests.*.test_name' => 'nullable|string|max:255',
+            'catalog_packages' => 'nullable|array',
+            'catalog_packages.*.package_id' => [
+                'required',
+                'integer',
+                Rule::exists('lab_packages', 'id')->where(fn ($q) => $q->where('lab_id', $labId)->where('is_active', true)),
+            ],
+            'catalog_packages.*.price' => 'nullable|numeric|min:0',
         ]);
 
         if ($validator->fails()) {
@@ -1550,21 +1594,37 @@ class CheckInController extends Controller
             ], 422);
         }
 
-        $patient = Patient::findOrFail($request->patient_id);
-        
-        // Calculate total amount
-        $totalAmount = 0;
-        $selectedTests = [];
-        
-        foreach ($request->tests as $testData) {
-            $test = LabTest::findOrFail($testData['lab_test_id']);
-            $totalAmount += $test->price;
-            $selectedTests[] = $test;
+        $catalogTests = $request->input('catalog_tests', []);
+        $catalogPackages = $request->input('catalog_packages', []);
+        if (count($catalogTests) + count($catalogPackages) < 1) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => ['catalog_tests' => ['Provide at least one catalog test (offering) or package.']],
+            ], 422);
         }
 
-        // Apply insurance discount if applicable
+        try {
+            foreach ($catalogPackages as $pkgRow) {
+                $pid = (int) ($pkgRow['package_id'] ?? 0);
+                if ($pid > 0) {
+                    $this->catalogVisitTestWriter->assertPackageResolvableForLab($labId, $pid);
+                }
+            }
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $patient = Patient::findOrFail($request->patient_id);
+
+        $totalAmount = $this->catalogVisitTestWriter->previewSubtotal($labId, $catalogTests, $catalogPackages);
+        if ($totalAmount <= 0) {
+            return response()->json([
+                'message' => 'No billable catalog lines could be resolved for this lab.',
+            ], 422);
+        }
+
         $insuranceDiscount = $patient->getInsuranceDiscountAmount($totalAmount);
-        $finalAmount = $totalAmount - $insuranceDiscount;
+        $finalAmount = max(0, round($totalAmount - $insuranceDiscount, 2));
         $minimumUpfront = ($finalAmount * 50) / 100;
 
         return response()->json([
@@ -1576,7 +1636,8 @@ class CheckInController extends Controller
                 'patient_has_insurance' => $patient->has_insurance,
                 'insurance_coverage' => $patient->insurance_coverage,
             ],
-            'selected_tests' => $selectedTests,
+            'catalog_tests' => $catalogTests,
+            'catalog_packages' => $catalogPackages,
         ]);
     }
 

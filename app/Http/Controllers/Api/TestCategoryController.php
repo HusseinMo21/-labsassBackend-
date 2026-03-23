@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\LabTestCategorySetting;
 use App\Models\TestCategory;
 use App\Services\LabCatalogCategoryService;
 use Illuminate\Http\Request;
@@ -19,16 +20,32 @@ class TestCategoryController extends Controller
         $labId = $this->currentLabId();
         if ($labId) {
             $list = app(LabCatalogCategoryService::class)->listVisibleForLab($labId);
-            $data = $list->map(function (TestCategory $c) {
-                return [
+            $settings = LabTestCategorySetting::query()
+                ->where('lab_id', $labId)
+                ->get()
+                ->keyBy('test_category_id');
+
+            $data = $list->map(function (TestCategory $c) use ($settings) {
+                $row = [
                     'id' => $c->id,
                     'name' => $c->getAttribute('display_name') ?? $c->name,
+                    'template_name' => $c->name,
                     'code' => $c->code,
                     'description' => $c->description,
                     'is_active' => $c->is_active,
                     'lab_id' => $c->lab_id,
                     'sort_order' => $c->getAttribute('sort_order'),
                 ];
+                if ($c->lab_id === null) {
+                    $st = $settings->get($c->id);
+                    $row['category_setting'] = [
+                        'is_hidden' => (bool) ($st?->is_hidden ?? false),
+                        'display_name' => $st?->display_name,
+                        'sort_order' => $st?->sort_order,
+                    ];
+                }
+
+                return $row;
             });
 
             return response()->json([
