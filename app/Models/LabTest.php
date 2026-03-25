@@ -12,6 +12,7 @@ class LabTest extends Model
     use HasFactory;
 
     protected $fillable = [
+        'lab_id',
         'name',
         'code',
         'description',
@@ -29,9 +30,26 @@ class LabTest extends Model
         'is_active' => 'boolean',
     ];
 
+    public function lab()
+    {
+        return $this->belongsTo(Lab::class);
+    }
+
     public function category()
     {
         return $this->belongsTo(TestCategory::class, 'category_id');
+    }
+
+    public function scopePlatformMaster($query)
+    {
+        return $query->whereNull('lab_id');
+    }
+
+    public function scopeForLabCatalog($query, int $labId)
+    {
+        return $query->where(function ($q) use ($labId) {
+            $q->whereNull('lab_id')->orWhere('lab_id', $labId);
+        });
     }
 
     public function visitTests()

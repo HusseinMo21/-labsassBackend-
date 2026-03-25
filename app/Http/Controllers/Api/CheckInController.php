@@ -1538,17 +1538,45 @@ class CheckInController extends Controller
 
     public function searchPatients(Request $request)
     {
-        $query = $request->get('query', '');
-        
+        $query = trim((string) $request->get('query', ''));
+
         if (strlen($query) < 2) {
             return response()->json(['patients' => []]);
         }
 
-        $patients = Patient::where('name', 'like', "%{$query}%")
-            ->orWhere('phone', 'like', "%{$query}%")
-            ->orWhere('whatsapp_number', 'like', "%{$query}%")
-            ->orWhere('lab', 'like', "%{$query}%")
-            ->orWhere('sender', 'like', "%{$query}%")
+        $labId = $this->currentLabId();
+
+        $patientIdsFromLabNumbers = collect();
+        if ($labId) {
+            $patientIdsFromLabNumbers = LabRequest::withoutGlobalScope('lab')
+                ->where('lab_id', $labId)
+                ->where(function ($q) use ($query) {
+                    $q->where('lab_no', 'like', "%{$query}%")
+                        ->orWhereRaw('CONCAT(lab_no, COALESCE(suffix, \'\')) LIKE ?', ["%{$query}%"])
+                        ->orWhereRaw('REPLACE(lab_no, \'-\', \'\') LIKE ?', ['%'.str_replace('-', '', $query).'%'])
+                        ->orWhereRaw('REPLACE(CONCAT(lab_no, COALESCE(suffix, \'\')), \'-\', \'\') LIKE ?', ['%'.str_replace('-', '', $query).'%']);
+                })
+                ->pluck('patient_id')
+                ->filter()
+                ->unique()
+                ->values();
+        }
+
+        $patients = Patient::where(function ($outer) use ($query, $patientIdsFromLabNumbers) {
+            $outer->where(function ($q) use ($query) {
+                $q->where('name', 'like', "%{$query}%")
+                    ->orWhere('phone', 'like', "%{$query}%")
+                    ->orWhere('whatsapp_number', 'like', "%{$query}%")
+                    ->orWhere('lab', 'like', "%{$query}%")
+                    ->orWhere('sender', 'like', "%{$query}%");
+                if (ctype_digit($query)) {
+                    $q->orWhere('id', (int) $query);
+                }
+            });
+            if ($patientIdsFromLabNumbers->isNotEmpty()) {
+                $outer->orWhereIn('id', $patientIdsFromLabNumbers);
+            }
+        })
             ->limit(10)
             ->get(['id', 'name', 'phone', 'age', 'gender', 'sender', 'lab']);
 

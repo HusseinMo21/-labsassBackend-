@@ -71,14 +71,39 @@ class PatientController extends Controller
     {
         $query = Patient::query();
 
-        if ($request->has('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('phone', 'like', "%{$search}%")
-                  ->orWhere('whatsapp_number', 'like', "%{$search}%")
-                  ->orWhere('id', 'like', "%{$search}%")
-                  ->orWhere('lab', 'like', "%{$search}%");
+        if ($request->filled('search')) {
+            $search = trim((string) $request->search);
+            $labId = $this->currentLabId();
+
+            $patientIdsFromLabNumbers = collect();
+            if ($labId) {
+                $patientIdsFromLabNumbers = LabRequest::withoutGlobalScope('lab')
+                    ->where('lab_id', $labId)
+                    ->where(function ($q) use ($search) {
+                        $q->where('lab_no', 'like', "%{$search}%")
+                            ->orWhereRaw('CONCAT(lab_no, COALESCE(suffix, \'\')) LIKE ?', ["%{$search}%"])
+                            ->orWhereRaw('REPLACE(lab_no, \'-\', \'\') LIKE ?', ['%'.str_replace('-', '', $search).'%'])
+                            ->orWhereRaw('REPLACE(CONCAT(lab_no, COALESCE(suffix, \'\')), \'-\', \'\') LIKE ?', ['%'.str_replace('-', '', $search).'%']);
+                    })
+                    ->pluck('patient_id')
+                    ->filter()
+                    ->unique()
+                    ->values();
+            }
+
+            $query->where(function ($outer) use ($search, $patientIdsFromLabNumbers) {
+                $outer->where(function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                        ->orWhere('phone', 'like', "%{$search}%")
+                        ->orWhere('whatsapp_number', 'like', "%{$search}%")
+                        ->orWhere('lab', 'like', "%{$search}%");
+                    if (ctype_digit($search)) {
+                        $q->orWhere('id', (int) $search);
+                    }
+                });
+                if ($patientIdsFromLabNumbers->isNotEmpty()) {
+                    $outer->orWhereIn('id', $patientIdsFromLabNumbers);
+                }
             });
         }
 
@@ -1983,43 +2008,49 @@ class PatientController extends Controller
      */
     public function search(Request $request)
     {
-        $query = $request->get('query');
-        
-        if (empty($query)) {
+        $query = trim((string) $request->get('query', ''));
+
+        if ($query === '') {
             return response()->json(['data' => []]);
         }
 
-        // First, try to find patients by direct fields
+        $labId = $this->currentLabId();
+
+        // First, try to find patients by direct fields (Patient is lab-scoped for lab users)
         $patients = Patient::where(function ($q) use ($query) {
             $q->where('name', 'like', "%{$query}%")
               ->orWhere('phone', 'like', "%{$query}%")
-              ->orWhere('lab', 'like', "%{$query}%")
-              ->orWhere('id', 'like', "%{$query}%");
+              ->orWhere('whatsapp_number', 'like', "%{$query}%")
+              ->orWhere('lab', 'like', "%{$query}%");
+            if (ctype_digit($query)) {
+                $q->orWhere('id', (int) $query);
+            }
         })
-        ->with(['labRequests' => function($q) {
+        ->with(['labRequests' => function ($q) {
             $q->latest()->limit(1);
         }])
         ->limit(10)
         ->get();
 
-        // Also search by lab_requests table (lab number might be stored there)
-        // Handle different lab number formats: "58984", "58984-2025", "58984-2025m", etc.
-        $labRequestPatients = \App\Models\LabRequest::where(function ($q) use ($query) {
-            // Search in lab_no field
-            $q->where('lab_no', 'like', "%{$query}%")
-              // Search in full_lab_no (lab_no + suffix)
-              ->orWhereRaw("CONCAT(lab_no, COALESCE(suffix, '')) LIKE ?", ["%{$query}%"])
-              // Also try searching without dashes (in case user searches "58984" for "58984-2025")
-              ->orWhereRaw("REPLACE(lab_no, '-', '') LIKE ?", ["%" . str_replace('-', '', $query) . "%"])
-              ->orWhereRaw("REPLACE(CONCAT(lab_no, COALESCE(suffix, '')), '-', '') LIKE ?", ["%" . str_replace('-', '', $query) . "%"]);
-        })
-        ->with(['patient.labRequests' => function($q) {
-            $q->latest()->limit(1);
-        }])
-        ->get()
-        ->pluck('patient')
-        ->filter()
-        ->unique('id');
+        // Lab numbers often live on lab_requests — restrict to current lab only
+        $labRequestPatients = collect();
+        if ($labId) {
+            $labRequestPatients = LabRequest::withoutGlobalScope('lab')
+                ->where('lab_id', $labId)
+                ->where(function ($q) use ($query) {
+                    $q->where('lab_no', 'like', "%{$query}%")
+                      ->orWhereRaw("CONCAT(lab_no, COALESCE(suffix, '')) LIKE ?", ["%{$query}%"])
+                      ->orWhereRaw("REPLACE(lab_no, '-', '') LIKE ?", ['%'.str_replace('-', '', $query).'%'])
+                      ->orWhereRaw("REPLACE(CONCAT(lab_no, COALESCE(suffix, '')), '-', '') LIKE ?", ['%'.str_replace('-', '', $query).'%']);
+                })
+                ->with(['patient.labRequests' => function ($q) {
+                    $q->latest()->limit(1);
+                }])
+                ->get()
+                ->pluck('patient')
+                ->filter()
+                ->unique('id');
+        }
 
         // Merge both results and remove duplicates
         $allPatients = $patients->merge($labRequestPatients)->unique('id')->take(10);

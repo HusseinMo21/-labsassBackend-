@@ -7,6 +7,7 @@ use App\Models\LabTest;
 use App\Models\TestCategory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 class LabTestController extends Controller
 {
@@ -29,6 +30,14 @@ class LabTestController extends Controller
     {
         $query = LabTest::with('category');
 
+        $user = $request->user();
+        if ($user && $user->lab_id !== null) {
+            $lid = (int) $user->lab_id;
+            $query->where(function ($q) use ($lid) {
+                $q->whereNull('lab_id')->orWhere('lab_id', $lid);
+            });
+        }
+
         if ($request->has('search')) {
             $search = $request->search;
             $query->where(function ($q) use ($search) {
@@ -45,7 +54,9 @@ class LabTestController extends Controller
             $query->where('is_active', true);
         }
 
-        $tests = $query->latest()->paginate(15);
+        $perPage = min(max((int) $request->query('per_page', 15), 1), 500);
+
+        $tests = $query->latest()->paginate($perPage);
 
         return response()->json($tests);
     }
@@ -58,7 +69,7 @@ class LabTestController extends Controller
 
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'code' => 'required|string|max:50|unique:lab_tests,code',
+            'code' => ['required', 'string', 'max:50', Rule::unique('lab_tests', 'code')->whereNull('lab_id')],
             'description' => 'nullable|string',
             'price' => 'required|numeric|min:0',
             'unit' => 'nullable|string|max:50',
@@ -76,7 +87,7 @@ class LabTestController extends Controller
             ], 422);
         }
 
-        $test = LabTest::create($validator->validated());
+        $test = LabTest::create(array_merge($validator->validated(), ['lab_id' => null]));
 
         return response()->json([
             'message' => 'Lab test created successfully',
@@ -99,9 +110,16 @@ class LabTestController extends Controller
             return $r;
         }
 
+        $codeRule = Rule::unique('lab_tests', 'code')->ignore($test->id);
+        if ($test->lab_id === null) {
+            $codeRule->whereNull('lab_id');
+        } else {
+            $codeRule->where('lab_id', $test->lab_id);
+        }
+
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'code' => 'required|string|max:50|unique:lab_tests,code,' . $test->id,
+            'code' => ['required', 'string', 'max:50', $codeRule],
             'description' => 'nullable|string',
             'price' => 'required|numeric|min:0',
             'unit' => 'nullable|string|max:50',

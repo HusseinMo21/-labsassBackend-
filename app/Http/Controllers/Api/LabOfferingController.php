@@ -64,6 +64,11 @@ class LabOfferingController extends Controller
         ]);
 
         $test = LabTest::findOrFail($data['lab_test_id']);
+        if ($test->lab_id !== null && (int) $test->lab_id !== (int) $lab->id) {
+            return response()->json([
+                'message' => 'This test belongs to another lab and cannot be linked here.',
+            ], 422);
+        }
         $price = isset($data['price']) ? (float) $data['price'] : (float) $test->price;
         $displayName = isset($data['display_name']) ? trim((string) $data['display_name']) : null;
         if ($displayName === '') {

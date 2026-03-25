@@ -119,6 +119,7 @@ Route::middleware(['auth:sanctum', 'ensure.lab'])->group(function () {
 
     // Lab catalog (single endpoint: categories + tests + packages)
     Route::get('labs/{lab}/catalog', [\App\Http\Controllers\Api\LabCatalogController::class, 'show']);
+    Route::post('labs/{lab}/catalog/tests', [\App\Http\Controllers\Api\LabCatalogLabTestController::class, 'store']);
     Route::patch('labs/{lab}/catalog/category-settings/{testCategory}', [\App\Http\Controllers\Api\LabCategorySettingController::class, 'upsert']);
     Route::get('labs/{lab}/offerings', [\App\Http\Controllers\Api\LabOfferingController::class, 'index']);
     Route::post('labs/{lab}/offerings', [\App\Http\Controllers\Api\LabOfferingController::class, 'store']);

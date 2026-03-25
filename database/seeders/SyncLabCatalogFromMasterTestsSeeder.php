@@ -14,7 +14,7 @@ class SyncLabCatalogFromMasterTestsSeeder extends Seeder
      */
     public function run(): void
     {
-        $tests = LabTest::where('is_active', true)->get();
+        $tests = LabTest::where('is_active', true)->whereNull('lab_id')->get();
         if ($tests->isEmpty()) {
             $this->command->warn('No lab_tests found. Run LabTestSeeder first.');
             return;

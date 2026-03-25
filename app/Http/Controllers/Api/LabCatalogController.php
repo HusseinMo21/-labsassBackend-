@@ -40,12 +40,25 @@ class LabCatalogController extends Controller
 
         $offerings = $offerings->filter(fn ($o) => $o->labTest !== null);
 
-        $categoryIds = $offerings
+        // Categories that appear in offerings (have at least one catalog test)
+        $categoryIdsFromOfferings = $offerings
             ->pluck('labTest.category_id')
             ->unique()
             ->filter()
+            ->map(fn ($id) => (int) $id)
             ->values()
             ->all();
+
+        // All categories the lab may use (platform visible + lab-owned), so patient registration
+        // "one tap" chips match the lab catalog admin — even before tests are added.
+        $visibleCategoryIds = $this->labCatalogCategoryService
+            ->listVisibleForLab((int) $lab->id)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+
+        $categoryIds = array_values(array_unique(array_merge($visibleCategoryIds, $categoryIdsFromOfferings)));
 
         $categories = $this->labCatalogCategoryService->resolveForCatalog((int) $lab->id, $categoryIds);
 
