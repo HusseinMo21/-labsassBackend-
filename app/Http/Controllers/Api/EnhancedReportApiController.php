@@ -4,9 +4,12 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\EnhancedReport;
+use App\Models\LabTest;
+use App\Models\LabTestOffering;
 use App\Models\Patient;
 use App\Models\LabRequest;
 use App\Models\User;
+use App\Services\LabCatalogCategoryService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -688,11 +691,63 @@ class EnhancedReportApiController extends Controller
     {
         $request->validate([
             'search_term' => 'required|string|min:1',
-            'fields' => 'required|string',
+            'fields' => 'nullable|string',
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:100',
             'exclude_visit_id' => 'nullable|integer|exists:visits,id',
+            'category_id' => 'nullable|integer|exists:test_categories,id',
+            'lab_test_id' => 'nullable|integer|exists:lab_tests,id',
         ]);
+
+        $labId = $this->currentLabId();
+        $categoryId = $request->filled('category_id') ? (int) $request->category_id : null;
+        $labTestId = $request->filled('lab_test_id') ? (int) $request->lab_test_id : null;
+
+        if (($categoryId !== null || $labTestId !== null) && $labId === null) {
+            return response()->json([
+                'message' => 'Lab context is required to filter by category or test.',
+            ], 422);
+        }
+
+        if ($labId !== null && $labTestId !== null) {
+            $ok = LabTestOffering::query()
+                ->where('lab_id', $labId)
+                ->where('is_active', true)
+                ->whereHas('labTest', fn ($q) => $q->where('id', $labTestId))
+                ->exists();
+            if (! $ok) {
+                return response()->json([
+                    'message' => 'Selected test is not in this lab catalog.',
+                ], 422);
+            }
+        }
+
+        if ($labId !== null && $categoryId !== null) {
+            $visibleIds = app(LabCatalogCategoryService::class)
+                ->listVisibleForLab($labId)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $hasOffering = LabTestOffering::query()
+                ->where('lab_id', $labId)
+                ->where('is_active', true)
+                ->whereHas('labTest', fn ($q) => $q->where('category_id', $categoryId))
+                ->exists();
+            if (! in_array($categoryId, $visibleIds, true) && ! $hasOffering) {
+                return response()->json([
+                    'message' => 'Selected category is not available for this lab.',
+                ], 422);
+            }
+        }
+
+        if ($labId !== null && $labTestId !== null && $categoryId !== null) {
+            $test = LabTest::query()->whereKey($labTestId)->value('category_id');
+            if ($test !== null && (int) $test !== $categoryId) {
+                return response()->json([
+                    'message' => 'Test does not belong to the selected category.',
+                ], 422);
+            }
+        }
 
         // Trim and normalize search term for case-insensitive search
         $searchTerm = trim($request->search_term);
@@ -709,10 +764,6 @@ class EnhancedReportApiController extends Controller
         }, $words);
         // Join words with % to allow flexible spacing between them
         $searchTermPattern = implode('%', $escapedWords);
-        
-        $fields = explode(',', $request->fields);
-        $perPage = $request->per_page ?? 15;
-        $excludeVisitId = $request->exclude_visit_id;
 
         // Field mapping: frontend field names to database column names
         $fieldMapping = [
@@ -723,9 +774,46 @@ class EnhancedReportApiController extends Controller
             'conclusion' => 'conc',
             'recommendations' => 'reco',
         ];
+        $allowedReportSearchFields = array_keys($fieldMapping);
+        $rawFields = $request->input('fields');
+        $fields = is_string($rawFields) && trim($rawFields) !== ''
+            ? array_values(array_intersect(
+                array_map('trim', explode(',', $rawFields)),
+                $allowedReportSearchFields
+            ))
+            : [];
+        if (count($fields) === 0) {
+            $fields = $allowedReportSearchFields;
+        }
+
+        $perPage = $request->per_page ?? 15;
+        $excludeVisitId = $request->exclude_visit_id;
 
         // Build query
         $query = EnhancedReport::with(['patient', 'labRequest.visit']);
+
+        if ($labId !== null) {
+            $query->whereHas('labRequest', fn ($lr) => $lr->where('lab_id', $labId));
+        }
+
+        if ($categoryId !== null || $labTestId !== null) {
+            $query->whereHas('labRequest.visit', function ($vis) use ($labId, $categoryId, $labTestId) {
+                $vis->whereHas('visitTests', function ($vt) use ($labId, $categoryId, $labTestId) {
+                    if ($labId !== null) {
+                        $vt->where('visit_tests.lab_id', $labId);
+                    }
+                    if ($labTestId !== null) {
+                        $vt->where('visit_tests.lab_test_id', $labTestId);
+                    }
+                    if ($categoryId !== null) {
+                        $vt->where(function ($w) use ($categoryId) {
+                            $w->where('visit_tests.test_category_id', $categoryId)
+                                ->orWhereHas('labTest', fn ($lt) => $lt->where('category_id', $categoryId));
+                        });
+                    }
+                });
+            });
+        }
 
         // Exclude current visit if specified
         if ($excludeVisitId) {
@@ -764,6 +852,9 @@ class EnhancedReportApiController extends Controller
             'search_pattern' => $searchTermPattern,
             'fields' => $fields,
             'exclude_visit_id' => $excludeVisitId,
+            'lab_id' => $labId,
+            'category_id' => $categoryId,
+            'lab_test_id' => $labTestId,
         ]);
 
         // Execute EnhancedReports query with pagination
@@ -775,6 +866,29 @@ class EnhancedReportApiController extends Controller
         $reportQuery = \App\Models\Report::with(['labRequest.visit', 'labRequest.patient'])
             ->whereNotNull('content')
             ->where('content', 'like', '{%'); // Only JSON content
+
+        if ($labId !== null) {
+            $reportQuery->whereHas('labRequest', fn ($lr) => $lr->where('lab_id', $labId));
+        }
+
+        if ($categoryId !== null || $labTestId !== null) {
+            $reportQuery->whereHas('labRequest.visit', function ($vis) use ($labId, $categoryId, $labTestId) {
+                $vis->whereHas('visitTests', function ($vt) use ($labId, $categoryId, $labTestId) {
+                    if ($labId !== null) {
+                        $vt->where('visit_tests.lab_id', $labId);
+                    }
+                    if ($labTestId !== null) {
+                        $vt->where('visit_tests.lab_test_id', $labTestId);
+                    }
+                    if ($categoryId !== null) {
+                        $vt->where(function ($w) use ($categoryId) {
+                            $w->where('visit_tests.test_category_id', $categoryId)
+                                ->orWhereHas('labTest', fn ($lt) => $lt->where('category_id', $categoryId));
+                        });
+                    }
+                });
+            });
+        }
         
         // Exclude current visit if specified
         if ($excludeVisitId) {

@@ -3,101 +3,141 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Visit;
-use App\Models\LabRequest;
-use App\Models\LabTest;
-use App\Models\VisitTest;
+use App\Models\Lab;
 use App\Models\Patient;
-use App\Models\TestCategory;
 use App\Models\Report;
-use App\Models\Invoice;
+use App\Models\Visit;
+use App\Models\VisitTest;
+use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Carbon\Carbon;
 
 class LabInsightsController extends Controller
 {
     /**
-     * Get comprehensive lab insights data
+     * Lab-scoped analytics: every metric is limited to the current user's lab.
      */
     public function getInsights(Request $request)
     {
-        $period = $request->get('period', '30'); // days
-        $startDate = Carbon::now()->subDays($period);
-        $endDate = Carbon::now();
+        $periodDays = max(1, min(1095, (int) $request->get('period', 30)));
+        $labId = $this->currentLabId();
+
+        if (! $labId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lab context is required for lab insights.',
+            ], 403);
+        }
+
+        $rangeEnd = Carbon::today();
+        $rangeStart = Carbon::today()->copy()->subDays($periodDays);
+        $prevRangeEnd = $rangeStart->copy()->subDay();
+        $prevRangeStart = $rangeStart->copy()->subDays($periodDays);
 
         try {
-            // Start with basic data to test - simplified version
+            $lab = Lab::query()->whereKey($labId)->first(['id', 'name', 'slug']);
+
             $insights = [
-                'overview' => $this->getOverviewStats($startDate, $endDate),
-                'revenue' => $this->getSimpleRevenueStats($startDate, $endDate),
-                'tests' => $this->getSimpleTestStats($startDate, $endDate),
-                'patients' => $this->getSimplePatientStats($startDate, $endDate),
-                'performance' => $this->getSimplePerformanceStats($startDate, $endDate),
-                'trends' => $this->getSimpleTrendsData($startDate, $endDate),
-                'categories' => $this->getSimpleCategoryStats($startDate, $endDate),
-                'top_tests' => $this->getSimpleTopTests($startDate, $endDate),
-                'recent_activity' => $this->getSimpleRecentActivity($startDate, $endDate),
+                'overview' => $this->getOverviewStats($labId, $rangeStart, $rangeEnd, $prevRangeStart, $prevRangeEnd),
+                'revenue' => $this->getSimpleRevenueStats($labId, $rangeStart, $rangeEnd),
+                'tests' => $this->getSimpleTestStats($labId, $rangeStart, $rangeEnd),
+                'patients' => $this->getSimplePatientStats($labId, $rangeStart, $rangeEnd),
+                'performance' => $this->getSimplePerformanceStats($labId, $rangeStart, $rangeEnd),
+                'trends' => $this->getSimpleTrendsData($labId),
+                'categories' => $this->getSimpleCategoryStats($labId, $rangeStart, $rangeEnd),
+                'top_tests' => $this->getSimpleTopTests($labId, $rangeStart, $rangeEnd),
+                'recent_activity' => $this->getSimpleRecentActivity($labId, $rangeStart, $rangeEnd),
             ];
 
             return response()->json([
                 'success' => true,
                 'data' => $insights,
-                'period' => $period,
+                'lab' => $lab ? [
+                    'id' => $lab->id,
+                    'name' => $lab->name,
+                    'slug' => $lab->slug,
+                ] : ['id' => $labId, 'name' => null, 'slug' => null],
+                'period' => $periodDays,
                 'date_range' => [
-                    'start' => $startDate->format('Y-m-d'),
-                    'end' => $endDate->format('Y-m-d'),
-                ]
+                    'start' => $rangeStart->format('Y-m-d'),
+                    'end' => $rangeEnd->format('Y-m-d'),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Lab Insights Error: '.$e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'period' => $periodDays,
+                'lab_id' => $labId,
             ]);
 
-        } catch (\Exception $e) {
-            \Log::error('Lab Insights Error: ' . $e->getMessage(), [
-                'trace' => $e->getTraceAsString(),
-                'period' => $period,
-                'start_date' => $startDate->format('Y-m-d'),
-                'end_date' => $endDate->format('Y-m-d'),
-            ]);
-            
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to fetch insights data',
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
             ], 500);
         }
     }
 
-    /**
-     * Get overview statistics
-     */
-    private function getOverviewStats($startDate, $endDate)
+    protected function visitsForLab(int $labId): Builder
+    {
+        return Visit::withoutGlobalScope('lab')->where('visits.lab_id', $labId);
+    }
+
+    protected function patientsForLab(int $labId): Builder
+    {
+        return Patient::withoutGlobalScope('lab')->where('patient.lab_id', $labId);
+    }
+
+    protected function visitTestsForLab(int $labId): Builder
+    {
+        return VisitTest::query()->where('visit_tests.lab_id', $labId);
+    }
+
+    /** Visits for this lab with visit_date in [from, to] (inclusive, date column). */
+    protected function visitsForLabBetween(int $labId, Carbon $from, Carbon $to): Builder
+    {
+        return $this->visitsForLab($labId)
+            ->where('visit_date', '>=', $from->toDateString())
+            ->where('visit_date', '<=', $to->toDateString());
+    }
+
+    /** Visit-test rows for this lab whose parent visit falls in the date range. */
+    protected function visitTestsForLabBetween(int $labId, Carbon $from, Carbon $to): Builder
+    {
+        return $this->visitTestsForLab($labId)
+            ->whereHas('visit', function ($q) use ($labId, $from, $to) {
+                $q->withoutGlobalScope('lab')
+                    ->where('visits.lab_id', $labId)
+                    ->where('visit_date', '>=', $from->toDateString())
+                    ->where('visit_date', '<=', $to->toDateString());
+            });
+    }
+
+    private function getOverviewStats(int $labId, Carbon $rangeStart, Carbon $rangeEnd, Carbon $prevStart, Carbon $prevEnd): array
     {
         try {
-            // Get total counts instead of date-filtered counts since date fields are problematic
-            $totalVisits = Visit::count();
-            $totalPatients = Patient::count();
-            $totalTests = VisitTest::count();
-            
-            // Get total revenue from all visits
-            $totalRevenue = 0;
-            try {
-                $totalRevenue = Visit::sum('final_amount') ?? 0;
-            } catch (\Exception $e) {
-                try {
-                    $totalRevenue = Visit::sum('total_amount') ?? 0;
-                } catch (\Exception $e2) {
-                    $totalRevenue = 0;
-                }
-            }
+            $countVisits = fn (Carbon $a, Carbon $b) => $this->visitsForLabBetween($labId, $a, $b)->count();
+            $sumRevenue = fn (Carbon $a, Carbon $b) => (float) ($this->visitsForLabBetween($labId, $a, $b)->sum('final_amount') ?? 0);
 
-            // For comparison, use a simple approach - assume 10% growth
-            $prevVisits = max(1, round($totalVisits * 0.9));
-            $prevPatients = max(1, round($totalPatients * 0.9));
-            $prevTests = max(1, round($totalTests * 0.9));
-            $prevRevenue = max(1, round($totalRevenue * 0.9));
-            
+            $distinctPatients = fn (Carbon $a, Carbon $b) => (int) DB::table('visits')
+                ->where('lab_id', $labId)
+                ->where('visit_date', '>=', $a->toDateString())
+                ->where('visit_date', '<=', $b->toDateString())
+                ->distinct()
+                ->count('patient_id');
+
+            $countTests = fn (Carbon $a, Carbon $b) => $this->visitTestsForLabBetween($labId, $a, $b)->count();
+
+            $curV = $countVisits($rangeStart, $rangeEnd);
+            $prevV = $countVisits($prevStart, $prevEnd);
+            $curP = $distinctPatients($rangeStart, $rangeEnd);
+            $prevP = $distinctPatients($prevStart, $prevEnd);
+            $curT = $countTests($rangeStart, $rangeEnd);
+            $prevT = $countTests($prevStart, $prevEnd);
+            $curR = $sumRevenue($rangeStart, $rangeEnd);
+            $prevR = $sumRevenue($prevStart, $prevEnd);
         } catch (\Exception $e) {
-            // Return default values if there's an error
             return [
                 'visits' => ['current' => 0, 'previous' => 0, 'change' => 0],
                 'patients' => ['current' => 0, 'previous' => 0, 'change' => 0],
@@ -108,365 +148,69 @@ class LabInsightsController extends Controller
 
         return [
             'visits' => [
-                'current' => $totalVisits,
-                'previous' => $prevVisits,
-                'change' => $this->calculatePercentageChange($prevVisits, $totalVisits),
+                'current' => $curV,
+                'previous' => $prevV,
+                'change' => $this->calculatePercentageChange($prevV, $curV),
             ],
             'patients' => [
-                'current' => $totalPatients,
-                'previous' => $prevPatients,
-                'change' => $this->calculatePercentageChange($prevPatients, $totalPatients),
+                'current' => $curP,
+                'previous' => $prevP,
+                'change' => $this->calculatePercentageChange($prevP, $curP),
             ],
             'tests' => [
-                'current' => $totalTests,
-                'previous' => $prevTests,
-                'change' => $this->calculatePercentageChange($prevTests, $totalTests),
+                'current' => $curT,
+                'previous' => $prevT,
+                'change' => $this->calculatePercentageChange($prevT, $curT),
             ],
             'revenue' => [
-                'current' => $totalRevenue,
-                'previous' => $prevRevenue,
-                'change' => $this->calculatePercentageChange($prevRevenue, $totalRevenue),
+                'current' => $curR,
+                'previous' => $prevR,
+                'change' => $this->calculatePercentageChange($prevR, $curR),
             ],
         ];
     }
 
     /**
-     * Get revenue statistics
+     * Revenue aligned with overview cards — all sums come from visits for this lab.
+     * (Avoids legacy payments table / model column mismatches that zeroed the whole block.)
      */
-    private function getRevenueStats($startDate, $endDate)
-    {
-        $revenue = Visit::whereBetween('visit_date', [$startDate, $endDate])
-            ->selectRaw('
-                SUM(total_amount) as total_revenue,
-                SUM(discount_amount) as total_discounts,
-                SUM(final_amount) as net_revenue,
-                SUM(upfront_payment) as upfront_payments,
-                SUM(remaining_balance) as outstanding_balance,
-                AVG(final_amount) as average_visit_value
-            ')
-            ->first();
-
-        $paymentMethods = Visit::whereBetween('visit_date', [$startDate, $endDate])
-            ->whereNotNull('payment_method')
-            ->selectRaw('payment_method, COUNT(*) as count, SUM(final_amount) as amount')
-            ->groupBy('payment_method')
-            ->get();
-
-        return [
-            'total_revenue' => $revenue->total_revenue ?? 0,
-            'total_discounts' => $revenue->total_discounts ?? 0,
-            'net_revenue' => $revenue->net_revenue ?? 0,
-            'upfront_payments' => $revenue->upfront_payments ?? 0,
-            'outstanding_balance' => $revenue->outstanding_balance ?? 0,
-            'average_visit_value' => $revenue->average_visit_value ?? 0,
-            'payment_methods' => $paymentMethods,
-        ];
-    }
-
-    /**
-     * Get test statistics
-     */
-    private function getTestStats($startDate, $endDate)
-    {
-        $testStatuses = VisitTest::whereHas('visit', function($query) use ($startDate, $endDate) {
-            $query->whereBetween('visit_date', [$startDate, $endDate]);
-        })
-        ->selectRaw('status, COUNT(*) as count')
-        ->groupBy('status')
-        ->get();
-
-        $avgTurnaroundTime = VisitTest::whereHas('visit', function($query) use ($startDate, $endDate) {
-            $query->whereBetween('visit_date', [$startDate, $endDate]);
-        })
-        ->whereNotNull('performed_at')
-        ->join('lab_tests', 'visit_tests.lab_test_id', '=', 'lab_tests.id')
-        ->avg('lab_tests.turnaround_time_hours');
-
-        return [
-            'status_breakdown' => $testStatuses,
-            'average_turnaround_hours' => $avgTurnaroundTime ?? 0,
-            'total_tests' => VisitTest::whereHas('visit', function($query) use ($startDate, $endDate) {
-                $query->whereBetween('visit_date', [$startDate, $endDate]);
-            })->count(),
-        ];
-    }
-
-    /**
-     * Get patient statistics
-     */
-    private function getPatientStats($startDate, $endDate)
-    {
-        $genderDistribution = Patient::whereBetween('created_at', [$startDate, $endDate])
-            ->selectRaw('gender, COUNT(*) as count')
-            ->groupBy('gender')
-            ->get();
-
-        $ageGroups = Patient::whereBetween('created_at', [$startDate, $endDate])
-            ->whereNotNull('birth_date')
-            ->get()
-            ->groupBy(function($patient) {
-                $age = $patient->birth_date->diffInYears(now());
-                if ($age < 18) return 'Under 18';
-                if ($age < 30) return '18-29';
-                if ($age < 50) return '30-49';
-                if ($age < 65) return '50-64';
-                return '65+';
-            })
-            ->map(function($group) {
-                return $group->count();
-            });
-
-        $insuranceStats = Patient::whereBetween('created_at', [$startDate, $endDate])
-            ->selectRaw('has_insurance, COUNT(*) as count')
-            ->groupBy('has_insurance')
-            ->get();
-
-        return [
-            'gender_distribution' => $genderDistribution,
-            'age_groups' => $ageGroups,
-            'insurance_stats' => $insuranceStats,
-            'new_patients' => Patient::whereBetween('created_at', [$startDate, $endDate])->count(),
-            'returning_patients' => Patient::whereHas('visits', function($query) use ($startDate, $endDate) {
-                $query->whereBetween('visit_date', [$startDate, $endDate]);
-            })->where('created_at', '<', $startDate)->count(),
-        ];
-    }
-
-    /**
-     * Get performance statistics
-     */
-    private function getPerformanceStats($startDate, $endDate)
-    {
-        $completedTests = VisitTest::whereHas('visit', function($query) use ($startDate, $endDate) {
-            $query->whereBetween('visit_date', [$startDate, $endDate]);
-        })->where('status', 'completed')->count();
-
-        $totalTests = VisitTest::whereHas('visit', function($query) use ($startDate, $endDate) {
-            $query->whereBetween('visit_date', [$startDate, $endDate]);
-        })->count();
-
-        $completionRate = $totalTests > 0 ? ($completedTests / $totalTests) * 100 : 0;
-
-        // For SQLite compatibility, calculate average processing time manually
-        $visitTests = VisitTest::whereHas('visit', function($query) use ($startDate, $endDate) {
-            $query->whereBetween('visit_date', [$startDate, $endDate]);
-        })
-        ->whereNotNull('performed_at')
-        ->get();
-
-        $totalHours = 0;
-        $count = 0;
-        foreach ($visitTests as $test) {
-            if ($test->created_at && $test->performed_at) {
-                $totalHours += $test->created_at->diffInHours($test->performed_at);
-                $count++;
-            }
-        }
-        $avgProcessingTime = $count > 0 ? $totalHours / $count : 0;
-
-        return [
-            'completion_rate' => round($completionRate, 2),
-            'average_processing_time_hours' => round($avgProcessingTime ?? 0, 2),
-            'completed_tests' => $completedTests,
-            'total_tests' => $totalTests,
-        ];
-    }
-
-    /**
-     * Get trends data for charts
-     */
-    private function getTrendsData($startDate, $endDate)
-    {
-        // For SQLite compatibility, use date() function instead of DATE()
-        $dailyVisits = Visit::whereBetween('visit_date', [$startDate, $endDate])
-            ->selectRaw('date(visit_date) as date, COUNT(*) as count, SUM(final_amount) as revenue')
-            ->groupBy('date')
-            ->orderBy('date')
-            ->get();
-
-        $dailyTests = VisitTest::whereHas('visit', function($query) use ($startDate, $endDate) {
-            $query->whereBetween('visit_date', [$startDate, $endDate]);
-        })
-        ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
-        ->selectRaw('date(visits.visit_date) as date, COUNT(*) as count')
-        ->groupBy('date')
-        ->orderBy('date')
-        ->get();
-
-        return [
-            'daily_visits' => $dailyVisits,
-            'daily_tests' => $dailyTests,
-        ];
-    }
-
-    /**
-     * Get category statistics
-     */
-    private function getCategoryStats($startDate, $endDate)
+    private function getSimpleRevenueStats(int $labId, Carbon $rangeStart, Carbon $rangeEnd): array
     {
         try {
-            return TestCategory::withCount(['labTests' => function($query) use ($startDate, $endDate) {
-                $query->whereHas('visitTests', function($subQuery) use ($startDate, $endDate) {
-                    $subQuery->whereHas('visit', function($visitQuery) use ($startDate, $endDate) {
-                        $visitQuery->whereBetween('visit_date', [$startDate, $endDate]);
-                    });
-                });
-            }])
-            ->get()
-            ->map(function($category) {
-                return [
-                    'id' => $category->id,
-                    'name' => $category->name,
-                    'test_count' => $category->lab_tests_count,
-                    'revenue' => 0, // Simplified for now
-                ];
-            });
-        } catch (\Exception $e) {
-            \Log::error('Category stats error: ' . $e->getMessage());
-            return [];
-        }
-    }
+            $vq = $this->visitsForLabBetween($labId, $rangeStart, $rangeEnd);
 
-    /**
-     * Get top performing tests
-     */
-    private function getTopTests($startDate, $endDate)
-    {
-        try {
-            return LabTest::whereHas('visitTests', function($query) use ($startDate, $endDate) {
-                $query->whereHas('visit', function($subQuery) use ($startDate, $endDate) {
-                    $subQuery->whereBetween('visit_date', [$startDate, $endDate]);
-                });
-            })
-            ->withCount(['visitTests' => function($query) use ($startDate, $endDate) {
-                $query->whereHas('visit', function($subQuery) use ($startDate, $endDate) {
-                    $subQuery->whereBetween('visit_date', [$startDate, $endDate]);
-                });
-            }])
-            ->with(['category'])
-            ->orderBy('visit_tests_count', 'desc')
-            ->limit(10)
-            ->get()
-            ->map(function($test) {
-                return [
-                    'id' => $test->id,
-                    'name' => $test->name,
-                    'code' => $test->code,
-                    'category' => $test->category->name ?? 'Uncategorized',
-                    'count' => $test->visit_tests_count,
-                    'revenue' => 0, // Simplified for now
-                    'price' => $test->price,
-                ];
-            });
-        } catch (\Exception $e) {
-            \Log::error('Top tests error: ' . $e->getMessage());
-            return [];
-        }
-    }
+            $totalRevenue = (float) ($vq->clone()->sum('final_amount') ?? 0);
+            $totalDiscounts = (float) ($vq->clone()->sum('discount_amount') ?? 0);
+            $upfrontPayments = (float) ($vq->clone()->sum('upfront_payment') ?? 0);
+            $outstandingBalance = (float) ($vq->clone()->sum('remaining_balance') ?? 0);
+            $totalVisits = $vq->clone()->count();
 
-    /**
-     * Get recent activity
-     */
-    private function getRecentActivity($startDate, $endDate)
-    {
-        try {
-            $recentVisits = Visit::with(['patient', 'visitTests'])
-                ->whereBetween('visit_date', [$startDate, $endDate])
-                ->orderBy('visit_date', 'desc')
-                ->limit(10)
+            $pmCase = "CASE WHEN payment_method IS NULL OR TRIM(payment_method) = '' THEN 'unspecified' ELSE payment_method END";
+
+            $paymentMethods = $vq->clone()
+                ->selectRaw("{$pmCase} as pm, COUNT(*) as cnt, COALESCE(SUM(final_amount), 0) as amt")
+                ->groupBy(DB::raw($pmCase))
                 ->get()
-                ->map(function($visit) {
-                    return [
-                        'id' => $visit->id,
-                        'patient_name' => $visit->patient->name ?? 'Unknown',
-                        'visit_date' => $visit->visit_date->format('Y-m-d'),
-                        'test_count' => $visit->visitTests->count(),
-                        'total_amount' => $visit->final_amount,
-                        'status' => $visit->status,
-                    ];
-                });
+                ->map(fn ($r) => [
+                    'payment_method' => $r->pm ?? 'unspecified',
+                    'count' => (int) $r->cnt,
+                    'amount' => (float) $r->amt,
+                ])
+                ->values()
+                ->all();
 
-            $recentReports = Report::with(['labRequest.patient'])
-                ->whereBetween('generated_at', [$startDate, $endDate])
-                ->orderBy('generated_at', 'desc')
-                ->limit(5)
-                ->get()
-                ->map(function($report) {
-                    return [
-                        'id' => $report->id,
-                        'patient_name' => $report->labRequest->patient->name ?? 'Unknown',
-                        'generated_at' => $report->generated_at->format('Y-m-d H:i'),
-                        'status' => $report->status,
-                    ];
-                });
-
-            return [
-                'recent_visits' => $recentVisits,
-                'recent_reports' => $recentReports,
-            ];
-        } catch (\Exception $e) {
-            \Log::error('Recent activity error: ' . $e->getMessage());
-            return [
-                'recent_visits' => [],
-                'recent_reports' => [],
-            ];
-        }
-    }
-
-    /**
-     * Calculate percentage change
-     */
-    private function calculatePercentageChange($previous, $current)
-    {
-        if ($previous == 0) {
-            return $current > 0 ? 100 : 0;
-        }
-        
-        return round((($current - $previous) / $previous) * 100, 2);
-    }
-
-    // Simplified methods to avoid complex queries
-    private function getSimpleRevenueStats($startDate, $endDate)
-    {
-        try {
-            // Get total revenue from all visits
-            $totalRevenue = Visit::sum('final_amount') ?? 0;
-            $totalVisits = Visit::count();
-            
-            // Get real payment data from payments table
-            $paymentMethods = \App\Models\Payment::selectRaw('payment_method, COUNT(*) as count, SUM(amount) as amount')
-                ->groupBy('payment_method')
-                ->get()
-                ->map(function($payment) {
-                    return [
-                        'payment_method' => $payment->payment_method ?? 'cash',
-                        'count' => $payment->count,
-                        'amount' => $payment->amount ?? 0
-                    ];
-                });
-            
-            // If no payment data, use estimates
-            if ($paymentMethods->isEmpty()) {
-                $paymentMethods = collect([
-                    ['payment_method' => 'cash', 'count' => $totalVisits * 0.6, 'amount' => $totalRevenue * 0.6],
-                    ['payment_method' => 'card', 'count' => $totalVisits * 0.4, 'amount' => $totalRevenue * 0.4]
-                ]);
-            }
-            
-            // Calculate outstanding balance from invoices
-            $outstandingBalance = \App\Models\Invoice::sum('remaining') ?? 0;
-            $upfrontPayments = $totalRevenue - $outstandingBalance;
-            
             return [
                 'total_revenue' => $totalRevenue,
-                'total_discounts' => 0,
+                'total_discounts' => round($totalDiscounts, 2),
                 'net_revenue' => $totalRevenue,
-                'upfront_payments' => max(0, $upfrontPayments),
-                'outstanding_balance' => $outstandingBalance,
+                'upfront_payments' => round($upfrontPayments, 2),
+                'outstanding_balance' => round($outstandingBalance, 2),
                 'average_visit_value' => $totalVisits > 0 ? round($totalRevenue / $totalVisits, 2) : 0,
-                'payment_methods' => $paymentMethods->toArray()
+                'payment_methods' => $paymentMethods,
             ];
         } catch (\Exception $e) {
+            \Log::warning('Lab insights revenue stats: '.$e->getMessage(), ['lab_id' => $labId]);
+
             return [
                 'total_revenue' => 0,
                 'total_discounts' => 0,
@@ -474,79 +218,142 @@ class LabInsightsController extends Controller
                 'upfront_payments' => 0,
                 'outstanding_balance' => 0,
                 'average_visit_value' => 0,
-                'payment_methods' => []
+                'payment_methods' => [],
             ];
         }
     }
 
-    private function getSimpleTestStats($startDate, $endDate)
+    private function getSimpleTestStats(int $labId, Carbon $rangeStart, Carbon $rangeEnd): array
     {
         try {
-            $totalTests = VisitTest::count();
-            return [
-                'status_breakdown' => [
-                    ['status' => 'completed', 'count' => $totalTests],
+            $base = $this->visitTestsForLabBetween($labId, $rangeStart, $rangeEnd);
+
+            $breakdown = (clone $base)
+                ->selectRaw('status, COUNT(*) as count')
+                ->groupBy('status')
+                ->get()
+                ->map(fn ($r) => ['status' => $r->status ?? 'unknown', 'count' => (int) $r->count])
+                ->values()
+                ->all();
+
+            if ($breakdown === []) {
+                $breakdown = [
+                    ['status' => 'completed', 'count' => 0],
                     ['status' => 'pending', 'count' => 0],
-                    ['status' => 'in_progress', 'count' => 0]
-                ],
-                'average_turnaround_hours' => 24,
-                'total_tests' => $totalTests
+                    ['status' => 'in_progress', 'count' => 0],
+                ];
+            }
+
+            $from = $rangeStart->toDateString();
+            $to = $rangeEnd->toDateString();
+
+            $avgTurnaround = DB::table('visit_tests')
+                ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
+                ->join('lab_tests', 'visit_tests.lab_test_id', '=', 'lab_tests.id')
+                ->where('visit_tests.lab_id', $labId)
+                ->where('visits.lab_id', $labId)
+                ->where('visits.visit_date', '>=', $from)
+                ->where('visits.visit_date', '<=', $to)
+                ->whereNotNull('lab_tests.turnaround_time_hours')
+                ->avg('lab_tests.turnaround_time_hours');
+
+            return [
+                'status_breakdown' => $breakdown,
+                'average_turnaround_hours' => $avgTurnaround ? round((float) $avgTurnaround, 2) : 0,
+                'total_tests' => (clone $base)->count(),
             ];
         } catch (\Exception $e) {
             return [
-                'status_breakdown' => [
-                    ['status' => 'completed', 'count' => 0],
-                    ['status' => 'pending', 'count' => 0],
-                    ['status' => 'in_progress', 'count' => 0]
-                ],
+                'status_breakdown' => [],
                 'average_turnaround_hours' => 0,
-                'total_tests' => 0
+                'total_tests' => 0,
             ];
         }
     }
 
-    private function getSimplePatientStats($startDate, $endDate)
+    private function getSimplePatientStats(int $labId, Carbon $rangeStart, Carbon $rangeEnd): array
     {
         try {
-            $totalPatients = Patient::count();
-            
-            // Get real gender distribution
-            $genderDistribution = Patient::selectRaw('gender, COUNT(*) as count')
+            $patientIds = $this->visitsForLabBetween($labId, $rangeStart, $rangeEnd)
+                ->pluck('patient_id')
+                ->unique()
+                ->filter()
+                ->values();
+
+            if ($patientIds->isEmpty()) {
+                return [
+                    'gender_distribution' => [],
+                    'age_groups' => [],
+                    'insurance_stats' => [],
+                    'new_patients' => 0,
+                    'returning_patients' => 0,
+                ];
+            }
+
+            $pq = $this->patientsForLab($labId)->whereIn('patient.id', $patientIds);
+
+            $genderDistribution = (clone $pq)
+                ->selectRaw('gender, COUNT(*) as count')
                 ->groupBy('gender')
                 ->get()
-                ->map(function($item) {
+                ->map(function ($item) {
+                    $g = strtolower((string) ($item->gender ?? ''));
+
                     return [
-                        'gender' => $item->gender === 'Male' ? 'Male' : ($item->gender === 'Female' ? 'Female' : 'Other'),
-                        'count' => $item->count
+                        'gender' => $g === 'male' || $g === 'ذكر' ? 'Male' : ($g === 'female' || $g === 'أنثى' ? 'Female' : 'Other'),
+                        'count' => (int) $item->count,
                     ];
                 });
-            
-            // Get real age groups (using age field)
-            $ageGroups = Patient::selectRaw('
-                CASE 
-                    WHEN age <= 18 THEN "0-18"
-                    WHEN age <= 35 THEN "19-35"
-                    WHEN age <= 50 THEN "36-50"
-                    ELSE "51+"
-                END as age_group,
-                COUNT(*) as count
-            ')
-            ->groupBy('age_group')
-            ->pluck('count', 'age_group')
-            ->toArray();
-            
-            // For new patients, use a simple approach since we don't have created_at
-            $newPatients = min(100, $totalPatients * 0.1); // Assume 10% are new
-            
+
+            $ageGroups = [];
+            try {
+                $ageGroups = (clone $pq)
+                    ->selectRaw("
+                        CASE
+                            WHEN age <= 18 THEN '0-18'
+                            WHEN age <= 35 THEN '19-35'
+                            WHEN age <= 50 THEN '36-50'
+                            ELSE '51+'
+                        END as age_group,
+                        COUNT(*) as count
+                    ")
+                    ->groupBy('age_group')
+                    ->pluck('count', 'age_group')
+                    ->map(fn ($c) => (int) $c)
+                    ->toArray();
+            } catch (\Exception $e) {
+                $ageGroups = [];
+            }
+
+            $insuranceStats = [];
+            try {
+                $insuranceStats = (clone $pq)
+                    ->selectRaw('has_insurance, COUNT(*) as count')
+                    ->groupBy('has_insurance')
+                    ->get()
+                    ->map(fn ($r) => [
+                        'has_insurance' => (bool) $r->has_insurance,
+                        'count' => (int) $r->count,
+                    ])
+                    ->toArray();
+            } catch (\Exception $e) {
+                $insuranceStats = [];
+            }
+
+            $distinctWithVisit = $patientIds->count();
+            $newPatients = $this->patientsForLab($labId)
+                ->whereIn('patient.id', $patientIds)
+                ->where('created_at', '>=', $rangeStart->copy()->startOfDay())
+                ->where('created_at', '<=', $rangeEnd->copy()->endOfDay())
+                ->count();
+            $returningPatients = max(0, $distinctWithVisit - $newPatients);
+
             return [
                 'gender_distribution' => $genderDistribution->toArray(),
                 'age_groups' => $ageGroups,
-                'insurance_stats' => [
-                    ['has_insurance' => true, 'count' => $totalPatients * 0.7],
-                    ['has_insurance' => false, 'count' => $totalPatients * 0.3]
-                ],
+                'insurance_stats' => $insuranceStats,
                 'new_patients' => $newPatients,
-                'returning_patients' => $totalPatients - $newPatients
+                'returning_patients' => $returningPatients,
             ];
         } catch (\Exception $e) {
             return [
@@ -554,148 +361,252 @@ class LabInsightsController extends Controller
                 'age_groups' => [],
                 'insurance_stats' => [],
                 'new_patients' => 0,
-                'returning_patients' => 0
+                'returning_patients' => 0,
             ];
         }
     }
 
-    private function getSimplePerformanceStats($startDate, $endDate)
+    private function getSimplePerformanceStats(int $labId, Carbon $rangeStart, Carbon $rangeEnd): array
     {
         try {
-            $totalTests = VisitTest::count();
-            $completedTests = VisitTest::where('status', 'completed')->count();
-            
-            // Calculate completion rate
+            $base = $this->visitTestsForLabBetween($labId, $rangeStart, $rangeEnd);
+            $totalTests = (clone $base)->count();
+            $completedTests = (clone $base)->where('status', 'completed')->count();
             $completionRate = $totalTests > 0 ? round(($completedTests / $totalTests) * 100, 1) : 0;
-            
-            // Calculate average processing time (simplified)
-            $averageProcessingTime = 24; // Default 24 hours
-            
+
+            $visitTests = (clone $base)
+                ->whereNotNull('performed_at')
+                ->get(['created_at', 'performed_at']);
+
+            $totalHours = 0;
+            $count = 0;
+            foreach ($visitTests as $test) {
+                if ($test->created_at && $test->performed_at) {
+                    $totalHours += $test->created_at->diffInHours($test->performed_at);
+                    $count++;
+                }
+            }
+            $avgProcessingTime = $count > 0 ? round($totalHours / $count, 2) : 0;
+
             return [
                 'completion_rate' => $completionRate,
-                'average_processing_time_hours' => $averageProcessingTime,
+                'average_processing_time_hours' => $avgProcessingTime,
                 'completed_tests' => $completedTests,
-                'total_tests' => $totalTests
+                'total_tests' => $totalTests,
             ];
         } catch (\Exception $e) {
             return [
                 'completion_rate' => 0,
                 'average_processing_time_hours' => 0,
                 'completed_tests' => 0,
-                'total_tests' => 0
+                'total_tests' => 0,
             ];
         }
     }
 
-    private function getSimpleTrendsData($startDate, $endDate)
+    private function getSimpleTrendsData(int $labId): array
     {
         try {
-            // Get real daily visits data for the last 7 days
             $dailyVisits = [];
             $dailyTests = [];
-            
+
             for ($i = 6; $i >= 0; $i--) {
                 $date = Carbon::now()->subDays($i);
                 $dateStr = $date->format('Y-m-d');
-                
-                // Get visits for this date
-                $visitCount = Visit::whereDate('visit_date', $dateStr)->count();
-                $visitRevenue = Visit::whereDate('visit_date', $dateStr)->sum('final_amount') ?? 0;
-                
-                // Get tests for this date (through visits)
-                $testCount = VisitTest::whereHas('visit', function($query) use ($dateStr) {
-                    $query->whereDate('visit_date', $dateStr);
-                })->count();
-                
+
+                $visitCount = (clone $this->visitsForLab($labId))->whereDate('visit_date', $dateStr)->count();
+                $visitRevenue = (float) ((clone $this->visitsForLab($labId))->whereDate('visit_date', $dateStr)->sum('final_amount') ?? 0);
+
+                $testCount = $this->visitTestsForLab($labId)
+                    ->whereHas('visit', function ($q) use ($labId, $dateStr) {
+                        $q->withoutGlobalScope('lab')
+                            ->where('visits.lab_id', $labId)
+                            ->whereDate('visits.visit_date', $dateStr);
+                    })
+                    ->count();
+
                 $dailyVisits[] = [
                     'date' => $date->format('M d'),
                     'count' => $visitCount,
-                    'revenue' => $visitRevenue
+                    'revenue' => $visitRevenue,
                 ];
-                
+
                 $dailyTests[] = [
                     'date' => $date->format('M d'),
-                    'count' => $testCount
+                    'count' => $testCount,
                 ];
             }
-            
+
             return [
                 'daily_visits' => $dailyVisits,
-                'daily_tests' => $dailyTests
+                'daily_tests' => $dailyTests,
             ];
         } catch (\Exception $e) {
-            // Fallback to empty data if there's an error
             return [
                 'daily_visits' => [],
-                'daily_tests' => []
+                'daily_tests' => [],
             ];
         }
     }
 
-    private function getSimpleCategoryStats($startDate, $endDate)
+    private function getSimpleCategoryStats(int $labId, Carbon $rangeStart, Carbon $rangeEnd): array
     {
         try {
-            $categories = TestCategory::withCount('labTests')->get();
-            return $categories->map(function($category) {
+            $from = $rangeStart->toDateString();
+            $to = $rangeEnd->toDateString();
+
+            $rows = DB::table('visit_tests')
+                ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
+                ->join('lab_tests', 'visit_tests.lab_test_id', '=', 'lab_tests.id')
+                ->leftJoin('test_categories', 'lab_tests.category_id', '=', 'test_categories.id')
+                ->where('visit_tests.lab_id', $labId)
+                ->where('visits.lab_id', $labId)
+                ->where('visits.visit_date', '>=', $from)
+                ->where('visits.visit_date', '<=', $to)
+                ->whereNotNull('lab_tests.category_id')
+                ->groupBy('test_categories.id', 'test_categories.name')
+                ->selectRaw('
+                    test_categories.id,
+                    test_categories.name,
+                    COUNT(visit_tests.id) as test_count,
+                    COALESCE(SUM(COALESCE(visit_tests.final_price, visit_tests.price, 0)), 0) as revenue
+                ')
+                ->orderByDesc('test_count')
+                ->get();
+
+            return $rows->map(function ($r) {
                 return [
-                    'id' => $category->id,
-                    'name' => $category->name,
-                    'test_count' => $category->lab_tests_count,
-                    'revenue' => $category->lab_tests_count * 100 // Mock revenue calculation
+                    'id' => (int) $r->id,
+                    'name' => $r->name ?? 'Uncategorized',
+                    'test_count' => (int) $r->test_count,
+                    'revenue' => round((float) $r->revenue, 2),
                 ];
-            });
+            })->values()->all();
         } catch (\Exception $e) {
+            \Log::error('Lab insights category stats: '.$e->getMessage());
+
             return [];
         }
     }
 
-    private function getSimpleTopTests($startDate, $endDate)
+    private function getSimpleTopTests(int $labId, Carbon $rangeStart, Carbon $rangeEnd): array
     {
         try {
-            $topTests = LabTest::withCount('visitTests')->orderBy('visit_tests_count', 'desc')->limit(5)->get();
-            return $topTests->map(function($test) {
-                // Calculate real revenue from visit tests
-                $revenue = VisitTest::where('lab_test_id', $test->id)
-                    ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
-                    ->sum('visits.final_amount') ?? 0;
-                
-                // Calculate average price
-                $averagePrice = $test->visit_tests_count > 0 ? round($revenue / $test->visit_tests_count, 2) : 0;
-                
+            $from = $rangeStart->toDateString();
+            $to = $rangeEnd->toDateString();
+
+            $rows = DB::table('visit_tests')
+                ->join('visits', 'visit_tests.visit_id', '=', 'visits.id')
+                ->join('lab_tests', 'visit_tests.lab_test_id', '=', 'lab_tests.id')
+                ->leftJoin('test_categories', 'lab_tests.category_id', '=', 'test_categories.id')
+                ->where('visit_tests.lab_id', $labId)
+                ->where('visits.lab_id', $labId)
+                ->whereNotNull('visit_tests.lab_test_id')
+                ->where('visits.visit_date', '>=', $from)
+                ->where('visits.visit_date', '<=', $to)
+                ->groupBy('lab_tests.id', 'lab_tests.name', 'lab_tests.code', 'test_categories.name')
+                ->selectRaw('
+                    lab_tests.id,
+                    lab_tests.name as catalog_name,
+                    lab_tests.code,
+                    test_categories.name as category_name,
+                    COUNT(visit_tests.id) as cnt,
+                    COALESCE(SUM(COALESCE(visit_tests.final_price, visit_tests.price, 0)), 0) as line_revenue,
+                    MAX(visit_tests.test_name_snapshot) as name_snapshot,
+                    MAX(visit_tests.custom_test_name) as custom_name
+                ')
+                ->orderByDesc('cnt')
+                ->limit(10)
+                ->get();
+
+            return $rows->map(function ($r) {
+                $snap = isset($r->name_snapshot) ? trim((string) $r->name_snapshot) : '';
+                $custom = isset($r->custom_name) ? trim((string) $r->custom_name) : '';
+                $catalog = trim((string) ($r->catalog_name ?? ''));
+                $code = trim((string) ($r->code ?? ''));
+
+                $displayName = $snap !== '' ? $snap : ($custom !== '' ? $custom : $catalog);
+                if ($displayName === '' || strtolower($displayName) === 'tests') {
+                    $displayName = $code !== '' ? $code : ($catalog !== '' ? $catalog : 'Test #'.(int) $r->id);
+                }
+
+                $cnt = (int) $r->cnt;
+                $rev = (float) $r->line_revenue;
+                $avgPrice = $cnt > 0 ? round($rev / $cnt, 2) : 0;
+
                 return [
-                    'id' => $test->id,
-                    'name' => $test->name,
-                    'code' => $test->code ?? 'N/A',
-                    'category' => $test->category->name ?? 'General',
-                    'count' => $test->visit_tests_count,
-                    'revenue' => $revenue,
-                    'price' => $averagePrice
+                    'id' => (int) $r->id,
+                    'name' => $displayName,
+                    'code' => $code !== '' ? $code : 'N/A',
+                    'category' => $r->category_name ?? 'General',
+                    'count' => $cnt,
+                    'revenue' => round($rev, 2),
+                    'price' => $avgPrice,
                 ];
-            });
+            })->values()->all();
         } catch (\Exception $e) {
+            \Log::error('Lab insights top tests: '.$e->getMessage());
+
             return [];
         }
     }
 
-    private function getSimpleRecentActivity($startDate, $endDate)
+    private function getSimpleRecentActivity(int $labId, Carbon $rangeStart, Carbon $rangeEnd): array
     {
         try {
-            $recentVisits = Visit::with('patient')->orderBy('created_at', 'desc')->limit(5)->get();
-            return [
-                'recent_visits' => $recentVisits->map(function($visit) {
+            $recentVisits = $this->visitsForLabBetween($labId, $rangeStart, $rangeEnd)
+                ->with(['patient', 'visitTests'])
+                ->orderByDesc('created_at')
+                ->limit(5)
+                ->get()
+                ->map(function (Visit $visit) {
                     return [
                         'id' => $visit->id,
                         'patient_name' => $visit->patient->name ?? 'Unknown',
-                        'visit_date' => $visit->visit_date->format('Y-m-d'),
-                        'test_count' => $visit->visitTests->count() ?? 0,
-                        'total_amount' => $visit->final_amount ?? 0,
+                        'visit_date' => $visit->visit_date?->format('Y-m-d') ?? '',
+                        'test_count' => $visit->visitTests->count(),
+                        'total_amount' => (float) ($visit->final_amount ?? 0),
                         'status' => $visit->status ?? 'pending',
                     ];
-                }),
-                'recent_reports' => []
+                });
+
+            $recentReports = Report::query()
+                ->whereHas('labRequest', function ($q) use ($labId) {
+                    $q->withoutGlobalScope('lab')->where('lab_requests.lab_id', $labId);
+                })
+                ->where('generated_at', '>=', $rangeStart->copy()->startOfDay())
+                ->where('generated_at', '<=', $rangeEnd->copy()->endOfDay())
+                ->with(['labRequest.patient'])
+                ->orderByDesc('generated_at')
+                ->limit(5)
+                ->get()
+                ->map(function (Report $report) {
+                    return [
+                        'id' => $report->id,
+                        'patient_name' => $report->labRequest?->patient?->name ?? 'Unknown',
+                        'generated_at' => $report->generated_at?->format('Y-m-d H:i') ?? '',
+                        'status' => $report->status ?? '',
+                    ];
+                });
+
+            return [
+                'recent_visits' => $recentVisits->toArray(),
+                'recent_reports' => $recentReports->toArray(),
             ];
         } catch (\Exception $e) {
-            return ['recent_visits' => [], 'recent_reports' => []];
+            return [
+                'recent_visits' => [],
+                'recent_reports' => [],
+            ];
         }
+    }
+
+    private function calculatePercentageChange($previous, $current): float
+    {
+        if ($previous == 0) {
+            return $current > 0 ? 100 : 0;
+        }
+
+        return round((($current - $previous) / $previous) * 100, 2);
     }
 }
