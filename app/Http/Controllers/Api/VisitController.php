@@ -477,7 +477,11 @@ class VisitController extends Controller
 
     public function show($id)
     {
-        $visit = Visit::with(['patient', 'visitTests.labTest', 'labRequest.reports'])
+        $visit = Visit::with([
+            'patient',
+            'visitTests.labTest.category:id,name,code,report_type',
+            'labRequest.reports',
+        ])
             ->findOrFail($id);
         
         // Debug: Log what we're returning
@@ -503,8 +507,8 @@ class VisitController extends Controller
             })
         ]);
         
-        // Force load the relationships to ensure they're included in JSON
-        $visit->load(['patient', 'visitTests.labTest', 'labRequest.reports']);
+        // Keep lab_test.category (path vs lab UI); reloading labTest without category drops it from JSON.
+        $visit->load(['patient', 'visitTests.labTest.category', 'labRequest.reports']);
         
         // Debug: Log the actual JSON structure being sent
         $jsonData = $visit->toArray();

@@ -23,11 +23,13 @@ class LabTest extends Model
         'turnaround_time_hours',
         'category_id',
         'is_active',
+        'report_template',
     ];
 
     protected $casts = [
         'price' => 'decimal:2',
         'is_active' => 'boolean',
+        'report_template' => 'array',
     ];
 
     public function lab()

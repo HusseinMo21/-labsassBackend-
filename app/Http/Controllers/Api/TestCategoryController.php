@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\TestCategoryReportType;
 use App\Http\Controllers\Controller;
 use App\Models\LabTestCategorySetting;
 use App\Models\TestCategory;
@@ -35,6 +36,7 @@ class TestCategoryController extends Controller
                     'is_active' => $c->is_active,
                     'lab_id' => $c->lab_id,
                     'sort_order' => $c->getAttribute('sort_order'),
+                    'report_type' => $c->report_type ?? TestCategoryReportType::Numeric->value,
                 ];
                 if ($c->lab_id === null) {
                     $st = $settings->get($c->id);
@@ -54,7 +56,12 @@ class TestCategoryController extends Controller
             ]);
         }
 
-        $categories = TestCategory::query()->globalTemplates()->active()->orderBy('name')->get();
+        $categories = TestCategory::query()
+            ->globalTemplates()
+            ->active()
+            ->orderByRaw('COALESCE(sort_order, 9999)')
+            ->orderBy('name')
+            ->get();
 
         return response()->json([
             'success' => true,
@@ -90,6 +97,7 @@ class TestCategoryController extends Controller
             ],
             'description' => 'nullable|string',
             'is_active' => 'boolean',
+            'report_type' => ['nullable', 'string', Rule::in(TestCategoryReportType::values())],
         ]);
 
         if ($validator->fails()) {
@@ -102,6 +110,7 @@ class TestCategoryController extends Controller
 
         $payload = $validator->validated();
         $payload['lab_id'] = $labId;
+        $payload['report_type'] = $payload['report_type'] ?? TestCategoryReportType::Numeric->value;
         $category = TestCategory::create($payload);
 
         return response()->json([
@@ -162,6 +171,7 @@ class TestCategoryController extends Controller
             ],
             'description' => 'nullable|string',
             'is_active' => 'boolean',
+            'report_type' => ['sometimes', 'nullable', 'string', Rule::in(TestCategoryReportType::values())],
         ]);
 
         if ($validator->fails()) {
@@ -236,11 +246,17 @@ class TestCategoryController extends Controller
                     'name' => $c->getAttribute('display_name') ?? $c->name,
                     'code' => $c->code,
                     'lab_id' => $c->lab_id,
+                    'report_type' => $c->report_type ?? TestCategoryReportType::Numeric->value,
                 ]),
             ]);
         }
 
-        $categories = TestCategory::query()->globalTemplates()->active()->orderBy('name')->get();
+        $categories = TestCategory::query()
+            ->globalTemplates()
+            ->active()
+            ->orderByRaw('COALESCE(sort_order, 9999)')
+            ->orderBy('name')
+            ->get();
 
         return response()->json([
             'success' => true,

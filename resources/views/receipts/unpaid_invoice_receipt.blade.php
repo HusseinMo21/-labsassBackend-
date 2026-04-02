@@ -1,372 +1,424 @@
+{{-- Thermal receipt 80×200mm — RTL Arabic with LTR islands for numbers, barcode, and Latin text. --}}
+@php
+    $lb = $labBranding ?? [
+        'display_name' => 'Laboratory',
+        'tagline' => '',
+        'address' => '',
+        'phone' => '',
+        'email' => '',
+        'vat' => '',
+        'website' => '',
+        'doc_label' => 'إيصال تسجيل / دفع',
+        'currency_label' => 'جنيه',
+    ];
+    $cur = $lb['currency_label'] ?? 'جنيه';
+
+    $sampleType = trim((string) ($receiptData['sample_type'] ?? ''));
+    $sampleSize = trim((string) ($receiptData['sample_size'] ?? ''));
+    $sampleCount = trim((string) ($receiptData['number_of_samples'] ?? ''));
+    $hasSpecimen = $sampleType !== '' || $sampleSize !== '' || $sampleCount !== '';
+
+    $billKey = strtolower(trim((string) ($receiptData['billing_status'] ?? '')));
+    $billingAr = [
+        'unpaid' => 'غير مدفوع',
+        'paid' => 'مدفوع',
+        'partial' => 'مدفوع جزئياً',
+        'partial payment' => 'مدفوع جزئياً',
+        'pending' => 'قيد الانتظار',
+        'payment completed' => 'اكتمل الدفع',
+        'complete' => 'مكتمل',
+        'completed' => 'مكتمل',
+    ][$billKey] ?? ($receiptData['billing_status'] ?? '—');
+
+    $payKey = strtolower(trim((string) ($receiptData['payment_method'] ?? '')));
+    $paymentAr = [
+        'cash' => 'نقدي',
+        'card' => 'بطاقة',
+        'credit card' => 'بطاقة ائتمان',
+        'debit card' => 'بطاقة خصم',
+        'bank transfer' => 'تحويل بنكي',
+        'mixed' => 'مختلط',
+    ][$payKey] ?? ($receiptData['payment_method'] ?? '—');
+
+    $bc = $receiptData['barcode'] ?? null;
+    $bcIsSvg = is_string($bc) && str_contains($bc, '<svg');
+    $bcIsPngB64 = is_string($bc) && ! str_contains($bc, '<') && strlen($bc) > 80 && preg_match('/^[A-Za-z0-9+\/=\s]+$/', $bc);
+@endphp
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>إيصال الدفع</title>
+    <title>{{ $lb['display_name'] }} — {{ $lb['doc_label'] }}</title>
     <style>
-        @page {
-            margin: 0;
-            margin-bottom: 0;
-            size: 210mm 130mm;
-            background-color: #F7F7F7;
-        }
-        
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        html, body {
-            margin: 0;
-            padding: 4px 6px 0 6px;
-            width: 100%;
-            height: 130mm;
-            font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-serif;
-            font-size: 17px;
-            line-height: 1.3;
-            color: #000;
-            direction: rtl;
-            background-color: #F7F7F7;
-            overflow: hidden;
-            padding-bottom: 0;
-        }
-        
-        .content {
-            position: relative;
-            z-index: 1;
-            width: 100%;
-            padding-bottom: 0;
-            margin-bottom: 0;
-        }
-        
-        .header-table {
-            width: 100%;
-            margin-top: 6px;
-            margin-bottom: 8px;
-            padding-top: 6px;
-            padding-bottom: 6px;
-            padding-left: 6px;
-            padding-right: 6px;
-            border-collapse: collapse;
-            border-bottom: 1px solid #ccc;
-        }
-        
-        .header-table td {
-            padding-right: 3px;
-            padding-left: 3px;
-            vertical-align: top;
-        }
-        
-        .logo-cell {
-            width: 75px;
-            padding-right: 4px;
-            padding-left: 0;
-        }
-        
-        .logo-cell img {
-            width: 70px;
-            height: 70px;
-            object-fit: contain;
-            display: block;
-            margin: 0;
-        }
-        
-        .header-text-cell {
-            text-align: right;
-            direction: rtl;
-            padding-left: 3px;
-            padding-right: 0;
-        }
-        
-        .lab-name {
-            font-size: 21px;
-            font-weight: bold;
+        @page { size: 80mm 200mm; margin: 3mm 5mm 3mm 3mm; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'DejaVu Sans', sans-serif;
+            font-size: 9.5px;
+            font-weight: 600;
             line-height: 1.35;
             margin: 0;
             padding: 0;
-        }
-        
-        .doctor-name {
-            font-size: 19px;
-            font-weight: bold;
-            line-height: 1.25;
-            margin: 0;
-            padding: 0;
-        }
-        
-        .doctor-title {
-            font-size: 16px;
-            line-height: 1.2;
-            margin: 0;
-            padding: 0;
-        }
-        
-        .patient-table {
-            width: 100%;
-            margin: 4px 0;
-            padding: 0;
-            border-collapse: collapse;
-            font-size: 16px;
-            line-height: 1.25;
-        }
-        
-        .patient-table td {
-            padding: 3px 7px;
-            vertical-align: top;
-            text-align: right;
-            border: 2.5px solid #000;
-        }
-        
-        .patient-label {
-            font-weight: bold;
-            font-size: 15px;
-            display: inline;
-            margin-left: 5px;
-        }
-        
-        .patient-value {
-            font-size: 15px;
-            display: inline;
-        }
-        
-        .financial-section {
-            border-top: 1px solid #ccc;
-            padding-top: 4px;
-            margin-top: 4px;
-            margin-bottom: 3px;
-            font-size: 16px;
-        }
-        
-        .financial-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 0;
-            padding: 0;
-        }
-        
-        .financial-table td {
-            padding: 3px 7px;
-            text-align: right;
-            vertical-align: top;
-            font-size: 15px;
-        }
-        
-        .financial-label {
-            font-weight: bold;
-            white-space: nowrap;
-        }
-        
-        .financial-value {
-            font-weight: normal;
-            white-space: nowrap;
-        }
-        
-        .financial-row {
-            display: table;
-            width: 100%;
-            margin: 0;
-            padding: 0;
-        }
-        
-        .footer-section {
-            border-top: 1px solid #ccc;
-            padding-top: 3px;
-            margin-top: 3px;
-            padding-bottom: 0;
-            margin-bottom: 0;
-            text-align: center;
-            font-size: 13px;
-            line-height: 1.15;
-        }
-        
-        .footer-line {
-            margin: 0;
-            padding: 0;
-            line-height: 1.15;
-        }
-        
-        .arabic-text {
+            width: 70mm;
+            max-width: 70mm;
             direction: rtl;
+            color: #000;
+            background: #fff;
+        }
+        .wrap { max-width: 70mm; margin: 0 auto; }
+
+        .brand-block {
+            text-align: center;
+            padding-bottom: 5px;
+            margin-bottom: 5px;
+            border-bottom: 2px solid #000;
+        }
+        .brand-name {
+            font-size: 13px;
+            font-weight: 900;
+            line-height: 1.25;
+            unicode-bidi: plaintext;
+        }
+        .brand-tag {
+            font-size: 8px;
+            font-weight: 700;
+            color: #333;
+            margin-top: 2px;
+        }
+        .brand-doc {
+            font-size: 9px;
+            font-weight: 800;
+            margin-top: 4px;
+            letter-spacing: 0.02em;
+        }
+
+        .id-box {
+            border: 1px solid #000;
+            padding: 4px 6px;
+            margin: 0 0 6px;
+            text-align: center;
+        }
+        .id-box .lbl {
+            display: block;
+            font-size: 7.5px;
+            font-weight: 800;
+            color: #333;
+            margin-bottom: 1px;
+        }
+        .id-box .num {
+            display: block;
+            font-size: 10.5px;
+            font-weight: 900;
+            direction: ltr;
+            unicode-bidi: embed;
+            text-align: center;
+        }
+        .id-box .num.sm { font-size: 10px; margin-top: 3px; }
+
+        .sec {
+            margin: 6px 0 4px;
+            padding: 2px 4px;
+            font-size: 8.5px;
+            font-weight: 900;
+            text-align: center;
+            background: #e8e8e8;
+            border: 1px solid #000;
+        }
+
+        table.rows {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 9px;
+            font-weight: 700;
+            margin-bottom: 2px;
+        }
+        table.rows td {
+            padding: 2px 0;
+            vertical-align: top;
+            border-bottom: 1px dotted #bbb;
+        }
+        table.rows td.k {
+            width: 38%;
+            font-weight: 800;
+            white-space: nowrap;
+            padding-left: 2mm;
+        }
+        table.rows td.v {
+            width: 62%;
+            font-weight: 700;
+            word-wrap: break-word;
             text-align: right;
+        }
+        .latin { direction: ltr; unicode-bidi: embed; display: inline-block; text-align: left; max-width: 100%; }
+
+        .sep { border: none; border-top: 1px dashed #000; margin: 5px 0; height: 0; }
+
+        .svc {
+            padding: 4px 0;
+            border-bottom: 1px dotted #888;
+        }
+        .svc:last-of-type { border-bottom: none; }
+        .svc-title {
+            font-size: 9px;
+            font-weight: 800;
+            word-wrap: break-word;
+            text-align: start;
+            unicode-bidi: plaintext;
+        }
+        .svc-cat {
+            font-size: 7.5px;
+            font-weight: 600;
+            color: #444;
+            margin-top: 1px;
+            text-align: start;
+            unicode-bidi: plaintext;
+        }
+        .svc-price {
+            font-size: 10px;
+            font-weight: 900;
+            margin-top: 3px;
+            direction: ltr;
+            unicode-bidi: embed;
+            text-align: right;
+        }
+
+        table.pay {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 9px;
+            font-weight: 700;
+            margin-bottom: 2px;
+        }
+        table.pay td { padding: 2px 0; vertical-align: top; }
+        table.pay td.pk { font-weight: 800; width: 48%; }
+        table.pay td.pv {
+            width: 52%;
+            direction: ltr;
+            unicode-bidi: embed;
+            text-align: right;
+            font-weight: 800;
+        }
+
+        .total {
+            margin-top: 6px;
+            padding: 5px 4px;
+            border: 2px solid #000;
+            text-align: center;
+            font-size: 11px;
+            font-weight: 900;
+        }
+        .total .amt {
+            direction: ltr;
+            unicode-bidi: embed;
+            display: inline-block;
+        }
+
+        .barcode-box {
+            margin: 8px 0 4px;
+            padding: 6px 2px 4px;
+            border-top: 1px dashed #000;
+            border-bottom: 1px dashed #000;
+            direction: ltr;
+            unicode-bidi: isolate;
+            text-align: center;
+        }
+        .barcode-box svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+        .barcode-box img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+        .barcode-caption {
+            margin-top: 4px;
+            font-size: 9px;
+            font-weight: 800;
+            direction: ltr;
+            unicode-bidi: embed;
+            text-align: center;
+        }
+
+        .thank {
+            text-align: center;
+            margin: 10px 0 6px;
+            font-size: 11px;
+            font-weight: 900;
+            unicode-bidi: isolate;
+        }
+
+        .footer {
+            text-align: center;
+            font-size: 7.5px;
+            font-weight: 700;
+            color: #333;
+            border-top: 1px dashed #000;
+            padding-top: 5px;
+            line-height: 1.35;
+        }
+        .footer-line { margin: 2px 0; }
+        .print-meta {
+            margin-top: 4px;
+            font-size: 7px;
+            color: #555;
+            direction: rtl;
         }
     </style>
 </head>
 <body>
-    <div class="content">
-        <!-- Header - Logo and Text Side by Side -->
-        <table class="header-table" cellpadding="0" cellspacing="0" border="0">
-            <tr>
-                <td class="logo-cell">
-                    @if(isset($logoImage))
-                        <img src="data:image/jpeg;base64,{{ $logoImage }}" alt="Logo" style="width: 70px; height: 70px; object-fit: contain; display: block; margin: 0;" />
-                    @else
-                        <img src="{{ public_path('templete/logoreceipt.jpg') }}" alt="Logo" style="width: 70px; height: 70px; object-fit: contain; display: block; margin: 0;" />
-                    @endif
-                </td>
-                <td class="header-text-cell arabic-text">
-                    <div class="lab-name arabic-text" style="margin: 0; padding: 0;">المعمل التخصصي لتحاليل الأورام والانسجة</div>
-                    <div class="doctor-name arabic-text" style="margin: 0; padding: 0;">د. ياسر محمد الدويك</div>
-                    <div class="doctor-title arabic-text" style="margin: 0; padding: 0;">مدرس و استشاري تحاليل الاورام والانسجة</div>
-                    <div class="doctor-title arabic-text" style="margin: 0; padding: 0;">كلية الطب جامعة الأزهر</div>
-                    <div class="doctor-title arabic-text" style="margin: 0; padding: 0;">دكتوراه الفحص الخلوي للانسجة والأورام والسوائل</div>
-                </td>
-            </tr>
-        </table>
+<div class="wrap">
+    <div class="brand-block">
+        <div class="brand-name">{{ $lb['display_name'] }}</div>
+        @if(!empty($lb['tagline']))
+            <div class="brand-tag">{{ $lb['tagline'] }}</div>
+        @endif
+        <div class="brand-doc">{{ $lb['doc_label'] }}</div>
+    </div>
 
-        <!-- Patient Information -->
-        <table class="patient-table arabic-text" cellpadding="0" cellspacing="0" border="0">
-            <!-- Row 1: رقم الموبايل | lab no | الاسم -->
-            <tr>
-                <td>
-                    <span class="patient-label">رقم الموبايل:</span>
-                    <span class="patient-value">{{ $receiptData['patient_phone'] ?? '' }}</span>
-                </td>
-                <td>
-                    <span class="patient-label">رقم العينة:</span>
-                    <span class="patient-value">{{ $receiptData['lab_number'] ?? 'غير متوفر' }}</span>
-                </td>
-                <td>
-                    <span class="patient-label">الاسم:</span>
-                    <span class="patient-value">{{ $receiptData['patient_name'] ?? 'غير متوفر' }}</span>
-                </td>
-            </tr>
-            <!-- Row 2: السن | الجهة | النوع | الدكتور المرسل -->
-            <tr>
-                <td>
-                    <span class="patient-label">السن:</span>
-                    <span class="patient-value">{{ $receiptData['patient_age'] ?? 'غير متوفر' }}</span>
-                </td>
-                <td>
-                    <span class="patient-label">الجهة:</span>
-                    <span class="patient-value">{{ $receiptData['organization'] ?? '' }}</span>
-                </td>
-                <td>
-                    <span class="patient-label">النوع:</span>
-                    <span class="patient-value">
-                        @if(isset($receiptData['patient_gender']))
-                            {{ $receiptData['patient_gender'] == 'male' ? 'ذكر' : ($receiptData['patient_gender'] == 'female' ? 'انثي' : $receiptData['patient_gender']) }}
-                        @else
-                            غير متوفر
-                        @endif
-                    </span>
-                </td>
-                <td>
-                    <span class="patient-label">الدكتور المرسل:</span>
-                    <span class="patient-value">{{ $receiptData['doctor_name'] ?? ($receiptData['referring_doctor'] ?? 'غير متوفر') }}</span>
-                </td>
-            </tr>
-            <!-- Row 3: اليوم | ميعاد التسليم | اليوم | وقت الحضور -->
-            <tr>
-                <td>
-                    <span class="patient-label">اليوم:</span>
-                    <span class="patient-value">{{ $receiptData['attendance_day'] ?? 'السبت' }}</span>
-                </td>
-                <td>
-                    <span class="patient-label">ميعاد التسليم:</span>
-                    <span class="patient-value">{{ $receiptData['delivery_date'] ?? 'غير متوفر' }}</span>
-                </td>
-                <td>
-                    <span class="patient-label">اليوم:</span>
-                    <span class="patient-value">{{ $receiptData['delivery_day'] ?? 'السبت' }}</span>
-                </td>
-                <td>
-                    <span class="patient-label">وقت الحضور:</span>
-                    <span class="patient-value">{{ $receiptData['attendance_date'] ?? ($receiptData['date'] ?? 'غير متوفر') }}</span>
-                </td>
-            </tr>
-            <!-- Row 4: حجم العينة | عدد العينات | نوع العينة -->
-            <tr>
-                <td>
-                    <span class="patient-label">حجم العينة:</span>
-                    <span class="patient-value">{{ $receiptData['sample_size'] ?? '1' }}</span>
-                </td>
-                <td>
-                    <span class="patient-label">عدد العينات:</span>
-                    <span class="patient-value">{{ $receiptData['number_of_samples'] ?? '1' }}</span>
-                </td>
-                <td>
-                    <span class="patient-label">نوع العينة:</span>
-                    <span class="patient-value">{{ $receiptData['sample_type'] ?? 'Pathology' }}</span>
-                </td>
-                <td></td>
-            </tr>
-            <!-- Row 5: باقي الحقول -->
-            <tr>
-                <td>
-                    <span class="patient-label">هل يوجد تاريخ مرضي:</span>
-                    <span class="patient-value">{{ $receiptData['medical_history'] ? 'Yes' : 'No' }}</span>
-                </td>
-                <td colspan="3">
-                    <span class="patient-label">هل سبق لك تحاليل باتولوجي:</span>
-                    <span class="patient-value">{{ $receiptData['previous_tests'] ?? '' }}</span>
-                </td>
-            </tr>
-            @if(isset($receiptData['patient_credentials']) && $receiptData['patient_credentials'])
-                @php
-                    $credentials = $receiptData['patient_credentials'];
-                    $username = $credentials['username'] ?? null;
-                    $password = $credentials['password'] ?? null;
-                @endphp
-                @if($username || $password)
-                <tr>
-                    <td>
-                        <span class="patient-label">اسم المستخدم:</span>
-                        <span class="patient-value" style="font-weight: bold; font-size: 16px;">{{ $username ?? 'غير متوفر' }}</span>
-                    </td>
-                    <td colspan="3">
-                        <span class="patient-label">كلمة المرور:</span>
-                        <span class="patient-value" style="font-weight: bold; font-size: 16px;">{{ $password ?? 'غير متوفر' }}</span>
-                    </td>
-                </tr>
+    <div class="id-box">
+        <span class="lbl">رقم الزيارة</span>
+        <span class="num">{{ $receiptData['receipt_number'] ?? '—' }}</span>
+        <span class="lbl" style="margin-top:4px;">رقم العينة</span>
+        <span class="num sm">{{ $receiptData['lab_number'] ?? '—' }}</span>
+    </div>
+
+    <div class="sec">بيانات الزيارة والمريض</div>
+    <table class="rows">
+        <tr><td class="k">التاريخ</td><td class="v"><span class="latin">{{ $receiptData['date'] ?? ($receiptData['attendance_date'] ?? '—') }}</span></td></tr>
+        <tr><td class="k">اسم المريض</td><td class="v">{{ $receiptData['patient_name'] ?? '—' }}</td></tr>
+        <tr><td class="k">السن</td><td class="v"><span class="latin">{{ $receiptData['patient_age'] ?? '—' }}</span></td></tr>
+        <tr><td class="k">الجوال</td><td class="v"><span class="latin">{{ $receiptData['patient_phone'] ?? '—' }}</span></td></tr>
+        <tr><td class="k">النوع</td><td class="v">@if(isset($receiptData['patient_gender'])){{ $receiptData['patient_gender'] == 'male' ? 'ذكر' : ($receiptData['patient_gender'] == 'female' ? 'أنثى' : $receiptData['patient_gender']) }}@else — @endif</td></tr>
+        @if(!empty($receiptData['organization']))
+        <tr><td class="k">الجهة</td><td class="v">{{ $receiptData['organization'] }}</td></tr>
+        @endif
+        <tr><td class="k">الطبيب المحيل</td><td class="v">{{ $receiptData['doctor_name'] ?? ($receiptData['referring_doctor'] ?? '—') }}</td></tr>
+        <tr><td class="k">يوم الحضور</td><td class="v">{{ $receiptData['attendance_day'] ?? '—' }}</td></tr>
+        <tr><td class="k">تاريخ الحضور</td><td class="v"><span class="latin">{{ $receiptData['attendance_date'] ?? ($receiptData['date'] ?? '—') }}</span></td></tr>
+        <tr><td class="k">موعد التسليم</td><td class="v"><span class="latin">{{ $receiptData['delivery_date'] ?? ($receiptData['expected_delivery_date'] ?? '—') }}</span></td></tr>
+        <tr><td class="k">يوم التسليم</td><td class="v">{{ $receiptData['delivery_day'] ?? '—' }}</td></tr>
+    </table>
+
+    @if($hasSpecimen)
+    <div class="sec">بيانات العينة</div>
+    <table class="rows">
+        @if($sampleType !== '')
+        <tr><td class="k">نوع العينة</td><td class="v">{{ $receiptData['sample_type'] }}</td></tr>
+        @endif
+        @if($sampleSize !== '')
+        <tr><td class="k">حجم العينة</td><td class="v">{{ $receiptData['sample_size'] }}</td></tr>
+        @endif
+        @if($sampleCount !== '')
+        <tr><td class="k">عدد العينات</td><td class="v"><span class="latin">{{ $receiptData['number_of_samples'] }}</span></td></tr>
+        @endif
+    </table>
+    @endif
+
+    <table class="rows">
+        <tr><td class="k">سجل طبي سابق</td><td class="v">{{ !empty($receiptData['medical_history']) ? 'نعم' : 'لا' }}</td></tr>
+        @if(!empty($receiptData['previous_tests']))
+        <tr><td class="k">تحاليل سابقة</td><td class="v">{{ $receiptData['previous_tests'] }}</td></tr>
+        @endif
+    </table>
+
+    <hr class="sep" />
+
+    @if(isset($receiptData['tests']) && count($receiptData['tests']) > 0)
+        <div class="sec">الخدمات والتحاليل</div>
+        @foreach($receiptData['tests'] as $test)
+            @php
+                $t = is_array($test) ? $test : (array) $test;
+                $nm = $t['name'] ?? '—';
+                $cat = trim((string) ($t['category'] ?? ''));
+                $showCat = $cat !== '' && ! in_array($cat, ['Unknown', 'Sample Type', 'Unknown Test'], true);
+                $pr = isset($t['price']) ? number_format((float) $t['price'], 0, '.', '') : '0';
+            @endphp
+            <div class="svc">
+                <div class="svc-title">• {{ $nm }}</div>
+                @if($showCat)
+                    <div class="svc-cat">{{ $cat }}</div>
                 @endif
+                <div class="svc-price">{{ $pr }} {{ $cur }}</div>
+            </div>
+        @endforeach
+        <hr class="sep" />
+    @endif
+
+    <div class="sec">ملخص الدفع</div>
+    <table class="pay">
+        <tr><td class="pk">إجمالي المبلغ</td><td class="pv">{{ number_format($receiptData['total_amount'] ?? 0, 0, '.', '') }} {{ $cur }}</td></tr>
+        @if(isset($receiptData['discount_amount']) && (float) $receiptData['discount_amount'] > 0)
+        <tr><td class="pk">الخصم</td><td class="pv">{{ number_format($receiptData['discount_amount'], 0, '.', '') }} {{ $cur }}</td></tr>
+        @endif
+        <tr><td class="pk">المدفوع</td><td class="pv">{{ number_format($receiptData['upfront_payment'] ?? 0, 0, '.', '') }} {{ $cur }}</td></tr>
+        @if(isset($receiptData['payment_breakdown']))
+            @php
+                $pb = $receiptData['payment_breakdown'];
+                $cashAmount = floatval($pb['cash'] ?? 0);
+                $cardAmount = floatval($pb['card'] ?? 0);
+                $cardMethod = $pb['card_method'] ?? 'Card';
+            @endphp
+            @if($cashAmount > 0)
+            <tr><td class="pk">منها نقداً</td><td class="pv">{{ number_format($cashAmount, 0, '.', '') }} {{ $cur }}</td></tr>
             @endif
-        </table>
+            @if($cardAmount > 0)
+            <tr><td class="pk">{{ $cardMethod == 'Card' ? 'منها بالبطاقة' : $cardMethod }}</td><td class="pv">{{ number_format($cardAmount, 0, '.', '') }} {{ $cur }}</td></tr>
+            @endif
+        @endif
+        <tr><td class="pk">المتبقي</td><td class="pv">{{ number_format($receiptData['remaining_balance'] ?? 0, 0, '.', '') }} {{ $cur }}</td></tr>
+        <tr><td class="pk">حالة الفاتورة</td><td class="pv" style="direction:rtl;unicode-bidi:embed;text-align:right;">{{ $billingAr }}</td></tr>
+        <tr><td class="pk">طريقة الدفع</td><td class="pv" style="direction:rtl;unicode-bidi:embed;text-align:right;">{{ $paymentAr }}</td></tr>
+    </table>
 
-        <!-- Financial Summary -->
-        <div class="financial-section arabic-text">
-            <table class="financial-table" cellpadding="0" cellspacing="0" border="0">
-                <tr>
-                    <td class="financial-label">أجمالي المبلغ :</td>
-                    <td class="financial-value">{{ number_format($receiptData['total_amount'] ?? 0, 0) }} جنيه</td>
-                    @if(isset($receiptData['discount_amount']) && $receiptData['discount_amount'] > 0)
-                    <td class="financial-label">الخصم :</td>
-                    <td class="financial-value">{{ number_format($receiptData['discount_amount'] ?? 0, 0) }} جنيه</td>
-                    @endif
-                </tr>
-                <tr>
-                    <td class="financial-label">المبلغ المدفوع :</td>
-                    <td class="financial-value">{{ number_format($receiptData['upfront_payment'] ?? 0, 0) }} جنيه</td>
-                    @if(isset($receiptData['payment_breakdown']))
-                        @php
-                            $paymentBreakdown = $receiptData['payment_breakdown'];
-                            $cashAmount = floatval($paymentBreakdown['cash'] ?? 0);
-                            $cardAmount = floatval($paymentBreakdown['card'] ?? 0);
-                            $cardMethod = $paymentBreakdown['card_method'] ?? 'Card';
-                        @endphp
-                        @if($cashAmount > 0)
-                        <td class="financial-label">- نقدي :</td>
-                        <td class="financial-value">{{ number_format($cashAmount, 0) }} جنيه</td>
-                        @endif
-                        @if($cardAmount > 0)
-                        <td class="financial-label">- {{ $cardMethod == 'Card' ? 'بطاقة' : $cardMethod }} :</td>
-                        <td class="financial-value">{{ number_format($cardAmount, 0) }} جنيه</td>
-                        @endif
-                    @endif
-                    <td class="financial-label">المبلغ المتبقي :</td>
-                    <td class="financial-value">{{ number_format($receiptData['remaining_balance'] ?? 0, 0) }} جنيه</td>
-                </tr>
+    <div class="total">
+        المبلغ النهائي: <span class="amt">{{ number_format($receiptData['final_amount'] ?? ($receiptData['total_amount'] ?? 0), 0, '.', '') }} {{ $cur }}</span>
+    </div>
+
+    @if(!empty($bc) && is_string($bc))
+    <div class="barcode-box">
+        @if($bcIsSvg)
+            {!! $bc !!}
+        @elseif($bcIsPngB64)
+            <img src="data:image/png;base64,{{ preg_replace('/\s+/', '', $bc) }}" alt="" />
+        @endif
+        @if(!empty($receiptData['barcode_text']))
+            <div class="barcode-caption">{{ $receiptData['barcode_text'] }}</div>
+        @endif
+    </div>
+    @endif
+
+    @if(isset($receiptData['patient_credentials']) && is_array($receiptData['patient_credentials']))
+        @php
+            $cred = $receiptData['patient_credentials'];
+            $u = $cred['username'] ?? null;
+            $p = $cred['password'] ?? null;
+        @endphp
+        @if($u || $p)
+            <hr class="sep" />
+            <div class="sec">بيانات المتابعة الإلكترونية</div>
+            <table class="rows">
+                @if($u)<tr><td class="k">المستخدم</td><td class="v"><span class="latin">{{ $u }}</span></td></tr>@endif
+                @if($p)<tr><td class="k">كلمة المرور</td><td class="v"><span class="latin">{{ $p }}</span></td></tr>@endif
             </table>
-        </div>
+        @endif
+    @endif
 
-        <!-- Footer -->
-        <div class="footer-section arabic-text">
-            <div class="footer-line">جناكليس امام كنيسة الكتاب المقدس 5 شارع محمد ناجي متفرع من شارع ابوقير الاسكندرية</div>
-            <div class="footer-line">03/5805512 - 01270259292 - 01029558529</div>
-            <div class="footer-line">حالات سحب الابرة (FNAC) بالحجز المسبق لسرعة تسليم النتيجة</div>
-            <div class="footer-line">Y.Eldowik.SPCL@gmail.com</div>
+    <p class="thank">شكراً لثقتكم</p>
+
+    <div class="footer">
+        @if(!empty($lb['address']))
+            <div class="footer-line">{{ $lb['address'] }}</div>
+        @endif
+        @php
+            $contactBits = array_filter([$lb['phone'] ?? '', $lb['email'] ?? '', $lb['website'] ?? '']);
+        @endphp
+        @if(count($contactBits))
+            <div class="footer-line">{{ implode(' — ', $contactBits) }}</div>
+        @endif
+        @if(!empty($lb['vat']))
+            <div class="footer-line">الرقم الضريبي: <span class="latin">{{ $lb['vat'] }}</span></div>
+        @endif
+        <div class="print-meta">
+            طُبع بتاريخ: <span class="latin">{{ $receiptData['printed_at'] ?? '' }}</span>
+            @if(!empty($receiptData['printed_by']))
+                — <span class="latin">{{ $receiptData['printed_by'] }}</span>
+            @endif
         </div>
     </div>
+</div>
 </body>
 </html>
-

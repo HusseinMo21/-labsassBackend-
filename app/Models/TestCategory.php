@@ -15,6 +15,8 @@ class TestCategory extends Model
         'code',
         'description',
         'is_active',
+        'sort_order',
+        'report_type',
     ];
 
     protected $casts = [

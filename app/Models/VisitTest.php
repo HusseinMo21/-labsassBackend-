@@ -14,6 +14,10 @@ class VisitTest extends Model
 {
     use HasFactory;
 
+    protected $appends = [
+        'test_name',
+    ];
+
     protected $fillable = [
         'visit_id',
         'lab_id',

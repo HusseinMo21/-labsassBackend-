@@ -78,6 +78,7 @@ class LabTestController extends Controller
             'turnaround_time_hours' => 'required|integer|min:1',
             'category_id' => 'required|exists:test_categories,id',
             'is_active' => 'boolean',
+            'report_template' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
@@ -128,6 +129,7 @@ class LabTestController extends Controller
             'turnaround_time_hours' => 'required|integer|min:1',
             'category_id' => 'required|exists:test_categories,id',
             'is_active' => 'boolean',
+            'report_template' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
@@ -168,6 +170,8 @@ class LabTestController extends Controller
     {
         $categories = TestCategory::withCount('labTests')
             ->where('is_active', true)
+            ->orderByRaw('COALESCE(sort_order, 9999)')
+            ->orderBy('name')
             ->get();
 
         return response()->json($categories);

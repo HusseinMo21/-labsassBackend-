@@ -22,7 +22,7 @@ class MultiTenantWorkflowSeeder extends Seeder
         $testCategoryId = \App\Models\TestCategory::first()?->id;
 
         if (!$labTestId || !$testCategoryId) {
-            $this->command->warn('Run LabTestSeeder and TestCategorySeeder first.');
+            $this->command->warn('Run TestCategorySeeder and PlatformMasterClinicalCatalogSeeder first.');
             return;
         }
 

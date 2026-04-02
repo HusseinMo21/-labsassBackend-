@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use App\Models\Lab;
 use App\Models\Patient;
 use App\Models\Visit;
 use App\Models\LabTest;
@@ -573,7 +574,9 @@ class CheckInController extends Controller
         if ($barcodeText) {
             try {
                 // Generate base64 barcode image
-                $barcodeData = $this->generateBase64Barcode($barcodeText);
+                $barcodeData = $this->normalizeReceiptBarcodeForHtml(
+                    $this->generateBase64Barcode($barcodeText)
+                );
             } catch (\Exception $e) {
                 \Log::warning('Failed to generate barcode for receipt', [
                     'barcode_text' => $barcodeText,
@@ -823,6 +826,83 @@ class CheckInController extends Controller
     }
 
     /**
+     * Remove XML/DOCTYPE from SVG barcodes so Arabic RTL layout does not corrupt markup in mPDF.
+     */
+    private function normalizeReceiptBarcodeForHtml(?string $barcode): ?string
+    {
+        if ($barcode === null || $barcode === '' || ! str_contains($barcode, '<svg')) {
+            return $barcode;
+        }
+        $out = preg_replace('/<\?xml[^>]*\?>\s*/i', '', $barcode);
+        $out = preg_replace('/<!DOCTYPE[^>]*>\s*/i', '', $out ?? '');
+
+        return $out !== null ? trim($out) : $barcode;
+    }
+
+    /**
+     * Normalize metadata / relations for receipt Blade (escaping expects strings).
+     */
+    private function scalarForReceiptView($value, string $default = ''): string
+    {
+        if ($value === null || $value === '') {
+            return $default;
+        }
+        if (is_string($value) || is_numeric($value)) {
+            return (string) $value;
+        }
+        if ($value instanceof \Carbon\CarbonInterface) {
+            return $value->format('Y-m-d');
+        }
+        if (is_array($value)) {
+            if (isset($value['name']) && (is_string($value['name']) || is_numeric($value['name']))) {
+                return (string) $value['name'];
+            }
+
+            return $default;
+        }
+        if (is_object($value)) {
+            if ($value instanceof \Illuminate\Database\Eloquent\Model) {
+                $n = $value->getAttribute('name');
+                if ($n !== null && $n !== '') {
+                    return (string) $n;
+                }
+            }
+            if (isset($value->name)) {
+                return (string) $value->name;
+            }
+        }
+
+        return $default;
+    }
+
+    /**
+     * Lab-specific receipt header/footer text for mPDF / Blade.
+     */
+    private function buildLabReceiptPresentation(Visit $visit): array
+    {
+        $visit->loadMissing('lab');
+        $lab = $visit->lab;
+        if (!$lab && $visit->lab_id) {
+            $lab = Lab::find($visit->lab_id);
+        }
+        $raw = $lab ? $lab->receiptBranding() : Lab::fallbackReceiptBranding();
+
+        return [
+            'labBranding' => [
+                'display_name' => $raw['display_name'],
+                'tagline' => $raw['tagline'],
+                'address' => $raw['address'],
+                'phone' => $raw['phone'],
+                'email' => $raw['email'],
+                'vat' => $raw['vat'],
+                'website' => $raw['website'],
+                'doc_label' => $raw['doc_label'],
+                'currency_label' => $raw['currency_label'],
+            ],
+        ];
+    }
+
+    /**
      * Get tests for receipt - handles both visitTests and patient registration sample_type
      */
     private function getTestsForReceipt($visit)
@@ -830,9 +910,11 @@ class CheckInController extends Controller
         // First try to get from visitTests (for CheckIn visits)
         if ($visit->visitTests && $visit->visitTests->count() > 0) {
             return $visit->visitTests->map(function ($visitTest) {
+                $categoryName = optional($visitTest->labTest?->category)->name;
+
                 return [
                     'name' => $visitTest->custom_test_name ?: ($visitTest->labTest ? $visitTest->labTest->name : 'Unknown Test'),
-                    'category' => $visitTest->testCategory ? $visitTest->testCategory->name : 'Unknown',
+                    'category' => $categoryName ?: 'Unknown',
                     'price' => $visitTest->unitPriceForBilling(),
                 ];
             });
@@ -1160,7 +1242,7 @@ class CheckInController extends Controller
         }
         
         try {
-            $visit = Visit::with(['patient', 'visitTests.testCategory', 'labRequest'])->findOrFail($visitId);
+            $visit = Visit::with(['patient', 'visitTests.labTest.category', 'labRequest', 'lab'])->findOrFail($visitId);
             \Log::info('Visit found: ' . $visit->id);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             \Log::error('Visit not found in generateFinalPaymentReceipt: ' . $e->getMessage());
@@ -1189,15 +1271,9 @@ class CheckInController extends Controller
                 $imageData = file_get_contents($backgroundImagePath);
                 $backgroundImage = base64_encode($imageData);
             }
-            
-            // Read logo image and convert to base64
-            $logoImagePath = public_path('templete/logoreceipt.jpg');
-            $logoImage = null;
-            
-            if (file_exists($logoImagePath)) {
-                $logoData = file_get_contents($logoImagePath);
-                $logoImage = base64_encode($logoData);
-            }
+
+            $receiptPresentation = $this->buildLabReceiptPresentation($visit);
+            $labBranding = $receiptPresentation['labBranding'];
             
             // Get the related invoice for financial data (if exists)
             $invoice = null;
@@ -1236,7 +1312,9 @@ class CheckInController extends Controller
             if ($barcodeText) {
                 try {
                     // Generate base64 barcode image
-                    $barcodeData = $this->generateBase64Barcode($barcodeText);
+                    $barcodeData = $this->normalizeReceiptBarcodeForHtml(
+                        $this->generateBase64Barcode($barcodeText)
+                    );
                 } catch (\Exception $e) {
                     \Log::warning('Failed to generate barcode for receipt', [
                         'barcode_text' => $barcodeText,
@@ -1369,27 +1447,55 @@ class CheckInController extends Controller
             ]);
             
             // Get additional patient data from metadata
-            $organization = $patientData['organization'] ?? $visit->patient->organization ?? '';
-            $sampleType = $patientData['sample_type'] ?? $visit->patient->sample_type ?? 'Pathology';
-            $sampleSize = $patientData['sample_size'] ?? $visit->patient->sample_size ?? '1';
-            $numberOfSamples = $patientData['number_of_samples'] ?? $visit->patient->number_of_samples ?? '1';
-            $medicalHistory = $patientData['medical_history'] ?? $visit->patient->medical_history ?? '';
-            $previousTests = $patientData['previous_tests'] ?? $visit->patient->previous_tests ?? '';
+            $organization = $this->scalarForReceiptView($patientData['organization'] ?? null);
+            if ($organization === '' && $visit->patient) {
+                $organization = $this->scalarForReceiptView($visit->patient->organization);
+            }
+            if ($organization === '' && $visit->patient) {
+                $organization = $this->scalarForReceiptView($visit->patient->getAttributes()['organization_id'] ?? null);
+            }
+            $sampleType = $this->scalarForReceiptView($patientData['sample_type'] ?? null, '');
+            if ($sampleType === '' && $visit->patient && $visit->patient->sample_type) {
+                $sampleType = $this->scalarForReceiptView($visit->patient->sample_type, '');
+            }
+            $sampleSize = $this->scalarForReceiptView($patientData['sample_size'] ?? null, '');
+            if ($sampleSize === '' && $visit->patient && $visit->patient->sample_size) {
+                $sampleSize = $this->scalarForReceiptView($visit->patient->sample_size, '');
+            }
+            $numberOfSamples = $this->scalarForReceiptView($patientData['number_of_samples'] ?? null, '');
+            if ($numberOfSamples === '' && $visit->patient && $visit->patient->number_of_samples !== null && $visit->patient->number_of_samples !== '') {
+                $numberOfSamples = $this->scalarForReceiptView($visit->patient->number_of_samples, '');
+            }
+            $medicalHistory = $this->scalarForReceiptView($patientData['medical_history'] ?? $visit->patient->medical_history ?? null, '');
+            $previousTests = $this->scalarForReceiptView($patientData['previous_tests'] ?? $visit->patient->previous_tests ?? null, '');
             $patientGender = $visit->patient->gender ?? '';
             
             // Calculate day names from actual dates (fallback to stored values if dates not available)
             $attendanceDay = $patientData['attendance_day'] ?? $this->getArabicDayName($attendanceDate);
             $deliveryDay = $patientData['delivery_day'] ?? $this->getArabicDayName($deliveryDate);
             
-            // Get doctor name
-            $doctorName = $patientData['doctor'] ?? $patientData['referring_doctor'] ?? $visit->patient->doctor ?? 'د. ياسر محمد الدويك';
+            $doctorName = $this->scalarForReceiptView($patientData['doctor'] ?? null);
+            if ($doctorName === '') {
+                $doctorName = $this->scalarForReceiptView($patientData['referring_doctor'] ?? null);
+            }
+            if ($doctorName === '' && $visit->patient) {
+                $doctorName = $this->scalarForReceiptView($visit->patient->doctor);
+            }
+            if ($doctorName === '' && $visit->patient) {
+                $doctorName = $this->scalarForReceiptView($visit->patient->getAttributes()['doctor_id'] ?? null);
+            }
             
+            $expectedDeliveryFinal = $visit->getExpectedDeliveryDate();
+            $expectedDeliveryFinalStr = $expectedDeliveryFinal instanceof \Carbon\CarbonInterface
+                ? $expectedDeliveryFinal->format('Y-m-d')
+                : $this->scalarForReceiptView($expectedDeliveryFinal, '');
+
             $receiptData = [
                 'receipt_number' => $visit->visit_number,
                 'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?: 'N/A'),
                 'date' => $visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : now()->format('Y-m-d'),
                 'patient_name' => $visit->patient->name ?: 'N/A',
-                'patient_age' => $patientAge ?: 'N/A',
+                'patient_age' => $this->scalarForReceiptView($patientAge, 'N/A') ?: 'N/A',
                 'patient_phone' => $visit->patient->phone ?: 'N/A',
                 'patient_gender' => $patientGender,
                 'attendance_date' => $attendanceDate,
@@ -1412,7 +1518,7 @@ class CheckInController extends Controller
                 'remaining_balance' => $remainingBalance,
                 'payment_method' => $this->getPaymentMethod($visit, $payments),
                 'billing_status' => 'PAYMENT COMPLETED',
-                'expected_delivery_date' => $visit->getExpectedDeliveryDate(),
+                'expected_delivery_date' => $expectedDeliveryFinalStr,
                 'barcode' => $barcodeData,
                 'barcode_text' => $barcodeText ?: 'N/A',
                 'check_in_by' => $visit->check_in_by ?: 'N/A',
@@ -1422,7 +1528,6 @@ class CheckInController extends Controller
                 'patient_credentials' => $visit->patient->getPortalCredentials(),
                 'printed_by' => $printedBy,
                 'printed_at' => now()->format('Y-m-d H:i:s'),
-                'doctor' => 'عهدة الأورام',
             ];
             
             // Debug: Log the receipt data
@@ -1455,24 +1560,6 @@ class CheckInController extends Controller
                 $mpdf->autoLangToFont = true;
                 $mpdf->showImageErrors = false;
                 
-                // Set watermark/background image BEFORE writing HTML - use same logo image, centered in the middle of the page
-                // This ensures the watermark is behind all content
-                try {
-                    $watermarkPath = public_path('templete/logoreceipt.jpg');
-                    if (file_exists($watermarkPath)) {
-                        // CRITICAL: Set watermarkImgBehind BEFORE SetWatermarkImage
-                        $mpdf->watermarkImgBehind = true;
-                        // Set watermark image with center position and opacity 0.2
-                        // Parameters: image path, alpha (opacity 0-1), size ('D' for default or [width, height]), position ('P' for page center)
-                        // Position 'P' centers the image on the page
-                        // Size 'D' uses the image's default size
-                        $mpdf->SetWatermarkImage($watermarkPath, 0.2, 'D', 'P');
-                        $mpdf->showWatermarkImage = true;
-                    }
-                } catch (\Exception $e) {
-                    \Log::warning('Failed to set watermark: ' . $e->getMessage());
-                }
-                
                 // Disable automatic page breaks
                 $mpdf->SetHTMLHeader('');
                 $mpdf->SetHTMLFooter('');
@@ -1481,7 +1568,7 @@ class CheckInController extends Controller
                 $html = view('receipts.unpaid_invoice_receipt', [
                     'receiptData' => $receiptData,
                     'backgroundImage' => $backgroundImage,
-                    'logoImage' => $logoImage ?? null,
+                    'labBranding' => $labBranding,
                 ])->render();
                 
                 // Log HTML length for debugging
@@ -1671,7 +1758,10 @@ class CheckInController extends Controller
 
     public function getTestCategories()
     {
-        $categories = \App\Models\TestCategory::active()->orderBy('name')->get(['id', 'name', 'description']);
+        $categories = \App\Models\TestCategory::active()
+            ->orderByRaw('COALESCE(sort_order, 9999)')
+            ->orderBy('name')
+            ->get(['id', 'name', 'description', 'code', 'sort_order']);
         return response()->json([
             'success' => true,
             'data' => $categories
@@ -1732,7 +1822,7 @@ class CheckInController extends Controller
     }
 
     /**
-     * Generate A4 receipt PDF
+     * Generate thermal-style receipt PDF (80 mm wide, roll length).
      */
     public function generateUnpaidInvoiceReceipt($visitId)
     {
@@ -1763,7 +1853,7 @@ class CheckInController extends Controller
         }
         
         try {
-            $visit = Visit::with(['patient', 'visitTests.testCategory', 'labRequest'])->findOrFail($visitId);
+            $visit = Visit::with(['patient', 'visitTests.labTest.category', 'labRequest', 'lab'])->findOrFail($visitId);
             // Refresh the visit to ensure we have the latest data, especially metadata
             $visit->refresh();
             \Log::info('Visit found: ' . $visit->id);
@@ -1794,15 +1884,9 @@ class CheckInController extends Controller
                 $imageData = file_get_contents($backgroundImagePath);
                 $backgroundImage = base64_encode($imageData);
             }
-            
-            // Read logo image and convert to base64
-            $logoImagePath = public_path('templete/logoreceipt.jpg');
-            $logoImage = null;
-            
-            if (file_exists($logoImagePath)) {
-                $logoData = file_get_contents($logoImagePath);
-                $logoImage = base64_encode($logoData);
-            }
+
+            $receiptPresentation = $this->buildLabReceiptPresentation($visit);
+            $labBranding = $receiptPresentation['labBranding'];
             
             // Get the related invoice for financial data (if exists)
             $invoice = null;
@@ -1841,7 +1925,9 @@ class CheckInController extends Controller
             if ($barcodeText) {
                 try {
                     // Generate base64 barcode image
-                    $barcodeData = $this->generateBase64Barcode($barcodeText);
+                    $barcodeData = $this->normalizeReceiptBarcodeForHtml(
+                        $this->generateBase64Barcode($barcodeText)
+                    );
                 } catch (\Exception $e) {
                     \Log::warning('Failed to generate barcode for receipt', [
                         'barcode_text' => $barcodeText,
@@ -2032,12 +2118,27 @@ class CheckInController extends Controller
             $patientPhone = $patientData['phone'] ?? $visit->patient->phone ?? 'N/A';
             $patientGender = $patientData['gender'] ?? $visit->patient->gender ?? '';
             
-            $organization = $patientData['organization'] ?? $visit->patient->organization ?? '';
-            $sampleType = $patientData['sample_type'] ?? $visit->patient->sample_type ?? 'Pathology';
-            $sampleSize = $patientData['sample_size'] ?? $visit->patient->sample_size ?? '1';
-            $numberOfSamples = $patientData['number_of_samples'] ?? $visit->patient->number_of_samples ?? '1';
-            $medicalHistory = $patientData['medical_history'] ?? $visit->patient->medical_history ?? '';
-            $previousTests = $patientData['previous_tests'] ?? $visit->patient->previous_tests ?? '';
+            $organization = $this->scalarForReceiptView($patientData['organization'] ?? null);
+            if ($organization === '' && $visit->patient) {
+                $organization = $this->scalarForReceiptView($visit->patient->organization);
+            }
+            if ($organization === '' && $visit->patient) {
+                $organization = $this->scalarForReceiptView($visit->patient->getAttributes()['organization_id'] ?? null);
+            }
+            $sampleType = $this->scalarForReceiptView($patientData['sample_type'] ?? null, '');
+            if ($sampleType === '' && $visit->patient && $visit->patient->sample_type) {
+                $sampleType = $this->scalarForReceiptView($visit->patient->sample_type, '');
+            }
+            $sampleSize = $this->scalarForReceiptView($patientData['sample_size'] ?? null, '');
+            if ($sampleSize === '' && $visit->patient && $visit->patient->sample_size) {
+                $sampleSize = $this->scalarForReceiptView($visit->patient->sample_size, '');
+            }
+            $numberOfSamples = $this->scalarForReceiptView($patientData['number_of_samples'] ?? null, '');
+            if ($numberOfSamples === '' && $visit->patient && $visit->patient->number_of_samples !== null && $visit->patient->number_of_samples !== '') {
+                $numberOfSamples = $this->scalarForReceiptView($visit->patient->number_of_samples, '');
+            }
+            $medicalHistory = $this->scalarForReceiptView($patientData['medical_history'] ?? $visit->patient->medical_history ?? null, '');
+            $previousTests = $this->scalarForReceiptView($patientData['previous_tests'] ?? $visit->patient->previous_tests ?? null, '');
             
             // Get lab number from metadata first
             $labNumber = $patientData['lab_number'] ?? ($visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?? 'N/A'));
@@ -2046,15 +2147,28 @@ class CheckInController extends Controller
             $attendanceDay = $patientData['attendance_day'] ?? $this->getArabicDayName($attendanceDate);
             $deliveryDay = $patientData['delivery_day'] ?? $this->getArabicDayName($deliveryDate);
             
-            // Get doctor name
-            $doctorName = $patientData['doctor'] ?? $patientData['referring_doctor'] ?? $visit->patient->doctor ?? 'د. ياسر محمد الدويك';
+            $doctorName = $this->scalarForReceiptView($patientData['doctor'] ?? null);
+            if ($doctorName === '') {
+                $doctorName = $this->scalarForReceiptView($patientData['referring_doctor'] ?? null);
+            }
+            if ($doctorName === '' && $visit->patient) {
+                $doctorName = $this->scalarForReceiptView($visit->patient->doctor);
+            }
+            if ($doctorName === '' && $visit->patient) {
+                $doctorName = $this->scalarForReceiptView($visit->patient->getAttributes()['doctor_id'] ?? null);
+            }
+
+            $expectedDelivery = $visit->getExpectedDeliveryDate();
+            $expectedDeliveryStr = $expectedDelivery instanceof \Carbon\CarbonInterface
+                ? $expectedDelivery->format('Y-m-d')
+                : $this->scalarForReceiptView($expectedDelivery, '');
             
             $receiptData = [
                 'receipt_number' => $visit->visit_number,
                 'lab_number' => $labNumber,
                 'date' => $visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : now()->format('Y-m-d'),
                 'patient_name' => $patientName,
-                'patient_age' => $patientAge ?: 'N/A',
+                'patient_age' => $this->scalarForReceiptView($patientAge, 'N/A') ?: 'N/A',
                 'patient_phone' => $patientPhone,
                 'patient_gender' => $patientGender,
                 'attendance_date' => $attendanceDate,
@@ -2077,7 +2191,7 @@ class CheckInController extends Controller
                 'remaining_balance' => $remainingBalance,
                 'payment_method' => $this->getPaymentMethod($visit, $payments),
                 'billing_status' => $financialData['payment_status'] ?? $this->getPaymentStatus($invoice, $visit),
-                'expected_delivery_date' => $visit->getExpectedDeliveryDate(),
+                'expected_delivery_date' => $expectedDeliveryStr,
                 'barcode' => $barcodeData,
                 'barcode_text' => $barcodeText ?: 'N/A',
                 'check_in_by' => $visit->check_in_by ?: 'N/A',
@@ -2087,7 +2201,6 @@ class CheckInController extends Controller
                 'patient_credentials' => $visit->patient->getPortalCredentials(),
                 'printed_by' => $printedBy,
                 'printed_at' => now()->format('Y-m-d H:i:s'),
-                'doctor' => 'عهدة الأورام',
             ];
             
             // Debug: Log the receipt data
@@ -2095,19 +2208,19 @@ class CheckInController extends Controller
             
             try {
                 $mpdf = new \Mpdf\Mpdf([
-                    'mode' => 'utf-8', 
-                    'format' => [210, 130], // Reduced height to fit content better
+                    'mode' => 'utf-8',
+                    'format' => [80, 200],
                     'orientation' => 'P',
-                    'margin_left' => 5, 
-                    'margin_right' => 5, 
-                    'margin_top' => 3, 
-                    'margin_bottom' => 0,
+                    'margin_left' => 3,
+                    'margin_right' => 5,
+                    'margin_top' => 3,
+                    'margin_bottom' => 3,
                     'margin_header' => 0,
                     'margin_footer' => 0,
                     'tempDir' => storage_path('app/temp'),
-                    'default_font_size' => 7, 
+                    'default_font_size' => 7,
                     'default_font' => 'dejavusans',
-                    'autoPageBreak' => false,
+                    'autoPageBreak' => true,
                     'setAutoTopMargin' => false,
                     'setAutoBottomMargin' => false,
                     'ignore_invalid_utf8' => true,
@@ -2122,24 +2235,6 @@ class CheckInController extends Controller
                 $mpdf->autoLangToFont = true;
                 $mpdf->showImageErrors = false;
                 
-                // Set watermark/background image BEFORE writing HTML - use same logo image, centered in the middle of the page
-                // This ensures the watermark is behind all content
-                try {
-                    $watermarkPath = public_path('templete/logoreceipt.jpg');
-                    if (file_exists($watermarkPath)) {
-                        // CRITICAL: Set watermarkImgBehind BEFORE SetWatermarkImage
-                        $mpdf->watermarkImgBehind = true;
-                        // Set watermark image with center position and opacity 0.2
-                        // Parameters: image path, alpha (opacity 0-1), size ('D' for default or [width, height]), position ('P' for page center)
-                        // Position 'P' centers the image on the page
-                        // Size 'D' uses the image's default size
-                        $mpdf->SetWatermarkImage($watermarkPath, 0.2, 'D', 'P');
-                        $mpdf->showWatermarkImage = true;
-                    }
-                } catch (\Exception $e) {
-                    \Log::warning('Failed to set watermark: ' . $e->getMessage());
-                }
-                
                 // Disable automatic page breaks
                 $mpdf->SetHTMLHeader('');
                 $mpdf->SetHTMLFooter('');
@@ -2148,7 +2243,7 @@ class CheckInController extends Controller
                 $html = view('receipts.unpaid_invoice_receipt', [
                     'receiptData' => $receiptData,
                     'backgroundImage' => $backgroundImage,
-                    'logoImage' => $logoImage ?? null,
+                    'labBranding' => $labBranding,
                 ])->render();
                 
                 // Log HTML length for debugging
@@ -2208,7 +2303,7 @@ class CheckInController extends Controller
 
     public function getUnpaidInvoiceReceiptData($visitId)
     {
-        $visit = Visit::with(['patient', 'visitTests.testCategory', 'labRequest'])->findOrFail($visitId);
+        $visit = Visit::with(['patient', 'visitTests.labTest.category', 'labRequest', 'lab'])->findOrFail($visitId);
         
         // Get the related invoice for financial data (if exists)
         $invoice = null;
@@ -2267,12 +2362,17 @@ class CheckInController extends Controller
             }
         }
         
+        $eddJson = $visit->getExpectedDeliveryDate();
+        $eddJsonStr = $eddJson instanceof \Carbon\CarbonInterface
+            ? $eddJson->format('Y-m-d')
+            : $this->scalarForReceiptView($eddJson, '');
+
         $receiptData = [
             'receipt_number' => $visit->visit_number,
             'lab_number' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?: 'N/A'),
             'date' => $visit->visit_date ? \Carbon\Carbon::parse($visit->visit_date)->format('Y-m-d') : now()->format('Y-m-d'),
             'patient_name' => $visit->patient->name ?: 'N/A',
-            'patient_age' => $patientAge ?: 'N/A',
+            'patient_age' => $this->scalarForReceiptView($patientAge, 'N/A') ?: 'N/A',
             'patient_phone' => $visit->patient->phone ?: 'N/A',
             'tests' => $this->getTestsForReceipt($visit),
             'total_amount' => $financialData['total_amount'] ?? ($invoice ? $invoice->total_amount : ($visit->total_amount ?: 0)),
@@ -2282,7 +2382,7 @@ class CheckInController extends Controller
             'remaining_balance' => $financialData['remaining_balance'] ?? $this->calculateRemainingBalance($visit, $invoice),
             'payment_method' => $this->getPaymentMethod($visit, $payments),
             'billing_status' => $financialData['payment_status'] ?? $this->getPaymentStatus($invoice, $visit),
-            'expected_delivery_date' => $visit->getExpectedDeliveryDate(),
+            'expected_delivery_date' => $eddJsonStr,
             'barcode_text' => $visit->labRequest ? $visit->labRequest->full_lab_no : ($visit->patient->lab ?: 'N/A'),
             'check_in_by' => $visit->check_in_by ?: 'N/A',
             'check_in_at' => $visit->check_in_at ?: 'N/A',
@@ -2292,16 +2392,19 @@ class CheckInController extends Controller
             'printed_by' => $printedBy,
             'printed_at' => now()->format('Y-m-d H:i:s'),
         ];
+
+        $pres = $this->buildLabReceiptPresentation($visit);
         
         return response()->json([
             'visit' => $visit,
             'receipt_data' => $receiptData,
+            'lab_branding' => $pres['labBranding'],
         ]);
     }
 
     public function generateA4Receipt($visitId)
     {
-        $visit = Visit::with(['patient', 'visitTests.testCategory', 'labRequest'])->findOrFail($visitId);
+        $visit = Visit::with(['patient', 'visitTests.labTest.category', 'labRequest'])->findOrFail($visitId);
         
         // Get the related invoice for financial data (if exists)
         $invoice = null;

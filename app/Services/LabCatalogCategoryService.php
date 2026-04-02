@@ -55,10 +55,10 @@ class LabCatalogCategoryService
                     continue;
                 }
                 $name = ($st && $st->display_name) ? $st->display_name : $cat->name;
-                $sort = $st?->sort_order;
+                $sort = $st?->sort_order ?? $cat->sort_order;
             } else {
                 $name = $cat->name;
-                $sort = null;
+                $sort = $cat->sort_order;
             }
 
             $out[] = [
@@ -124,6 +124,7 @@ class LabCatalogCategoryService
         $globals = TestCategory::query()
             ->whereNull('lab_id')
             ->where('is_active', true)
+            ->orderByRaw('COALESCE(sort_order, 9999)')
             ->orderBy('name')
             ->get();
 
@@ -144,7 +145,7 @@ class LabCatalogCategoryService
         $mapped = $globals->map(function (TestCategory $c) use ($settings) {
             $st = $settings->get($c->id);
             $c->setAttribute('display_name', ($st && $st->display_name) ? $st->display_name : $c->name);
-            $c->setAttribute('sort_order', $st?->sort_order);
+            $c->setAttribute('sort_order', $st?->sort_order ?? $c->sort_order);
 
             return $c;
         });
@@ -152,6 +153,7 @@ class LabCatalogCategoryService
         $owned = TestCategory::query()
             ->where('lab_id', $labId)
             ->where('is_active', true)
+            ->orderByRaw('COALESCE(sort_order, 9999)')
             ->orderBy('name')
             ->get()
             ->map(function (TestCategory $c) {

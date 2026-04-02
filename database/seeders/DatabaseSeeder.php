@@ -13,7 +13,7 @@ class DatabaseSeeder extends Seeder
             PlanSeeder::class,
             DemoCredentialsSeeder::class,
             TestCategorySeeder::class,
-            LabTestSeeder::class,
+            PlatformMasterClinicalCatalogSeeder::class,
             SyncLabCatalogFromMasterTestsSeeder::class,
             MultiTenantWorkflowSeeder::class,
         ]);

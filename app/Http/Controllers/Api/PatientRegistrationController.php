@@ -263,16 +263,19 @@ class PatientRegistrationController extends Controller
             'sample_type' => 'nullable|string|max:255',
             'case_type' => 'nullable|string|max:255',
             'sample_size' => 'nullable|string|max:255',
-            'number_of_samples' => 'nullable|string|max:10',
+            'number_of_samples' => 'nullable|integer|min:1',
             'day_of_week' => 'nullable|string|max:255',
             
             // Medical information
             'medical_history' => 'nullable|string',
             'previous_tests' => 'nullable|string',
             
-            // Billing
-            'total_amount' => 'nullable|string|max:20',
-            'amount_paid' => 'nullable|string|max:20',
+            // Billing (frontend sends numbers; PatientController uses numeric too)
+            'total_amount' => 'nullable|numeric|min:0',
+            'amount_paid' => 'nullable|numeric|min:0',
+            'amount_paid_cash' => 'nullable|numeric|min:0',
+            'amount_paid_card' => 'nullable|numeric|min:0',
+            'additional_payment_method' => 'nullable|string|max:64',
             
             // Lab number
             'lab_number' => 'nullable|string|max:255',
@@ -492,92 +495,111 @@ class PatientRegistrationController extends Controller
             $validStatuses = ['pending', 'in_progress', 'processing', 'received', 'completed'];
             $labRequestStatus = 'pending'; // Default status
             
-            // Create lab request for all patients so they appear in Lab Requests
-            try {
-                // Prepare patient data for lab request metadata
-                $labRequestPatientData = [
-                    'name' => $data['name'] ?? $patient->name,
-                    'phone' => $data['phone'] ?? $patient->phone,
-                    'age' => $data['age'] ?? $patient->age,
-                    'gender' => $data['gender'] ?? $patient->gender,
-                    'organization' => $data['organization'] ?? $patient->organization,
-                    'doctor' => $data['doctor'] ?? $patient->doctor,
-                    'sample_type' => $data['sample_type'] ?? null,
-                    'sample_size' => $data['sample_size'] ?? null,
-                    'number_of_samples' => $data['number_of_samples'] ?? 1,
-                    'case_type' => $data['case_type'] ?? null,
-                    'total_amount' => $data['total_amount'] ?? 0,
-                    'amount_paid' => $data['amount_paid'] ?? 0,
-                    'amount_paid_cash' => $data['amount_paid_cash'] ?? 0,
-                    'amount_paid_card' => $data['amount_paid_card'] ?? 0,
-                    'additional_payment_method' => $data['additional_payment_method'] ?? null,
-                ];
-                
-                $labId = $this->currentLabId() ?? 1;
-                $labRequest = \App\Models\LabRequest::create([
-                    'lab_id' => $labId,
-                    'patient_id' => $patient->id,
-                    'lab_no' => $patient->lab, // Use the patient's lab number
+            // Lab request: one row per patient per lab (DB unique on patient_id). Reuse for returning patients.
+            $labRequestPatientData = [
+                'name' => $data['name'] ?? $patient->name,
+                'phone' => $data['phone'] ?? $patient->phone,
+                'age' => $data['age'] ?? $patient->age,
+                'gender' => $data['gender'] ?? $patient->gender,
+                'organization' => $data['organization'] ?? $patient->organization,
+                'doctor' => $data['doctor'] ?? $patient->doctor,
+                'sample_type' => $data['sample_type'] ?? null,
+                'sample_size' => $data['sample_size'] ?? null,
+                'number_of_samples' => $data['number_of_samples'] ?? 1,
+                'case_type' => $data['case_type'] ?? null,
+                'total_amount' => $data['total_amount'] ?? 0,
+                'amount_paid' => $data['amount_paid'] ?? 0,
+                'amount_paid_cash' => $data['amount_paid_cash'] ?? 0,
+                'amount_paid_card' => $data['amount_paid_card'] ?? 0,
+                'additional_payment_method' => $data['additional_payment_method'] ?? null,
+            ];
+
+            $labId = $this->currentLabId() ?? 1;
+            $labRequest = \App\Models\LabRequest::query()
+                ->where('patient_id', $patient->id)
+                ->where('lab_id', $labId)
+                ->orderByDesc('id')
+                ->first();
+
+            if ($labRequest) {
+                $labRequest->update([
+                    'lab_no' => $patient->lab,
                     'status' => $labRequestStatus,
-                    'metadata' => [
+                    'metadata' => array_merge($labRequest->metadata ?? [], [
                         'created_via' => 'Patient Registration',
                         'request_date' => $data['attendance_date'] ?? now()->format('Y-m-d'),
-                        'notes' => 'Created via Patient Registration',
-                        'created_by' => auth()->id() ?? 1,
-                        'status' => $labRequestStatus, // Also store in metadata
-                        'patient_data' => $labRequestPatientData, // Store patient data in lab request metadata too
-                    ],
+                        'notes' => 'Updated via Patient Registration',
+                        'last_updated_by' => auth()->id() ?? 1,
+                        'status' => $labRequestStatus,
+                        'patient_data' => $labRequestPatientData,
+                        'registration_at' => now()->toIso8601String(),
+                    ]),
                 ]);
-            } catch (\Exception $e) {
-                // Try each status until one works
-                foreach ($validStatuses as $status) {
-                    if ($status === $labRequestStatus) continue; // Skip the one we already tried
-                    
-                    try {
-                        $labRequest = \App\Models\LabRequest::create([
-                            'lab_id' => $labId,
-                            'patient_id' => $patient->id,
-                            'lab_no' => $patient->lab,
-                            'status' => $status,
-                            'metadata' => [
-                                'created_via' => 'Patient Registration',
-                                'request_date' => $data['attendance_date'] ?? now()->format('Y-m-d'),
-                                'notes' => 'Created via Patient Registration',
-                                'created_by' => auth()->id() ?? 1,
-                                'status' => $status,
-                                'patient_data' => $labRequestPatientData, // Store patient data in lab request metadata too
-                            ],
-                        ]);
-                        
-                        // If we get here, it worked
-                        $labRequestStatus = $status;
-                        \Log::info("Created lab request with status: $status");
-                        break;
-                    } catch (\Exception $innerE) {
-                        // Continue to next status
-                        \Log::warning("Failed to create lab request with status: $status", [
-                            'error' => $innerE->getMessage()
-                        ]);
-                    }
-                }
-                
-                // If we still don't have a lab request, try without status
-                if (!isset($labRequest)) {
+                $labRequest->refresh();
+            } else {
+                try {
                     $labRequest = \App\Models\LabRequest::create([
                         'lab_id' => $labId,
                         'patient_id' => $patient->id,
                         'lab_no' => $patient->lab,
+                        'status' => $labRequestStatus,
                         'metadata' => [
                             'created_via' => 'Patient Registration',
                             'request_date' => $data['attendance_date'] ?? now()->format('Y-m-d'),
                             'notes' => 'Created via Patient Registration',
                             'created_by' => auth()->id() ?? 1,
-                            'patient_data' => $labRequestPatientData, // Store patient data in lab request metadata too
+                            'status' => $labRequestStatus,
+                            'patient_data' => $labRequestPatientData,
                         ],
                     ]);
-                    \Log::warning("Created lab request without status", [
-                        'lab_request_id' => $labRequest->id
-                    ]);
+                } catch (\Exception $e) {
+                    foreach ($validStatuses as $status) {
+                        if ($status === $labRequestStatus) {
+                            continue;
+                        }
+
+                        try {
+                            $labRequest = \App\Models\LabRequest::create([
+                                'lab_id' => $labId,
+                                'patient_id' => $patient->id,
+                                'lab_no' => $patient->lab,
+                                'status' => $status,
+                                'metadata' => [
+                                    'created_via' => 'Patient Registration',
+                                    'request_date' => $data['attendance_date'] ?? now()->format('Y-m-d'),
+                                    'notes' => 'Created via Patient Registration',
+                                    'created_by' => auth()->id() ?? 1,
+                                    'status' => $status,
+                                    'patient_data' => $labRequestPatientData,
+                                ],
+                            ]);
+                            $labRequestStatus = $status;
+                            \Log::info("Created lab request with status: $status");
+                            break;
+                        } catch (\Exception $innerE) {
+                            \Log::warning("Failed to create lab request with status: $status", [
+                                'error' => $innerE->getMessage(),
+                            ]);
+                        }
+                    }
+
+                    if (! isset($labRequest)) {
+                        $labRequest = \App\Models\LabRequest::create([
+                            'lab_id' => $labId,
+                            'patient_id' => $patient->id,
+                            'lab_no' => $patient->lab,
+                            'metadata' => [
+                                'created_via' => 'Patient Registration',
+                                'request_date' => $data['attendance_date'] ?? now()->format('Y-m-d'),
+                                'notes' => 'Created via Patient Registration',
+                                'created_by' => auth()->id() ?? 1,
+                                'patient_data' => $labRequestPatientData,
+                            ],
+                        ]);
+                        \Log::warning('Created lab request without status', [
+                            'lab_request_id' => $labRequest->id,
+                        ]);
+                    }
                 }
             }
             
@@ -815,8 +837,11 @@ class PatientRegistrationController extends Controller
                 }
                 
                 // Create sample records from patient registration data
-                // Get sample data from visit metadata (where it's actually stored)
-                $visitMetadata = json_decode($visit->metadata ?? '{}', true);
+                // Get sample data from visit metadata (cast may be array or legacy JSON string)
+                $rawVisitMeta = $visit->metadata ?? [];
+                $visitMetadata = is_array($rawVisitMeta)
+                    ? $rawVisitMeta
+                    : (json_decode((string) $rawVisitMeta, true) ?: []);
                 $patientData = $visitMetadata['patient_data'] ?? [];
                 
                 $sampleType = $patientData['sample_type'] ?? $data['sample_type'] ?? null;

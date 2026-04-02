@@ -49,6 +49,7 @@ class LabCatalogLabTestController extends Controller
             'turnaround_time_hours' => ['nullable', 'integer', 'min:1'],
             'description' => ['nullable', 'string'],
             'is_active' => ['boolean'],
+            'report_template' => ['nullable', 'array'],
         ]);
 
         if (! in_array((int) $data['category_id'], $allowedIds, true)) {
@@ -73,6 +74,7 @@ class LabCatalogLabTestController extends Controller
             'turnaround_time_hours' => $data['turnaround_time_hours'] ?? 24,
             'category_id' => $data['category_id'],
             'is_active' => $data['is_active'] ?? true,
+            'report_template' => $data['report_template'] ?? null,
         ];
 
         return DB::transaction(function () use ($lab, $payload, $sale, $displayName) {

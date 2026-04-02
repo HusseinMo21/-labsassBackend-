@@ -16,7 +16,7 @@ class SyncLabCatalogFromMasterTestsSeeder extends Seeder
     {
         $tests = LabTest::where('is_active', true)->whereNull('lab_id')->get();
         if ($tests->isEmpty()) {
-            $this->command->warn('No lab_tests found. Run LabTestSeeder first.');
+            $this->command->warn('No master lab_tests found. Run PlatformMasterClinicalCatalogSeeder (or seed lab_tests) first.');
             return;
         }
 

@@ -6,6 +6,9 @@ use App\Models\LabTest;
 use App\Models\TestCategory;
 use Illuminate\Database\Seeder;
 
+/**
+ * @deprecated Legacy minimal seed. Fresh installs use {@see PlatformMasterClinicalCatalogSeeder} from DatabaseSeeder.
+ */
 class LabTestSeeder extends Seeder
 {
     public function run(): void
